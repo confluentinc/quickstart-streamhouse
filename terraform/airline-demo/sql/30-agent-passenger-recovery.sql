@@ -6,7 +6,7 @@
 -- IF NOT EXISTS keeps an existing agent as is: DROP AGENT before re-applying an edit.
 CREATE AGENT IF NOT EXISTS passenger_recovery_agent
 USING MODEL passenger_recovery_model
-USING PROMPT 'You are the River Air recovery agent at SFO. The passengers on the inbound flight in the task
+USING PROMPT 'You are the River Air recovery agent. The passengers on the inbound flight in the task
 will miss their connections to the final destination, and they all get the same two offers.
 Use the queryData tool (arguments: topic_name, query, max_result_rows) to run the three queries in the task.
 The queries already use the right column names, so run them as given without calling getMetadata first.

@@ -18,7 +18,7 @@ uv run deploy
 
 That's it. Deploy asks for your Confluent Cloud login and API key, provisions everything, publishes 30 days of history and today's flights, starts a 90-minute live stream in the background, enables Lightning Tables and RTCE, and offers to start the app at http://127.0.0.1:8000. Later, `uv run airport-app` restarts the app and `uv run airport-datagen` restarts the scene.
 
-Resource names get a random suffix so workshop deployments can share an org. For a recording, add `TF_VAR_deployment_name=RIVER-AIR-PROD` to `credentials.env` before deploying to get fixed names: `RIVER-AIR-PROD-ENV`, `RIVER-AIR-PROD-CLUSTER`, and so on.
+Resource names get a random suffix so workshop deployments can share an org. For a recording, add `TF_VAR_deployment_name=RIVER-AIR-PROD` to `credentials.env` before deploying to get fixed names: `RIVER-AIR-PROD-ENV`, `RIVER-AIR-PROD-CLUSTER`, and so on. Service account names must be unique across the org, so a second fixed deployment needs its own `TF_VAR_deployment_name`. It can still show `RIVER-AIR-PROD` on screen with `TF_VAR_environment_name=RIVER-AIR-PROD`, which renames only the environment, cluster, and compute pool.
 
 Deploy finishes by applying topic tag colors: green for `DATA_PRODUCT`, pink for `PII`, gray for `RAW_DATA`, and blue for `PARTNER_DATA`. Terraform owns the definitions and topic assignments in [tags.tf](./terraform/airline-demo/tags.tf); the Catalog API sets colors because the provider has no color attribute. Run `uv run setup-topic-tags` to restore the configured colors after a manual Terraform update.
 

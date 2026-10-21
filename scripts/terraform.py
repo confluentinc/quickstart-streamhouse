@@ -148,6 +148,13 @@ def extract_kafka_credentials(
         else:
             missing_keys.append(tf_key)
 
+    # The hotel webhook is optional: an older deployment has none, and the generator falls back to Kafka.
+    for tf_key, cred_key in (("hotel_webhook_url", "hotel_webhook_url"),
+                             ("hotel_webhook_api_key", "hotel_webhook_api_key"),
+                             ("hotel_webhook_api_secret", "hotel_webhook_api_secret")):
+        if tf_key in local_outputs:
+            credentials[cred_key] = local_outputs[tf_key]
+
     if missing_keys:
         logger.error(f"Missing required terraform outputs: {missing_keys}")
         logger.error("Available core outputs:")

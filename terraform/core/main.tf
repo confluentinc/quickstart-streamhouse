@@ -24,12 +24,20 @@ locals {
   name           = local.fixed_name ? upper(var.deployment_name) : "${var.resource_prefix}-${random_id.resource_suffix.hex}"
 
   # A fixed deployment name is written in capitals, labels included: RIVER-AIR-PROD-ENV.
+  # environment_name renames just the environment, cluster, and compute pool: service account
+  # names must be unique across the organization, and another deployment may already hold them.
   display_name = {
     for label in [
       "env", "cluster", "app-manager", "compute-pool", "app-manager-kafka-api-key",
       "app-manager-sr-api-key", "app-manager-flink-api-key", "rtce-reader",
-    ] : label => local.fixed_name ? upper("${local.name}-${label}") : "${local.name}-${label}"
+      ] : label => (
+      var.environment_name != "" && contains(["env", "cluster", "compute-pool"], label)
+      ? upper("${var.environment_name}-${label}")
+      : local.fixed_name ? upper("${local.name}-${label}") : "${local.name}-${label}"
+    )
   }
+
+  dedicated_cluster = var.kafka_cluster_type == "dedicated"
 
   # Bedrock inference-profile prefix follows the region family (us-*, eu-*, apac-*).
   model_prefix = length(regexall("^us-", var.cloud_region)) > 0 ? "us" : (length(regexall("^eu-", var.cloud_region)) > 0 ? "eu" : "apac")
@@ -53,12 +61,26 @@ data "confluent_schema_registry_cluster" "sr-cluster" {
   ]
 }
 
+# Standard by default. kafka_cluster_type = "dedicated" (1 CKU) adds the hotel Webhooks source
+# connector, which needs a Dedicated cluster; without it the generator publishes hotel rows
+# straight to Kafka. The resource keeps its `standard` name so existing deployments don't move.
+# Changing the type of an existing cluster replaces it.
+
 resource "confluent_kafka_cluster" "standard" {
   display_name = local.display_name["cluster"]
   availability = "SINGLE_ZONE"
   cloud        = local.cloud_provider
   region       = local.region
-  standard {}
+  dynamic "standard" {
+    for_each = local.dedicated_cluster ? [] : [1]
+    content {}
+  }
+  dynamic "dedicated" {
+    for_each = local.dedicated_cluster ? [1] : []
+    content {
+      cku = 1
+    }
+  }
   environment {
     id = confluent_environment.staging.id
   }

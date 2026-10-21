@@ -37,6 +37,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from itertools import pairwise
 
+import requests
 from confluent_kafka import Producer
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroSerializer
@@ -47,7 +48,8 @@ from .terraform import extract_kafka_credentials, get_project_root
 
 FLIGHTS = "flight_status"
 ITINERARIES = "passenger_itineraries"
-HOTELS = "hotel_inventory"
+HOTELS = "hotel_inventory"  # fed by the hotel webhook when deploy created one
+WEBHOOK_ATTEMPTS = 5
 OFFERS = "passenger_recommendations"
 
 AIRLINE = "RA"
@@ -468,6 +470,25 @@ def _hotel_rooms(plan: Plan, until: datetime):
         yield at, HILTON, hilton
 
 
+def hotel_warmup(plan: Plan, updates: int = 200):
+    """At least `updates` hotel rows from the morning before the stream, ending at the starting rooms.
+
+    The reset sends them through the hotel webhook so its connector has traffic before Demo 2 starts.
+    """
+    rng = random.Random(f"{plan.seed}:{plan.start.isoformat()}:warmup")
+    rooms = {GRAND_HYATT: GRAND_HYATT_ROOMS, MARRIOTT: MARRIOTT_ROOMS, HILTON: HILTON_ROOMS}
+    steps = []
+    for _ in range(-(-updates // len(rooms))):
+        steps.append(dict(rooms))
+        # Walking back in time: rooms were freer earlier, since guests book through the morning.
+        rooms = {name: min(full, max(1, rooms[name] + rng.choices((-1, 0, 1), (20, 50, 30))[0]))
+                 for name, full in ((GRAND_HYATT, GRAND_HYATT_ROOMS), (MARRIOTT, MARRIOTT_ROOMS * 2),
+                                    (HILTON, HILTON_ROOMS * 2))}
+    for step in reversed(steps):
+        for name in HOTEL_ORDER:
+            yield HOTELS, name, _hotel(name, step[name])
+
+
 def initial_records(plan: Plan):
     """Every row as of the stream start: history final state, the live day so far, tomorrow's schedule."""
     at = plan.start
@@ -531,6 +552,10 @@ class Publisher:
         if dry_run:
             return
         credentials = credentials or {}
+        # With a webhook, hotel updates arrive the way a hotel partner's would: over HTTPS.
+        self.webhook = credentials.get("hotel_webhook_url")
+        self.webhook_auth = (credentials.get("hotel_webhook_api_key", ""),
+                             credentials.get("hotel_webhook_api_secret", ""))
         self.schema_registry = SchemaRegistryClient({
             "url": credentials["schema_registry_url"],
             "basic.auth.user.info": (
@@ -546,6 +571,9 @@ class Publisher:
     def publish(self, topic: str, key: str, value: dict | None) -> None:
         if self.dry_run:
             print(json.dumps({"topic": topic, "key": key, "value": value}, default=str))
+            return
+        if topic == HOTELS and value is not None and self.webhook:
+            self._post_hotel(key, value)
             return
         if topic not in self.serializers:
             registered = self.schema_registry.get_latest_version(f"{topic}-value")
@@ -574,6 +602,21 @@ class Publisher:
             except BufferError:
                 self.producer.poll(1)
         self.producer.poll(0)
+
+    def _post_hotel(self, name: str, value: dict) -> None:
+        """Send one hotel update to the webhook and wait for its acknowledgement, so updates keep their order."""
+        body = dict(hotel_name=name, available_rooms=value["available_rooms"], nightly_rate=str(value["nightly_rate"]))
+        for attempt in range(WEBHOOK_ATTEMPTS):
+            try:
+                response = requests.post(self.webhook, json=body, auth=self.webhook_auth, timeout=30)
+                if response.ok:
+                    return
+                problem = f"{response.status_code} {response.text[:200]}"
+            except requests.RequestException as error:
+                problem = str(error)
+            if attempt == WEBHOOK_ATTEMPTS - 1:
+                raise RuntimeError(f"The hotel webhook rejected {name}: {problem}")
+            time.sleep(2 ** attempt)  # a retry can duplicate a record; hotel_inventory keeps only the latest
 
     def flush(self) -> None:
         if not self.dry_run:

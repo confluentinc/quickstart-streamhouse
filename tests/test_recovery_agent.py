@@ -87,7 +87,7 @@ def test_existing_agent_connection_gets_the_current_key(monkeypatch):
 
 
 def test_deploy_targets_exist_and_sql_files_exist():
-    main = (DEMO / "main.tf").read_text()
+    main = (DEMO / "main.tf").read_text() + (DEMO / "webhook.tf").read_text()
     for target in deploy.AGENT_TARGETS:
         kind, name = target.split(".")
         assert f'resource "{kind}" "{name}"' in main
@@ -104,6 +104,7 @@ def test_video_2_deploy_stops_before_what_demo_2_creates_on_screen(monkeypatch, 
     monkeypatch.setattr(deploy, "_bedrock_enabled", lambda root: True)
     monkeypatch.setattr(deploy.setup_rtce, "main", lambda argv: calls.append("rtce"))
     monkeypatch.setattr(deploy, "_start_agent", lambda root, targets: calls.append(targets) or True)
+    monkeypatch.setattr(deploy, "apply_tag_colors", lambda root: calls.append("colors"))
     monkeypatch.setattr(deploy, "_print_env_name", lambda root: None)
 
     def datagen(root, agent, history=True, speed=1.0, stream=True):
@@ -112,4 +113,5 @@ def test_video_2_deploy_stops_before_what_demo_2_creates_on_screen(monkeypatch, 
 
     monkeypatch.setattr(deploy, "_run_datagen", datagen)
     deploy._finish(tmp_path, "none", video_2=True, speed=4)
-    assert calls == [("datagen", True, 4, False), "rtce", deploy.VIDEO_2_TARGETS, ("datagen", False, 4, True)]
+    assert calls == [("datagen", True, 4, False), "rtce", deploy.VIDEO_2_TARGETS,
+                     ("datagen", False, 4, True), "colors"]

@@ -56,6 +56,15 @@ CREATE AGENT, and the INSERT on screen ([SQL 32, 29, 30, 31](../terraform/airlin
 Show the `passenger_state` join as `CREATE OR ALTER`; it already exists. To skip the live run,
 `uv run reset-demo-2 --restore` deletes any on-screen copy and starts the agent the way deploy does.
 
+When replaying `CREATE OR ALTER MATERIALIZED TABLE`, preserve the schema and `WITH` options in
+[`sql/24-serving-passenger-state.sql`](../terraform/airline-demo/sql/24-serving-passenger-state.sql),
+and take the existing table's exact distribution from `SHOW CREATE MATERIALIZED TABLE`
+before evolving it. A query-only definition defaults to Avro keys and can mix Avro records
+with the existing raw keys, making `SELECT` fail at the first old record.
+`reset-demo-2`, even with `--full`,
+preserves `passenger_state` and cannot repair mixed key encodings; its derived topic must
+be rebuilt from the source feeds, along with any staging tables that copied the malformed keys.
+
 ## Prerequisites
 
 ### Local dependencies
@@ -74,7 +83,7 @@ winget install astral-sh.uv Git.Git Hashicorp.Terraform ConfluentInc.Confluent-C
 
 > [!NOTE]
 >
-> This repository deploys to AWS `us-east-1`.
+> This repository deploys to AWS `us-east-1` on a Standard Kafka cluster. To use another region, set `TF_VAR_cloud_region` in `credentials.env` before deploying. A region deploys a Dedicated cluster (1 CKU) when `DEDICATED_CLUSTER_REGIONS` in [tfvars.py](../scripts/tfvars.py) lists it (`us-west-2` does), or when you set `TF_VAR_kafka_cluster_type=dedicated`. Dedicated adds the hotel webhook connector; Standard has none, so the generator publishes hotel availability straight to Kafka. Changing the type of an existing deployment replaces its cluster.
 
 - **Confluent Cloud** account with rights to create environments, clusters, Flink pools, and API keys.
 - **AWS credentials** (optional) power the Tableflow S3/Glue analytics scene and core's Bedrock
@@ -83,7 +92,7 @@ winget install astral-sh.uv Git.Git Hashicorp.Terraform ConfluentInc.Confluent-C
 
 > [!WARNING]
 >
-> **AWS Bedrock users:** request access to the Claude model in `us-east-1` via the [Model Catalog](https://console.aws.amazon.com/bedrock/home#/model-catalog) before deploying.
+> **AWS Bedrock users:** request access to the Claude model in your deployment region (`us-east-1` by default) via the [Model Catalog](https://console.aws.amazon.com/bedrock/home#/model-catalog) before deploying.
 
 ## Deploy the Demo
 

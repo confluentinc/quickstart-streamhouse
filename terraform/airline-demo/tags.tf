@@ -27,12 +27,13 @@ locals {
   }
 
   topic_tags = {
-    flight_status             = ["DATA_PRODUCT"]
-    passenger_itineraries     = ["PII", "RAW_DATA"]
-    hotel_inventory           = ["RAW_DATA", "PARTNER_DATA"]
-    passenger_state           = ["PII", "DATA_PRODUCT"]
-    flight_impact             = ["DATA_PRODUCT"]
-    passenger_recommendations = ["PII", "DATA_PRODUCT"]
+    flight_status              = ["DATA_PRODUCT"]
+    passenger_itineraries      = ["PII", "RAW_DATA"]
+    hotel_inventory            = ["RAW_DATA", "PARTNER_DATA"]
+    hotel_availability_updates = ["RAW_DATA", "PARTNER_DATA"]
+    passenger_state            = ["PII", "DATA_PRODUCT"]
+    flight_impact              = ["DATA_PRODUCT"]
+    passenger_recommendations  = ["PII", "DATA_PRODUCT"]
   }
 
   # These two topics only exist when the recovery agent is enabled.

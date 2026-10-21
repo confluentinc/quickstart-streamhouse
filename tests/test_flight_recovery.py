@@ -2,10 +2,12 @@ import json
 import re
 from collections import Counter
 from datetime import datetime, timedelta
+from decimal import Decimal
 from itertools import pairwise
 from pathlib import Path
 
 import pytest
+import requests
 
 from scripts import airport_datagen as g
 
@@ -234,3 +236,61 @@ def test_speed_compresses_waiting_but_not_stream_time():
     assert g._due(start, at, 1.0) == at
     assert g._due(start, at, 5.0) == start + timedelta(minutes=8)
     assert g._due(start, start, 5.0) == start
+
+
+def _webhook_publisher(monkeypatch, statuses):
+    """A Publisher with a webhook whose POSTs answer `statuses` in turn; returns it with the recorded calls."""
+    calls = []
+
+    class Response:
+        def __init__(self, status):
+            self.status_code, self.ok, self.text = status, status < 400, "busy"
+
+    def post(url, json, auth, timeout):
+        calls.append((url, json, auth))
+        return Response(statuses[min(len(calls), len(statuses)) - 1])
+
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(g.time, "sleep", lambda seconds: None)
+    publisher = g.Publisher({"hotel_webhook_url": "https://lcc-1.example/webhook",
+                                           "hotel_webhook_api_key": "k", "hotel_webhook_api_secret": "s",
+                                           "schema_registry_url": "http://sr", "schema_registry_api_key": "a",
+                                           "schema_registry_api_secret": "b", "bootstrap_servers": "x:9092",
+                                           "kafka_api_key": "a", "kafka_api_secret": "b"}, dry_run=False)
+    return publisher, calls
+
+
+def test_hotel_updates_post_to_the_webhook_and_retry_when_it_is_busy(monkeypatch):
+    publisher, calls = _webhook_publisher(monkeypatch, [503, 200])
+    publisher.publish(g.HOTELS, "Grand Hyatt at SFO",
+                      dict(available_rooms=40, nightly_rate=Decimal("329.00")))
+    assert calls == [("https://lcc-1.example/webhook",
+                      {"hotel_name": "Grand Hyatt at SFO", "available_rooms": 40, "nightly_rate": "329.00"},
+                      ("k", "s"))] * 2
+
+
+def test_a_rejected_hotel_update_raises_after_the_retries(monkeypatch):
+    publisher, calls = _webhook_publisher(monkeypatch, [401])
+    with pytest.raises(RuntimeError, match="401"):
+        publisher.publish(g.HOTELS, "Hilton", dict(available_rooms=1, nightly_rate=Decimal("1.00")))
+    assert len(calls) == g.WEBHOOK_ATTEMPTS
+
+
+def test_hotel_warmup_sends_at_least_200_updates_and_ends_at_the_starting_rooms():
+    plan = g.build_plan(START, history=False)
+    rows = list(g.hotel_warmup(plan, 200))
+    assert len(rows) >= 200 and {topic for topic, _, _ in rows} == {g.HOTELS}
+    last = {name: value["available_rooms"] for _, name, value in rows}
+    assert last == {g.GRAND_HYATT: g.GRAND_HYATT_ROOMS, g.MARRIOTT: g.MARRIOTT_ROOMS, g.HILTON: g.HILTON_ROOMS}
+    assert all(value["available_rooms"] >= 1 for _, _, value in rows)
+    assert rows == list(g.hotel_warmup(plan, 200))
+
+
+def test_cluster_type_follows_region_unless_overridden():
+    from scripts import tfvars
+    assert tfvars.kafka_cluster_type("us-east-1") == "standard"
+    assert tfvars.kafka_cluster_type("us-west-2") == "dedicated"
+    assert tfvars.kafka_cluster_type("us-east-1", "dedicated") == "dedicated"
+    content = tfvars.generate_core_tfvars_content("us-west-2", "k", "s", cluster_type="dedicated")
+    assert 'kafka_cluster_type = "dedicated"' in content
+    assert "kafka_cluster_type" not in tfvars.generate_core_tfvars_content("us-east-1", "k", "s")

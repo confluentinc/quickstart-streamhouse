@@ -28,10 +28,32 @@ variable "deployment_name" {
   }
 }
 
+variable "environment_name" {
+  description = "Optional base name for just the environment, cluster, and compute pool (RIVER-AIR-PROD gives RIVER-AIR-PROD-ENV). Defaults to deployment_name. Service accounts and API keys keep deployment_name, because their names must be unique across the organization."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = can(regex("^([A-Za-z0-9-]{1,32})?$", var.environment_name))
+    error_message = "environment_name must be letters, digits, or hyphens, up to 32 chars."
+  }
+}
+
 variable "cloud_region" {
   description = "AWS region for deployment. Must be an RTCE-supported region (default us-east-1)."
   type        = string
   default     = "us-east-1"
+}
+
+variable "kafka_cluster_type" {
+  description = "Kafka cluster type: standard (default) or dedicated (1 CKU). The hotel webhook connector needs dedicated. deploy picks it from the region; changing it on an existing cluster replaces the cluster."
+  type        = string
+  default     = "standard"
+
+  validation {
+    condition     = contains(["standard", "dedicated"], var.kafka_cluster_type)
+    error_message = "kafka_cluster_type must be standard or dedicated."
+  }
 }
 
 variable "confluent_cloud_api_key" {

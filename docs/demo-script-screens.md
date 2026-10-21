@@ -107,6 +107,12 @@ Start the stream at least 40 minutes before scene 2.4.
 
 Running statement `airport-materialize-passenger-state`, from [`sql/24-serving-passenger-state.sql`](../terraform/airline-demo/sql/24-serving-passenger-state.sql). The query part:
 
+For a live `CREATE OR ALTER`, preserve the SQL file's schema and
+`WITH ('key.format' = 'raw', ...)` options, and copy the exact distribution from
+`SHOW CREATE MATERIALIZED TABLE passenger_state`. The query below is for showing the join;
+wrapping it in a query-only materialized-table definition changes the key format defaults
+and can make the existing topic unreadable.
+
 ```sql
 SELECT
   p.`key`,
@@ -176,7 +182,7 @@ The agent is statement `airport-agent-passenger-recovery`, from [`sql/30-agent-p
 ```sql
 CREATE AGENT IF NOT EXISTS passenger_recovery_agent
 USING MODEL passenger_recovery_model
-USING PROMPT 'You are the River Air recovery agent at SFO. The passengers on the inbound flight in the task
+USING PROMPT 'You are the River Air recovery agent. The passengers on the inbound flight in the task
 will miss their connections to the final destination, and they all get the same two offers.
 Use the queryData tool (arguments: topic_name, query, max_result_rows) to run the three queries in the task.
 The queries already use the right column names, so run them as given without calling getMetadata first.

@@ -156,3 +156,8 @@ output "confluent_rtce_service_account_id" {
   value       = confluent_service_account.rtce-reader.id
   description = "Service account ID for the RTCE MCP server — setup_rtce.py uses it to auto-create a Global API key via the Confluent CLI"
 }
+
+output "dedicated_cluster" {
+  value       = local.dedicated_cluster
+  description = "True when the Kafka cluster is Dedicated, which the hotel webhook connector needs"
+}

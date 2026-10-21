@@ -6,8 +6,9 @@ and the Bedrock model the agent runs on (passenger_recovery_model). The reset
   1. stops the data stream and every statement that creates or runs a Demo 2 object,
   2. drops the Native Inference model, the RTCE tool, the agent, and the two staging tables,
   3. rebuilds the staging tables off screen (the agent's INSERT reads them),
-  4. deletes RA417's offers for today, and
-  5. restarts the stream, so RA417's delay and the Grand Hyatt sellout play out again.
+  4. deletes RA417's offers for today,
+  5. sends 200 hotel updates through the hotel-partner-webhook connector (when deployed), and
+  6. restarts the stream, so RA417's delay and the Grand Hyatt sellout play out again.
 
 Then CREATE MODEL, CREATE TOOL, CREATE AGENT, and the AI_RUN_AGENT INSERT run live on screen
 (see the SQL for each in docs/demo-script-screens.md). Running the reset again is safe.
@@ -16,6 +17,7 @@ Usage:
   uv run reset-demo-2            # reset to the start of Demo 2
   uv run reset-demo-2 --speed 4  # same, with the stream clock 4x faster
   uv run reset-demo-2 --restore  # skip the live run: start the agent the way deploy does
+  uv run reset-demo-2 --full     # back to a fresh deploy: all data republished, agent running
 """
 
 import argparse
@@ -53,10 +55,18 @@ STATE_ADDRESSES = (
     "confluent_flink_statement.passenger_state_changes[0]",
     "confluent_flink_statement.impacted_passengers[0]",
 )
+WEBHOOK_WARMUP = 200  # hotel updates the reset sends through the webhook, so its connector shows traffic
 STAGING_STATEMENTS = ("airport-agent-passenger-state-changes", "airport-agent-impacted-passengers")
 STAGING_TARGETS = (
     "confluent_flink_statement.passenger_state_changes",
     "confluent_flink_statement.impacted_passengers",
+)
+# The hotel webhook resources became conditional (count), so Terraform moves them to [0] in state
+# and refuses a targeted plan that leaves them out. A deployment without a webhook has count 0.
+WEBHOOK_TARGETS = (
+    "confluent_api_key.hotel_webhook",
+    "confluent_connector.hotel_webhook",
+    "confluent_flink_statement.hotel_inventory_feed",
 )
 
 
@@ -93,10 +103,11 @@ class Flink:
         created = self._cli("create", name, "--sql", sql, "--compute-pool", self.pool,
                             "--service-account", self.principal, "--property", self.properties, "--wait")
         described = self._cli("describe", name, "-o", "json")
-        status = json.loads(described.stdout or "{}").get("status", "") if described.returncode == 0 else ""
+        details = json.loads(described.stdout or "{}") if described.returncode == 0 else {}
+        status = details.get("status", "")
         self.delete(name)
         if created.returncode != 0 or status != "COMPLETED":
-            detail = created.stderr.strip() or created.stdout.strip()
+            detail = details.get("status_detail") or created.stderr.strip() or created.stdout.strip()
             raise RuntimeError(f"{sql} ended {status or 'with an error'}: {detail}")
 
 
@@ -122,8 +133,8 @@ def _forget_in_terraform(demo, keep_staging: bool = False) -> None:
         subprocess.run(["terraform", "state", "rm", *addresses], cwd=demo, check=True, capture_output=True)
 
 
-def reset(root, flink: Flink, speed: float = 1.0) -> None:
-    demo = root / "terraform" / "airline-demo"
+def _drop_demo_2(demo, flink: Flink) -> None:
+    """Stop the stream, then drop every Demo 2 object, whether Terraform or a take on screen made it."""
     print("Stopping the data stream...")
     airport_datagen.stop_previous_stream()
 
@@ -141,23 +152,51 @@ def reset(root, flink: Flink, speed: float = 1.0) -> None:
             flink.delete(name)
     _forget_in_terraform(demo)
 
+
+def reset(root, flink: Flink, speed: float = 1.0) -> None:
+    demo = root / "terraform" / "airline-demo"
+    _drop_demo_2(demo, flink)
+
     print("Rebuilding the staging tables off screen...")
     os.environ["TF_VAR_enable_recovery_agent"] = "true"
-    if not run_terraform(demo, targets=STAGING_TARGETS):
+    if not run_terraform(demo, targets=STAGING_TARGETS + WEBHOOK_TARGETS):
         raise RuntimeError("Rebuilding passenger_state_changes and impacted_passengers failed")
 
     start = airport_datagen._clock(None)
-    keys = ra417_offer_keys(airport_datagen.build_plan(start, history=False))
+    plan = airport_datagen.build_plan(start, history=False)
+    keys = ra417_offer_keys(plan)
     publisher = airport_datagen.Publisher(airport_datagen.extract_kafka_credentials("aws", root), dry_run=False)
     for key in keys:
         publisher.publish(airport_datagen.OFFERS, key, None)
     publisher.flush()
     print(f"Deleted {len(keys)} RA417 offer keys for today")
 
+    if publisher.webhook:
+        print("Sending the morning's hotel updates through the hotel-partner-webhook connector...")
+        warmup = list(airport_datagen.hotel_warmup(plan, WEBHOOK_WARMUP))
+        for topic, name, value in warmup:
+            publisher.publish(topic, name, value)
+        print(f"Sent {len(warmup)} hotel updates to the webhook")
+    else:
+        print("No hotel webhook in this deployment (Standard cluster): skipping the hotel warmup")
+
     print("Restarting the stream (today's flights only; history is unchanged)...")
     clock = deploy._run_datagen(root, agent=True, history=False, speed=speed)
 
     deploy.print_video_2_clock(clock, speed)
+
+
+def full_reset(root, flink: Flink, speed: float = 1.0) -> None:
+    """Put the demo back where `uv run deploy` leaves it: fresh data and stream, the agent running."""
+    _drop_demo_2(root / "terraform" / "airline-demo", flink)
+    print("Deleting every generated record...")
+    airport_datagen.reset(airport_datagen._clock(None), airport_datagen.SEED, dry_run=False)
+    print("Publishing history and today, then starting the stream...")
+    deploy._run_datagen(root, agent=True, speed=speed)
+    print("Starting the recovery agent...")
+    if not deploy._start_agent(root):
+        raise RuntimeError("The recovery agent did not start")
+    print("\n✓ Reset to a fresh deploy: Video 1's data and Demo 2's agent are running.")
 
 
 def restore(root, flink: Flink) -> None:
@@ -172,6 +211,8 @@ def restore(root, flink: Flink) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="uv run reset-demo-2", description=__doc__.split("\n")[0])
     parser.add_argument("--restore", action="store_true", help="start the agent the way deploy does instead")
+    parser.add_argument("--full", action="store_true",
+                        help="back to a fresh deploy: republish all data, restart the stream, start the agent")
     parser.add_argument("--speed", type=float, default=1.0,
                         help="run the stream clock this many times faster (default 1; 4 is a 22-minute stream)")
     parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
@@ -192,12 +233,16 @@ def main(argv: list[str] | None = None) -> None:
     if args.restore:
         restore(root, flink)
         return
-    print(f"This drops Demo 2's agent, tool, Native Inference model, and staging tables in "
-          f"{core['confluent_environment_display_name']}, deletes RA417's offers, and restarts the stream.")
+    if args.full:
+        print(f"This deletes and republishes every demo record in {core['confluent_environment_display_name']}, "
+              f"restarts the stream, and recreates Demo 2's agent, tool, models, and staging tables.")
+    else:
+        print(f"This drops Demo 2's agent, tool, Native Inference model, and staging tables in "
+              f"{core['confluent_environment_display_name']}, deletes RA417's offers, and restarts the stream.")
     if not args.yes and input("Continue? (y/n): ").strip().lower() != "y":
         sys.exit("Cancelled.")
     try:
-        reset(root, flink, args.speed)
+        (full_reset if args.full else reset)(root, flink, args.speed)
     except RuntimeError as error:
         sys.exit(f"✗ {error}")
 

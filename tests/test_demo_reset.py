@@ -16,6 +16,7 @@ STATEMENTS = {  # every statement deploy creates, by name, with its SQL file
     "airport-agent-passenger-state-changes": "26", "airport-agent-impacted-passengers": "27",
     "airport-agent-model": "28", "airport-agent-tool": "29", "airport-agent-passenger-recovery": "30",
     "airport-agent-insert-passenger-recommendations": "31", "airport-agent-native-model": "32",
+    "airport-table-hotel-availability-updates": "33", "airport-insert-hotel-inventory": "34",
 }
 
 

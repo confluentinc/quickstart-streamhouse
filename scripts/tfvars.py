@@ -54,12 +54,24 @@ def write_tfvars_file(tfvars_path: Path, content: str) -> bool:
         return False
 
 
+# Regions whose deployments use a Dedicated Kafka cluster, which the hotel webhook connector
+# needs. Every other region gets Standard. TF_VAR_kafka_cluster_type overrides this.
+DEDICATED_CLUSTER_REGIONS = frozenset({"us-west-2"})
+
+
+def kafka_cluster_type(region: str, override: str | None = None) -> str:
+    """The Kafka cluster type for a deployment: the override if set, else by region."""
+    return override or ("dedicated" if region in DEDICATED_CLUSTER_REGIONS else "standard")
+
+
 def generate_core_tfvars_content(
     region: str,
     api_key: str,
     api_secret: str,
     resource_prefix: str | None = None,
     deployment_name: str | None = None,
+    environment_name: str | None = None,
+    cluster_type: str | None = None,
     aws_bedrock_access_key: str | None = None,
     aws_bedrock_secret_key: str | None = None,
     aws_session_token: str | None = None,
@@ -81,6 +93,9 @@ def generate_core_tfvars_content(
         resource_prefix: Resource name prefix (defaults to the terraform default)
         deployment_name: Fixed base name such as RIVER-AIR-PROD, used instead of the
             prefix plus a random suffix (optional)
+        environment_name: Base name for just the environment, cluster, and compute pool
+            (optional, defaults to deployment_name)
+        cluster_type: Kafka cluster type, standard or dedicated (optional, defaults to standard)
         aws_bedrock_access_key: AWS Bedrock access key (optional)
         aws_bedrock_secret_key: AWS Bedrock secret key (optional)
         aws_session_token: AWS session token for Bedrock (optional, for ASIA* temp creds)
@@ -100,6 +115,10 @@ confluent_cloud_api_secret = "{api_secret}"
         content += f'resource_prefix = "{resource_prefix}"\n'
     if deployment_name:
         content += f'deployment_name = "{deployment_name}"\n'
+    if environment_name:
+        content += f'environment_name = "{environment_name}"\n'
+    if cluster_type:
+        content += f'kafka_cluster_type = "{cluster_type}"\n'
 
     if aws_bedrock_access_key and aws_bedrock_secret_key:
         content += f'aws_bedrock_access_key = "{aws_bedrock_access_key}"\n'
@@ -144,6 +163,8 @@ def write_tfvars_for_deployment(
         api_secret,
         resource_prefix=resource_prefix or None,
         deployment_name=get_credential_value(creds, "deployment_name"),
+        environment_name=get_credential_value(creds, "environment_name"),
+        cluster_type=kafka_cluster_type(region, get_credential_value(creds, "kafka_cluster_type")),
         aws_bedrock_access_key=get_credential_value(creds, "aws_bedrock_access_key"),
         aws_bedrock_secret_key=get_credential_value(creds, "aws_bedrock_secret_key"),
         aws_session_token=get_credential_value(creds, "aws_session_token"),

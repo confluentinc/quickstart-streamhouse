@@ -32,3 +32,18 @@ output "glue_database" {
   value       = local.analytics_enabled ? local.glue_database : ""
   description = "AWS Glue database name the Iceberg tables sync into (defaults to the Kafka cluster ID)"
 }
+
+# The webhook the hotel partner (the generator, here) sends availability to. Empty without a
+# Dedicated cluster: the generator then publishes hotel rows to Kafka directly.
+output "hotel_webhook_url" {
+  value = local.webhook_enabled ? "https://${confluent_connector.hotel_webhook[0].id}.${local.core.cloud_region}.aws.public.confluent.cloud/webhook" : ""
+}
+
+output "hotel_webhook_api_key" {
+  value = local.webhook_enabled ? confluent_api_key.hotel_webhook[0].id : ""
+}
+
+output "hotel_webhook_api_secret" {
+  value     = local.webhook_enabled ? confluent_api_key.hotel_webhook[0].secret : ""
+  sensitive = true
+}

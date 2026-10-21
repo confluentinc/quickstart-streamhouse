@@ -59,6 +59,11 @@ AGENT_TARGETS = (
     "confluent_flink_statement.impacted_passengers",
     "confluent_flink_statement.recovery_agent",
     "confluent_flink_statement.recovery_offers",
+    # Conditional (count) on a Dedicated cluster, so Terraform moves them to [0] in state and
+    # rejects a targeted plan that leaves them out.
+    "confluent_api_key.hotel_webhook",
+    "confluent_connector.hotel_webhook",
+    "confluent_flink_statement.hotel_inventory_feed",
 )
 # --video-2 stops short of what Demo 2 creates on screen: only the Bedrock model the agent runs on
 # and the two staging tables its INSERT reads.
@@ -238,7 +243,8 @@ def main():
     ensure_confluent_login(creds)
     print("✓ Confluent CLI logged in")
 
-    region = DEFAULT_REGION
+    # No prompt: us-east-1 unless the user set TF_VAR_cloud_region in credentials.env.
+    region = creds.get("TF_VAR_cloud_region") or DEFAULT_REGION
     print(f"\nRegion: {region} (AWS-only; RTCE + Bedrock supported here)")
 
     # No prompt: reuse the saved prefix, else the default. Persisting it keeps
@@ -323,7 +329,6 @@ def main():
             for name in ("aws_session_token", "aws_tableflow_session_token"):
                 _save_env_safe(creds_file, f"TF_VAR_{name}", token)
 
-    _save_env_safe(creds_file, "TF_VAR_cloud_region", region)
     _flush_pending_writes(creds_file)
 
     final_creds = dotenv_values(creds_file)
