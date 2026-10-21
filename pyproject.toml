@@ -45,7 +45,7 @@ airport-app = "scripts.airport_app:main"
 reset-demo-2 = "scripts.demo_reset:main"
 
 [project.urls]
-Repository = "https://github.com/confluentinc/demo-streamhouse-flight-recovery"
+Repository = "https://github.com/confluentinc/quickstart-streamhouse"
 
 [tool.hatch.build.targets.wheel]
 packages = ["scripts"]

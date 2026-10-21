@@ -377,8 +377,8 @@ AWS Secret Access Key: {secret_access_key}
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/confluentinc/demo-streamhouse-flight-recovery
-   cd demo-streamhouse-flight-recovery
+   git clone https://github.com/confluentinc/quickstart-streamhouse
+   cd quickstart-streamhouse
    ```
 
 2. Run deployment:
