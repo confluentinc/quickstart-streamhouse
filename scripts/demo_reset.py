@@ -1,10 +1,10 @@
 """Reset Confluent Cloud to where Demo 2 (video 2) starts, so its statements can run live on screen.
 
-Video 1's objects stay: the source tables, passenger_state, flight_impact, Lightning Tables, RTCE,
-and the Bedrock model the agent runs on (passenger_recovery_model). The reset
+Video 1's objects stay: the source tables, passenger_state, flight_impact, Lightning Tables, and RTCE.
+The reset
 
   1. stops the data stream and every statement that creates or runs a Demo 2 object,
-  2. drops the Native Inference model, the RTCE tool, the agent, and the two staging tables,
+  2. drops the agent's model, the RTCE tool, the agent, and the two staging tables,
   3. rebuilds the staging tables off screen (the agent's INSERT reads them),
   4. deletes RA417's offers for today,
   5. sends 200 hotel updates through the hotel-partner-webhook connector (when deployed), and
@@ -34,21 +34,22 @@ from scripts.login_checks import ensure_confluent_login
 from scripts.terraform import get_project_root, run_terraform_output
 from scripts.terraform_runner import run_terraform
 
-# Demo 2 creates these on screen. passenger_recovery_model stays: the agent runs on it.
+# Demo 2 creates these on screen. Dropping the model also retires the Bedrock model that deployments
+# from before the agent moved to the Confluent-hosted one have under the same name.
 DROPS = (
     "DROP AGENT IF EXISTS passenger_recovery_agent",
     "DROP TOOL IF EXISTS hotel_inventory_live_context",
-    "DROP MODEL IF EXISTS passenger_recovery_mode1",
+    "DROP MODEL IF EXISTS passenger_recovery_model",
     "DROP MATERIALIZED TABLE IF EXISTS impacted_passengers",
     "DROP MATERIALIZED TABLE IF EXISTS passenger_state_changes",
 )
 # A statement whose SQL names one of these creates or runs a Demo 2 object, whether Terraform
 # or an earlier take on screen created it.
-DEMO_2_NAMES = ("AI_RUN_AGENT", "passenger_recovery_agent", "hotel_inventory_live_context", "passenger_recovery_mode1",
+DEMO_2_NAMES = ("AI_RUN_AGENT", "passenger_recovery_agent", "hotel_inventory_live_context", "passenger_recovery_model",
                 "passenger_state_changes", "impacted_passengers")
 # Terraform's copies of the statements the reset deletes; removed from state so a later apply recreates them.
 STATE_ADDRESSES = (
-    'confluent_flink_statement.agent_setup["native_model"]',
+    'confluent_flink_statement.agent_setup["model"]',
     'confluent_flink_statement.agent_setup["tool"]',
     "confluent_flink_statement.recovery_agent[0]",
     "confluent_flink_statement.recovery_offers[0]",
@@ -226,10 +227,12 @@ def main(argv: list[str] | None = None) -> None:
     core_state = root / "terraform" / "core" / "terraform.tfstate"
     if not core_state.exists():
         sys.exit("No deployment found. Run `uv run deploy` first.")
+    creds = dotenv_values(root / "credentials.env")
+    if creds.get(deploy.WORKSHOP) == "true":
+        sys.exit("This checkout is in workshop mode, where attendees build Demo 2's agent themselves. "
+                 "Nothing to reset.")
     core = run_terraform_output(core_state)
-    if not core.get("bedrock_enabled"):
-        sys.exit("This deployment has no Bedrock connection, so Demo 2's agent can't run. Nothing to reset.")
-    ensure_confluent_login(dotenv_values(root / "credentials.env"))
+    ensure_confluent_login(creds)
     flink = Flink(core)
 
     if args.restore:
@@ -237,9 +240,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.full:
         print(f"This deletes and republishes every demo record in {core['confluent_environment_display_name']}, "
-              f"restarts the stream, and recreates Demo 2's agent, tool, models, and staging tables.")
+              f"restarts the stream, and recreates Demo 2's agent, tool, model, and staging tables.")
     else:
-        print(f"This drops Demo 2's agent, tool, Native Inference model, and staging tables in "
+        print(f"This drops Demo 2's agent, tool, model, and staging tables in "
               f"{core['confluent_environment_display_name']}, deletes RA417's offers, and restarts the stream.")
     if not args.yes and input("Continue? (y/n): ").strip().lower() != "y":
         sys.exit("Cancelled.")

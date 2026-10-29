@@ -13,7 +13,7 @@ from hours late back to on time.
 
 The generator writes two rebooking offers a few seconds after a connection becomes HIGH
 risk. Past bookings are completed the way customers would complete them; RA417's offers
-stay open for the presenter. When the recovery agent runs in Flink (sql/26-31), it writes
+stay open for the presenter. When the recovery agent runs in Flink (sql/26-32), it writes
 RA417's offers and the generator writes every other flight's.
 
     uv run airport-datagen                  # history + live day, then stream 90 minutes

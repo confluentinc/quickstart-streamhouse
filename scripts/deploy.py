@@ -56,7 +56,7 @@ from scripts.tfvars import write_tfvars_for_deployment
 from scripts.topic_tags import apply_tag_colors
 from scripts.ui import prompt_with_default
 
-DEFAULT_REGION = "us-east-1"  # RTCE-supported; Bedrock Claude available here
+DEFAULT_REGION = "us-east-1"  # RTCE-supported; Confluent-hosted Claude available here
 DEFAULT_PREFIX = "flight-recovery"
 DEPLOY_TARGETS = ["core", "airline-demo"]
 WORKSHOP = "TF_VAR_workshop"  # credentials.env flag that keeps a checkout in workshop mode
@@ -75,10 +75,9 @@ AGENT_TARGETS = (
     "confluent_connector.hotel_webhook",
     "confluent_flink_statement.hotel_inventory_feed",
 )
-# --video-2 stops short of what Demo 2 creates on screen: only the Bedrock model the agent runs on
-# and the two staging tables its INSERT reads.
+# --video-2 stops short of what Demo 2 creates on screen (the model, tool, agent, and INSERT): only the
+# two staging tables the INSERT reads.
 VIDEO_2_TARGETS = (
-    'confluent_flink_statement.agent_setup["model"]',
     "confluent_flink_statement.passenger_state_changes",
     "confluent_flink_statement.impacted_passengers",
 )
@@ -288,7 +287,7 @@ def main():
 
     # No prompt: us-east-1 unless the user set TF_VAR_cloud_region in credentials.env.
     region = creds.get("TF_VAR_cloud_region") or DEFAULT_REGION
-    print(f"\nRegion: {region} (AWS-only; RTCE + Bedrock supported here)")
+    print(f"\nRegion: {region} (AWS-only; RTCE + Confluent-hosted Claude supported here)")
 
     # No prompt: reuse the saved prefix, else the default. Persisting it keeps
     # resource names stable if DEFAULT_PREFIX changes later.
@@ -335,10 +334,7 @@ def main():
         print("Workshop: source feeds only; you build the Flink tables and the agent, and turn on RTCE")
         print(f"Deploying: {', '.join(DEPLOY_TARGETS)}")
     else:
-        bedrock_state = (
-            "ENABLED" if final_creds.get("TF_VAR_aws_bedrock_access_key") else "skipped (no Bedrock creds)"
-        )
-        print(f"Bedrock connection: {bedrock_state}")
+        print("Recovery agent: Claude hosted in Confluent (no AWS credentials needed)")
         analytics_state = (
             "ENABLED" if final_creds.get("TF_VAR_aws_tableflow_access_key") else "skipped (no Tableflow AWS creds)"
         )
@@ -380,9 +376,9 @@ def _prompt_aws_credentials(creds_file, creds: dict) -> None:
     shell (`aws sso login`, env vars, a profile).
     """
     print(
-        "\nAWS credentials power the Bedrock connection and the Tableflow S3/Glue"
-        "\nanalytics path (Demo 3). Both are optional — without them, everything"
-        "\nelse still deploys and those two are skipped."
+        "\nAWS credentials power the Tableflow S3/Glue analytics path (Demo 3)."
+        "\nThey're optional — without them, everything else still deploys, the"
+        "\nrecovery agent included."
     )
     access_key = secret_key = token = ""
     ambient = _detect_ambient_aws_credentials()
@@ -433,12 +429,8 @@ def _finish(root, client: str, video_2: bool = False, speed: float = 1.0) -> Non
     With video_2, the agent stays unstarted and the stream starts last, so Demo 2's clock begins
     when everything is ready (as `uv run reset-demo-2` leaves it).
     """
-    agent = _bedrock_enabled(root)
-    if video_2 and not agent:
-        print("--video-2 needs the Bedrock connection (AWS credentials); deploying as usual.")
-    video_2 = video_2 and agent
     print("\n=== Publishing demo data ===")
-    _run_datagen(root, agent, speed=speed, stream=not video_2)
+    _run_datagen(root, agent=True, speed=speed, stream=not video_2)
     print("\n=== Enabling Lightning Tables and RTCE ===")
     setup_rtce.main(["--client", client])
     if video_2:
@@ -446,11 +438,9 @@ def _finish(root, client: str, video_2: bool = False, speed: float = 1.0) -> Non
         if _start_agent(root, VIDEO_2_TARGETS):
             clock = _run_datagen(root, agent=True, history=False, speed=speed)
             print_video_2_clock(clock, speed)
-    elif agent:
+    else:
         print("\n=== Starting the recovery agent ===")
         _start_agent(root)
-    else:
-        print("\nRecovery agent: skipped (no Bedrock credentials); the generator writes all offers.")
     print("\n=== Applying topic tag colors ===")
     apply_tag_colors(root)
     _print_env_name(root)
@@ -470,14 +460,6 @@ def _finish_workshop(root) -> None:
     apply_tag_colors(root)
     _print_env_name(root)
     print("\n✓ Your workshop environment is ready. Next: \"Start the data\" in docs/workshop.md.")
-
-
-def _bedrock_enabled(root) -> bool:
-    core_state = root / "terraform" / "core" / "terraform.tfstate"
-    try:
-        return bool(run_terraform_output(core_state).get("bedrock_enabled"))
-    except Exception:
-        return False
 
 
 def print_video_2_clock(clock, speed: float) -> None:

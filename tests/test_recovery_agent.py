@@ -15,7 +15,7 @@ def _sql(prefix: str) -> str:
 
 
 def test_statements_chain_by_name():
-    assert "CREATE MODEL IF NOT EXISTS passenger_recovery_model" in _sql("28")
+    assert "CREATE MODEL IF NOT EXISTS passenger_recovery_model" in _sql("32")
     assert f"USING CONNECTION `{setup_rtce.AGENT_CONNECTION}`" in _sql("29")
     agent = _sql("30")
     assert "CREATE AGENT IF NOT EXISTS passenger_recovery_agent" in agent
@@ -26,11 +26,12 @@ def test_statements_chain_by_name():
     assert "AI_RUN_AGENT(\n    'passenger_recovery_agent'" in _sql("31")
 
 
-def test_native_model_is_shown_but_the_agent_stays_on_bedrock():
-    native = _sql("32")
-    assert "CREATE MODEL IF NOT EXISTS passenger_recovery_mode1" in native
-    assert "'provider' = 'confluent'" in native
-    assert "passenger_recovery_mode1" not in _sql("30")
+def test_agent_runs_on_the_confluent_hosted_model():
+    assert "'provider' = 'confluent'" in _sql("32")
+    assert not list(SQL.glob("28-*.sql"))  # the Bedrock model is gone
+    main = (DEMO / "main.tf").read_text()
+    assert '"sql/32-model-passenger-recovery-native.sql"' in main
+    assert "bedrock_enabled" not in main
 
 
 def test_agent_handles_the_generators_hero_flight():
@@ -99,9 +100,9 @@ def test_video_2_deploy_stops_before_what_demo_2_creates_on_screen(monkeypatch, 
     main = (DEMO / "main.tf").read_text()
     for target in deploy.VIDEO_2_TARGETS:
         assert target.split(".")[1].split("[")[0] in main
+    assert not any("agent_setup" in target for target in deploy.VIDEO_2_TARGETS)  # 2.3a creates the model
 
     calls = []
-    monkeypatch.setattr(deploy, "_bedrock_enabled", lambda root: True)
     monkeypatch.setattr(deploy.setup_rtce, "main", lambda argv: calls.append("rtce"))
     monkeypatch.setattr(deploy, "_start_agent", lambda root, targets: calls.append(targets) or True)
     monkeypatch.setattr(deploy, "apply_tag_colors", lambda root: calls.append("colors"))

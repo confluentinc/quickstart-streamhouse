@@ -1,7 +1,8 @@
--- Claude hosted in Confluent (Flink Native Inference), for scene 2.3a. Nothing uses it yet:
--- Native Inference models can't call tools, so the agent in sql/30 still runs on the Bedrock
--- model from sql/28. When tool calling works, point the agent here and drop sql/28.
-CREATE MODEL IF NOT EXISTS passenger_recovery_mode1
+-- Claude hosted in Confluent (Flink Native Inference), the model the recovery agent in sql/30 runs
+-- on, with no connection or key to manage. IF NOT EXISTS keeps an existing model, so a deployment
+-- from before the agent left Bedrock keeps that model under this name until `uv run reset-demo-2`
+-- drops it.
+CREATE MODEL IF NOT EXISTS passenger_recovery_model
 INPUT (prompt STRING)
 OUTPUT (response STRING)
 WITH (

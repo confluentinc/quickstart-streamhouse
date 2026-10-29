@@ -74,10 +74,10 @@ locals {
   # The workshop leaves Tableflow out.
   analytics_enabled = var.enable_analytics && !var.workshop && try(nonsensitive(local.core.aws_tableflow_credentials_present), false)
 
-  # The recovery agent needs Claude on Bedrock (core) and the RTCE connection, which
-  # `uv run deploy` creates with the CLI after RTCE is enabled and then sets the toggle.
-  # Workshop attendees create their own agent on a Confluent-hosted model instead.
-  agent_enabled = var.enable_recovery_agent && local.core.bedrock_enabled && !var.workshop
+  # The recovery agent runs on Claude hosted in Confluent and needs only the RTCE connection,
+  # which `uv run deploy` creates with the CLI after RTCE is enabled and then sets the toggle.
+  # Workshop attendees create their own agent instead.
+  agent_enabled = var.enable_recovery_agent && !var.workshop
 
   # The three source feeds, the recovery offers, and (outside the workshop) the webhook's landing table.
   tables = merge(
@@ -91,9 +91,8 @@ locals {
   )
 
   agent_setup = {
-    model        = "sql/28-model-passenger-recovery.sql"
-    native_model = "sql/32-model-passenger-recovery-native.sql"
-    tool         = "sql/29-tool-hotel-inventory-live-context.sql"
+    model = "sql/32-model-passenger-recovery-native.sql"
+    tool  = "sql/29-tool-hotel-inventory-live-context.sql"
   }
 }
 
@@ -170,10 +169,10 @@ resource "confluent_flink_statement" "flight_impact" {
   depends_on = [confluent_flink_statement.passenger_state]
 }
 
-# --- Recovery agent (gated on Bedrock + the RTCE connection) ----------------
-# The models and the RTCE tool have no interdependencies. The staging tables
+# --- Recovery agent (gated on the RTCE connection) --------------------------
+# The model and the RTCE tool don't depend on each other. The staging tables
 # (passenger_state_changes, then impacted_passengers) are separate so
-# `uv run reset-demo-2` can rebuild them without touching the models. The agent
+# `uv run reset-demo-2` can rebuild them without touching the model. The agent
 # needs the model and tool; the INSERT needs the agent, impacted_passengers, and
 # passenger_recommendations.
 resource "confluent_flink_statement" "agent_setup" {

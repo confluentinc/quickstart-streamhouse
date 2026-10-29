@@ -23,7 +23,7 @@ variable "workshop" {
 }
 
 variable "enable_recovery_agent" {
-  description = "Run the recovery agent (sql/26-31), which writes RA417's live offers in place of the generator. Needs core's Bedrock connection and the 'rtce-connection' MCP connection; `uv run deploy` creates the connection after enabling RTCE, then sets this with a targeted apply."
+  description = "Run the recovery agent (sql/26-32) on Claude hosted in Confluent, which writes RA417's live offers in place of the generator. Needs the 'rtce-connection' MCP connection; `uv run deploy` creates it after enabling RTCE, then sets this with a targeted apply."
   type        = bool
   default     = false
 }

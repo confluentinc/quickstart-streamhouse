@@ -13,8 +13,8 @@ ROOT = Path(__file__).parent.parent
 SQL = ROOT / "terraform" / "airline-demo" / "sql"
 GUIDE = ROOT / "docs" / "workshop.md"
 UTC = "SET 'sql.local-time-zone' = 'UTC';"
-# What attendees paste to build the pipeline, in order. MODEL is the guide's Confluent-hosted model.
-CHAIN = ("24", "25", "26", "27", "MODEL", "29", "30", "31")
+# What attendees paste to build the pipeline, in order.
+CHAIN = ("24", "25", "26", "27", "32", "29", "30", "31")
 
 
 def _statement(sql: str) -> str:
@@ -46,16 +46,15 @@ def test_guide_pastes_the_pipeline_files_in_order():
     pasted = []
     for block in _pipeline_blocks():
         statement = _statement(block.removeprefix(UTC))
-        pasted.append("MODEL" if statement.startswith("CREATE MODEL") else files.get(statement, statement[:60]))
+        pasted.append(files.get(statement, statement[:60]))
     assert tuple(pasted) == CHAIN
 
 
-def test_guide_model_is_the_hosted_one_under_the_agents_model_name():
-    model = next(b for b in _pipeline_blocks() if b.startswith("CREATE MODEL"))
+def test_guide_model_is_the_hosted_one_the_agent_uses():
     files = _files()
     agent_model = re.search(r"USING MODEL (\w+)", files["30"]).group(1)
     assert "'provider' = 'confluent'" in files["32"]
-    assert _statement(model) == files["32"].replace("passenger_recovery_mode1", agent_model)
+    assert f"CREATE MODEL IF NOT EXISTS {agent_model}\n" in files["32"]
 
 
 def test_statements_that_read_the_clock_run_in_utc():
@@ -89,6 +88,16 @@ def test_targeted_applies_include_the_tables_the_workshop_leaves_out():
     for target in ("confluent_flink_statement.passenger_state", "confluent_flink_statement.flight_impact"):
         assert target in deploy.AGENT_TARGETS
         assert target in demo_reset.SERVING_TARGETS
+
+
+def test_reset_demo_2_leaves_a_workshop_alone(monkeypatch, tmp_path):
+    (tmp_path / "terraform" / "core").mkdir(parents=True)
+    (tmp_path / "terraform" / "core" / "terraform.tfstate").write_text("{}")
+    (tmp_path / "credentials.env").write_text(f"{deploy.WORKSHOP}=true\n")
+    monkeypatch.setattr(demo_reset, "get_project_root", lambda: tmp_path)
+    monkeypatch.setattr(demo_reset, "run_terraform_output", lambda _: pytest.fail("the attendees' agent stays"))
+    with pytest.raises(SystemExit, match="workshop mode"):
+        demo_reset.main(["--yes"])
 
 
 def test_workshop_terraform_builds_only_the_source_tables():

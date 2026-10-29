@@ -41,15 +41,16 @@ For Demo 3, enable Tableflow on `passenger_recommendations` on screen (Tableflow
 is already enabled by Terraform), then run the Athena queries in the [data model](./data-model.md#work-backwards-from-the-questions).
 Ask the questions as "in the last 30 days"; the data covers a trailing 30-day window.
 
-When core has the Bedrock connection (AWS credentials present), deploy also starts the recovery
-agent. It is Claude on Amazon Bedrock, reading live flights and hotel rooms through RTCE/MCP, and
-it writes the live day's offers for RA417 ([SQL 26–31](../terraform/airline-demo/sql/)). The generator
-writes every other flight's offers, and RA417's too without Bedrock. The Webhooks source connector is still planned, so the
-generator publishes hotel updates directly to Kafka.
+Deploy also starts the recovery agent. It is Claude hosted in Confluent, reading live flights and
+hotel rooms through RTCE/MCP, and it writes the live day's offers for RA417
+([SQL 26–32](../terraform/airline-demo/sql/)). The generator writes every other flight's offers.
+A deployment from before the agent moved off Amazon Bedrock keeps its Bedrock model until
+`uv run reset-demo-2 --full` swaps it for the hosted one. The Webhooks source connector is still
+planned, so the generator publishes hotel updates directly to Kafka.
 
 To record Demo 2 with its statements run live, run `uv run reset-demo-2` first. It keeps Demo 1
-(the source tables, `passenger_state`, `flight_impact`, Lightning Tables, RTCE) and the Bedrock
-model, drops the Native Inference model, the `hotel_inventory_live_context` tool, the agent, and its INSERT,
+(the source tables, `passenger_state`, `flight_impact`, Lightning Tables, RTCE), drops the
+agent's model, the `hotel_inventory_live_context` tool, the agent, and its INSERT,
 rebuilds the two staging tables off screen, deletes today's RA417 offers, and restarts the stream.
 It prints when RA417 flips and when the Grand Hyatt sells out. Then run CREATE MODEL, CREATE TOOL,
 CREATE AGENT, and the INSERT on screen ([SQL 32, 29, 30, 31](../terraform/airline-demo/sql/)).
@@ -86,13 +87,9 @@ winget install astral-sh.uv Git.Git Hashicorp.Terraform ConfluentInc.Confluent-C
 > This repository deploys to AWS `us-east-1` on a Standard Kafka cluster. To use another region, set `TF_VAR_cloud_region` in `credentials.env` before deploying. A region deploys a Dedicated cluster (1 CKU) when `DEDICATED_CLUSTER_REGIONS` in [tfvars.py](../scripts/tfvars.py) lists it (`us-west-2` does), or when you set `TF_VAR_kafka_cluster_type=dedicated`. Dedicated adds the hotel webhook connector; Standard has none, so the generator publishes hotel availability straight to Kafka. Changing the type of an existing deployment replaces its cluster.
 
 - **Confluent Cloud** account with rights to create environments, clusters, Flink pools, and API keys.
-- **AWS credentials** (optional) power the Tableflow S3/Glue analytics scene and core's Bedrock
-  connection. Run `uv run api-keys create` to auto-generate credentials. Without them, everything
-  else still deploys.
-
-> [!WARNING]
->
-> **AWS Bedrock users:** request access to the Claude model in your deployment region (`us-east-1` by default) via the [Model Catalog](https://console.aws.amazon.com/bedrock/home#/model-catalog) before deploying.
+- **AWS credentials** (optional) power the Tableflow S3/Glue analytics scene. Run
+  `uv run api-keys create` to auto-generate credentials. Without them, everything else still
+  deploys, the recovery agent included.
 
 ## Deploy the Demo
 

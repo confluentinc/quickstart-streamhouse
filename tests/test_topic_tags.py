@@ -52,14 +52,12 @@ def test_rate_limit_is_retried(monkeypatch):
     assert not topic_tags.update_tag_color(session, "https://catalog", "DATA_PRODUCT", "GREEN_LIGHT")
 
 
-@pytest.mark.parametrize("agent", [False, True])
-def test_deploy_applies_colors_after_agent(monkeypatch, tmp_path, agent):
+def test_deploy_applies_colors_after_agent(monkeypatch, tmp_path):
     calls = []
-    monkeypatch.setattr(deploy, "_bedrock_enabled", lambda _: agent)
     monkeypatch.setattr(deploy, "_run_datagen", lambda *a, **kw: calls.append("data"))
     monkeypatch.setattr(deploy.setup_rtce, "main", lambda _: calls.append("rtce"))
     monkeypatch.setattr(deploy, "_start_agent", lambda _: calls.append("agent"))
     monkeypatch.setattr(deploy, "apply_tag_colors", lambda _: calls.append("colors"))
     monkeypatch.setattr(deploy, "_print_env_name", lambda _: None)
     deploy._finish(tmp_path, "codex")
-    assert calls == ["data", "rtce"] + (["agent"] if agent else []) + ["colors"]
+    assert calls == ["data", "rtce", "agent", "colors"]

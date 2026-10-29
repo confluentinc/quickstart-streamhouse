@@ -35,7 +35,7 @@ Deploy finishes by applying topic tag colors: green for `DATA_PRODUCT`, pink for
 - **Operations:** today's 180 flights with delay and passengers at risk, the biggest delays, and a drill-down into each flight's passengers.
 - **Passenger:** two offers, live hotel options in place of the biggest delays, a select action, a replacement hotel offer when the chosen room has sold out, and booking.
 
-The browser polls every 2.5 seconds. Lightning credentials stay server-side. With AWS credentials, a recovery agent (Claude on Amazon Bedrock, reading RTCE/MCP) writes the live day's offers for RA417; the generator writes every other flight's, and all of them without AWS credentials. Hotel changes publish directly to Kafka because no Webhooks source connector is deployed yet.
+The browser polls every 2.5 seconds. Lightning credentials stay server-side. A recovery agent (Claude hosted in Confluent, reading RTCE/MCP) writes the live day's offers for RA417; the generator writes every other flight's. Hotel changes publish directly to Kafka because no Webhooks source connector is deployed yet.
 
 ## Repository layout
 

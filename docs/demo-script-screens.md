@@ -23,7 +23,7 @@ This is the full demo script. Each row marked **▶ On screen** follows the scri
 
 Start the stream at least 40 minutes before scene 2.4.
 
-**Recording Demo 2 live:** run `uv run reset-demo-2` first. It removes what 2.3 creates (the Native Inference model, the `hotel_inventory_live_context` tool, the agent, and the `AI_RUN_AGENT` INSERT), so 2.3a–c run from a workspace instead of **Flink → Statements**, in the order of SQL 32, 29, 30, 31. Demo 1's tables, Lightning, RTCE, and the Bedrock model stay. The reset also restarts the stream and prints the clock above in UTC.
+**Recording Demo 2 live:** run `uv run reset-demo-2` first. It removes what 2.3 creates (the agent's model, the `hotel_inventory_live_context` tool, the agent, and the `AI_RUN_AGENT` INSERT), so 2.3a–c run from a workspace instead of **Flink → Statements**, in the order of SQL 32, 29, 30, 31. Demo 1's tables, Lightning, and RTCE stay. The reset also restarts the stream and prints the clock above in UTC.
 
 | Timing | ID | Visual | Narration |
 | :---: | :---: | ----- | ----- |
@@ -58,10 +58,10 @@ Start the stream at least 40 minutes before scene 2.4.
 | ▶ | 2.2c | **On screen:** the topic in Confluent Cloud | ✅ **Topics → `hotel_inventory` → Messages**:<br>`Grand Hyatt at SFO {"available_rooms": 40, "nightly_rate": "329.00"}`, `SFO Airport Marriott Waterfront {"available_rooms": 150, "nightly_rate": "229.00"}`, and `Hilton SFO Airport Bayfront {"available_rooms": 120, "nightly_rate": "249.00"}`. All three update every 15 s as guests book and cancel; the Grand Hyatt drifts down about a room a minute until 0 at +40. |
 | ▶ | 2.2d | **On screen:** enable RTCE in the Topics UI | ✅ **Topics → `hotel_inventory` → Real-Time Context Engine**. Deploy has already turned it on, and the agent needs it running, so show it as on (as in 1.2a). |
 | 1.5 min | 2.3 | CREATE MODEL CREATE AGENT (with RTCE) Query to run the agent (ZOOM into AI\_RUN\_AGENT) Show the results on the Flight in question | Next, we create the model that our agent will use. Here, we’re using a model hosted directly in Confluent. So there’s no need to move your data anywhere. Everything stays in Confluent and is fully managed for you. Next, we create the agent. We give it the model we just created, a simple set of instructions, and access to live hotel information through the **Real-Time Context Engine.** Now, our agent is ready,  but it’s not running yet. So we use `AI_RUN_AGENT` to turn it on. And just like that \- we now have an always-on agent that understands what’s happening in the business right now. As flight data changes, the agent continuously adjusts \-  evaluating the latest context, and recommending the best actions to help all the passengers who will miss their connecting flights, in light of the latest data. **Transition:** But identifying the best option is only half the story. Now we need to get that recommendation to the passenger. |
-| ▶ | 2.3a | **On screen:** CREATE MODEL, “a model hosted directly in Confluent” | 🧪 **Flink → Statements → `airport-agent-native-model`**. [Appendix B](#b-create-model-23a): `passenger_recovery_mode1`, Claude hosted in Confluent (Native Inference). Show this one. Native Inference can't call tools yet, so the agent runs on the Bedrock model `passenger_recovery_model` (statement `airport-agent-model`), which is named almost the same. Swap the agent over once tool calling works. |
+| ▶ | 2.3a | **On screen:** CREATE MODEL, “a model hosted directly in Confluent” | 🧪 **Flink → Statements → `airport-agent-model`**. [Appendix B](#b-create-model-23a): `passenger_recovery_model`, Claude hosted in Confluent (Native Inference), the model the agent runs on. The workshop ran this model and agent on Confluent Cloud on 2026-10-28; deploy's copy hasn't run yet (see [Gaps](#gaps-to-close-before-rehearsal)). |
 | ▶ | 2.3b | **On screen:** CREATE AGENT with RTCE | ✅ **Flink → Statements → `airport-agent-passenger-recovery`**. [Appendix C](#c-rtce-tool-and-create-agent-23b): the `hotel_inventory_live_context` tool on the RTCE MCP connection, then `CREATE AGENT passenger_recovery_agent … USING TOOLS hotel_inventory_live_context`. |
 | ▶ | 2.3c | **On screen:** the query that runs the agent (zoom into `AI_RUN_AGENT`) | ✅ **Flink → Statements → `airport-agent-insert-passenger-recommendations`**. [Appendix D](#d-ai_run_agent-23c). Zoom in on:<br>`LATERAL TABLE(AI_RUN_AGENT('passenger_recovery_agent', CONCAT(…), g.group_key))`<br>It runs for RA417 only, once per final destination (11 runs of about 40 s each), the first time a passenger going there turns HIGH. Every passenger in that group gets its two offers. |
-| ▶ | 2.3d | **On screen:** the results for the flight in question | ✅ In a Flink workspace:<br>`SELECT * FROM passenger_recommendations WHERE passenger_id LIKE 'P-0928-417-%';`<br>That's 2 agent offers for each of the 150 passengers, for example `P-0928-417-081-O1`: RA605-20260929 · Grand Hyatt at SFO · $329 · OFFERED, and `-O2`: RA620-20260929 · SFO Airport Marriott Waterfront · $229. In the 2026-09-28 live run, when RA417 still had 200 connecting passengers, all 400 offers arrived within about 3 minutes of the statement starting. If the Grand Hyatt has already sold out when the agent runs, the offers are the Marriott and the Hilton instead. Other flights' offers come from the generator. Without Bedrock, deploy skips the agent and the generator also writes RA417's offers, 5–40 s after each passenger goes HIGH. |
+| ▶ | 2.3d | **On screen:** the results for the flight in question | ✅ In a Flink workspace:<br>`SELECT * FROM passenger_recommendations WHERE passenger_id LIKE 'P-0928-417-%';`<br>That's 2 agent offers for each of the 150 passengers, for example `P-0928-417-081-O1`: RA605-20260929 · Grand Hyatt at SFO · $329 · OFFERED, and `-O2`: RA620-20260929 · SFO Airport Marriott Waterfront · $229. In the 2026-09-28 live run on Bedrock, when RA417 still had 200 connecting passengers, all 400 offers arrived within about 3 minutes of the statement starting. If the Grand Hyatt has already sold out when the agent runs, the offers are the Marriott and the Hilton instead. Other flights' offers come from the generator. If the agent doesn't start, deploy says so, and `uv run airport-datagen --offers generator` has the generator write RA417's offers, 5–40 s after each passenger goes HIGH. |
 | 0.5 min | 2.4 | Design Team App Push notification showing agent recommendation User picks an option App shows agent chain of thought, Hotel that was recommended is now not available and suggests another hotel | That’s where our external agent comes in. It takes the recommendation and presents it directly to the passenger in the app. If the passenger accepts, the agent takes care of the booking. But notice what happens here, the original hotel is no longer available. The agent gets the latest information, finds the next best option, and books it instead. And that’s the power of the Streamhouse. With access to the latest context, the agent can adapt in real time, proactively find the next best option, and take action for the passenger. **Transition:** Back to the slides please |
 | ▶ | 2.4a | **On screen:** design team app, push notification with the agent's recommendation | ⚠️ The design team's screens (not in this repo). Data behind them, and the fallback in our app's passenger card:<br>``SELECT * FROM `passenger_recommendations` WHERE passenger_id = 'P-0928-417-081' LIMIT 3`` |
 | ▶ | 2.4b | **On screen:** user picks an option | ✅ **Select** on offer O1 (Grand Hyatt at SFO). The app reads the offers (2.4a) and then:<br>``SELECT * FROM `hotel_inventory` LIMIT 200``<br>The Grand Hyatt has sold out (2.4c), so the app does not mark it `SELECTED`; see below. |
@@ -83,16 +83,16 @@ Start the stream at least 40 minutes before scene 2.4.
 **Must fix**
 
 1. **Scene 2.3d: confirm on a fresh deploy that Lightning and RTCE see every flight.** On 2026-09-28, the agent ran live and wrote 2 offers for each of RA417's 200 HIGH passengers. It only worked after tomorrow's flights were republished, though: `flight_status` in Lightning showed only the 34 flights updated since enablement, while `hotel_inventory` and `passenger_itineraries` from the same deploy showed every row. After the next `uv run deploy`, check that ``SELECT * FROM `flight_status` WHERE origin = 'SFO' AND scheduled_time >= TIMESTAMP '<tomorrow> 00:00:00' LIMIT 200`` returns rows. If it doesn't, the agent answers NONE and writes no offers.
-2. **Scenes 2.2a–b: the Webhooks connector and its Assistant prompt aren't built.** The generator publishes the hotel rows the connector would, straight to `hotel_inventory`.
-3. **Scenes 3-2a–d: Amazon Quick isn't set up** over the Glue database.
+2. **Scene 2.3: run deploy's agent on the hosted model.** The workshop pasted SQL 32, 29, 30, and 31 by hand on Confluent Cloud on 2026-10-28, and the hosted model's agent wrote RA417's offers. Deploy's Terraform copy hasn't run since the agent left Bedrock: after the next `uv run deploy`, check that 2.3d's query returns 2 offers for each of RA417's 150 passengers.
+3. **Scenes 2.2a–b: the Webhooks connector and its Assistant prompt aren't built.** The generator publishes the hotel rows the connector would, straight to `hotel_inventory`.
+4. **Scenes 3-2a–d: Amazon Quick isn't set up** over the Glue database.
 
 **Decide or reword**
 
 1. **Stream timing.** A live OK→HIGH flip on RA417 (2.1c) needs the stream started within about 15 minutes of scene 2.1. The sellout (2.4c) needs it started at least 40 minutes before scene 2.4. Either shorten the gaps in the stream clock or accept that RA417 has already flipped by 2.1; other flights keep updating.
-2. **"A model hosted directly in Confluent" in 2.3:** the screen shows the Native Inference `CREATE MODEL`, but until Native Inference supports tool calling the agent calls Claude on Amazon Bedrock.
-3. **"Delta" in 3-1:** change the visual to Iceberg. **"Last month" in 3-2:** say "in the last 30 days".
-4. **"Risk score" in 2.1:** the data has a risk level (HIGH, OK or NO_CONNECTION) plus connection minutes, not a number.
-5. **"Many topics" in 1.1** (there are 6) and **"chain of thought" in 2.4d** (not shown).
+2. **"Delta" in 3-1:** change the visual to Iceberg. **"Last month" in 3-2:** say "in the last 30 days".
+3. **"Risk score" in 2.1:** the data has a risk level (HIGH, OK or NO_CONNECTION) plus connection minutes, not a number.
+4. **"Many topics" in 1.1** (there are 6) and **"chain of thought" in 2.4d** (not shown).
 
 **Known limits**
 
@@ -134,10 +134,10 @@ LEFT JOIN flight_status onward ON p.connecting_flight_id = onward.`key`;
 
 ### B. CREATE MODEL (2.3a)
 
-Statement `airport-agent-native-model`, from [`sql/32-model-passenger-recovery-native.sql`](../terraform/airline-demo/sql/32-model-passenger-recovery-native.sql). This is the one to show: Claude hosted in Confluent, with no connection. Nothing uses it yet, because Native Inference models can't call tools.
+Statement `airport-agent-model`, from [`sql/32-model-passenger-recovery-native.sql`](../terraform/airline-demo/sql/32-model-passenger-recovery-native.sql): Claude hosted in Confluent, with no connection or key to manage. The agent runs on it.
 
 ```sql
-CREATE MODEL IF NOT EXISTS passenger_recovery_mode1
+CREATE MODEL IF NOT EXISTS passenger_recovery_model
 INPUT (prompt STRING)
 OUTPUT (response STRING)
 WITH (
@@ -146,20 +146,6 @@ WITH (
   'confluent.model' = 'anthropic.claude-sonnet-4-6',
   'confluent.input_format' = 'confluent-chat',
   'confluent.params.max_tokens' = '1024'
-);
-```
-
-The agent runs on statement `airport-agent-model`, from [`sql/28-model-passenger-recovery.sql`](../terraform/airline-demo/sql/28-model-passenger-recovery.sql): Claude on Amazon Bedrock, through the `bedrock-connection` that core creates when AWS credentials are present.
-
-```sql
-CREATE MODEL IF NOT EXISTS passenger_recovery_model
-INPUT (prompt STRING)
-OUTPUT (response STRING)
-WITH (
-  'provider' = 'bedrock',
-  'task' = 'text_generation',
-  'bedrock.connection' = 'bedrock-connection',
-  'bedrock.params.max_tokens' = '1024'
 );
 ```
 

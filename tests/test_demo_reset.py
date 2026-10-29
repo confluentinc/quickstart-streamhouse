@@ -14,8 +14,8 @@ STATEMENTS = {  # every statement deploy creates, by name, with its SQL file
     "airport-table-hotel-inventory": "22", "airport-table-passenger-recommendations": "23",
     "airport-materialize-passenger-state": "24", "airport-materialize-flight-impact": "25",
     "airport-agent-passenger-state-changes": "26", "airport-agent-impacted-passengers": "27",
-    "airport-agent-model": "28", "airport-agent-tool": "29", "airport-agent-passenger-recovery": "30",
-    "airport-agent-insert-passenger-recommendations": "31", "airport-agent-native-model": "32",
+    "airport-agent-model": "32", "airport-agent-tool": "29", "airport-agent-passenger-recovery": "30",
+    "airport-agent-insert-passenger-recommendations": "31",
     "airport-table-hotel-availability-updates": "33", "airport-insert-hotel-inventory": "34",
 }
 
@@ -28,7 +28,7 @@ def test_resets_only_demo_2_statements_and_stops_the_insert_first():
     names = demo_reset.demo_2_statements(_deployed())
     assert names[0] == "airport-agent-insert-passenger-recommendations"
     assert set(names) == {"airport-agent-insert-passenger-recommendations", "airport-agent-passenger-recovery",
-                          "airport-agent-tool", "airport-agent-native-model",
+                          "airport-agent-tool", "airport-agent-model",
                           "airport-agent-passenger-state-changes", "airport-agent-impacted-passengers"}
 
 
@@ -37,11 +37,11 @@ def test_an_on_screen_insert_is_found_by_its_sql():
     assert demo_reset.demo_2_statements([live]) == ["workspace-2026-10-01-123"]
 
 
-def test_drops_cover_every_object_demo_2_creates_but_not_the_bedrock_model():
+def test_drops_cover_every_object_demo_2_creates():
     created = "".join(next(SQL.glob(f"{n}-*.sql")).read_text() for n in ("26", "27", "29", "30", "32"))
     for sql in demo_reset.DROPS:
         assert sql.split()[-1] in created
-    assert not any("passenger_recovery_model" in sql for sql in demo_reset.DROPS)
+    assert "DROP MODEL IF EXISTS passenger_recovery_model" in demo_reset.DROPS  # 2.3a creates the agent's model
 
 
 def test_ra417_offer_keys_cover_every_connecting_passenger():
