@@ -7,6 +7,7 @@ let current = { flights: [], delays: [], counts: {} };
 let openFlight = null;
 let selected = null;
 let lastUpdated = null;
+let noticeUntil = 0; // an offer action's message holds the status line until then, instead of the next poll's
 let scrollToNow = true; // on load and after "Show all", scroll Operations to the flights around now
 const rowWatermarks = new Map(); // key -> "status|delay_minutes|affected_passengers", for flash-on-change
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) =>
@@ -66,7 +67,7 @@ async function refresh() {
     current = await request("/api/state");
     lastUpdated = Date.now();
     render();
-    $("status-line").textContent = "Live from Lightning Tables";
+    if (Date.now() >= noticeUntil) $("status-line").textContent = "Live from Lightning Tables";
   } catch (error) {
     $("status-line").textContent = error.message;
   }
@@ -373,15 +374,21 @@ function renderHotels(hotels, offers) {
     flashIfChanged($("hotels").rows[index], `hotel:${row.key}`, String(row.available_rooms)));
 }
 
+// Shows what Select or Book did for 10 seconds, so a sold-out swap can be read before polls reclaim the line.
+function notice(message) {
+  $("status-line").textContent = message;
+  noticeUntil = Date.now() + 10000;
+}
+
 async function act(verb, offerId) {
   try {
     const changed = await request(`/api/passenger/${encodeURIComponent(selected)}/${verb}/${encodeURIComponent(offerId)}`, "POST");
-    $("status-line").textContent = changed.sold_out_hotel
+    notice(changed.sold_out_hotel
       ? `${changed.sold_out_hotel} is sold out. Now offering ${changed.hotel_name}.`
-      : `${changed.status}: ${changed.hotel_name || "no hotel needed"}`;
+      : `${changed.status}: ${changed.hotel_name || "no hotel needed"}`);
     setTimeout(() => { refresh(); renderPassenger(); }, 1000);
   } catch (error) {
-    $("status-line").textContent = error.message;
+    notice(error.message);
   }
 }
 

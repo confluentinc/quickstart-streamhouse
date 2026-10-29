@@ -16,6 +16,12 @@ variable "tableflow_topics" {
   default     = ["flight_impact"]
 }
 
+variable "workshop" {
+  description = "Deploy the self-service workshop's starting point (docs/workshop.md): the three source feeds and passenger_recommendations only. Attendees create passenger_state, flight_impact, and the recovery agent in the SQL workspace, and the workshop leaves out Tableflow and the hotel webhook. `uv run deploy --workshop` sets it."
+  type        = bool
+  default     = false
+}
+
 variable "enable_recovery_agent" {
   description = "Run the recovery agent (sql/26-31), which writes RA417's live offers in place of the generator. Needs core's Bedrock connection and the 'rtce-connection' MCP connection; `uv run deploy` creates the connection after enabling RTCE, then sets this with a targeted apply."
   type        = bool

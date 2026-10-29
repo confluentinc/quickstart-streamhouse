@@ -43,9 +43,15 @@ locals {
   }
 
 
+  # The workshop's apply creates only local.tables; attendees create the other topics later.
+  tagged_topics = {
+    for topic, tags in merge(local.topic_tags, local.agent_enabled ? local.agent_topic_tags : {}) :
+    topic => tags if !var.workshop || contains(keys(local.tables), topic)
+  }
+
   topic_tag_bindings = {
     for pair in flatten([
-      for topic, tags in merge(local.topic_tags, local.agent_enabled ? local.agent_topic_tags : {}) : [for tag in tags : { topic = topic, tag = tag }]
+      for topic, tags in local.tagged_topics : [for tag in tags : { topic = topic, tag = tag }]
     ]) : "${pair.topic}/${pair.tag}" => pair
   }
 }

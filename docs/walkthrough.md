@@ -160,4 +160,5 @@ a recording. Synthetic data only — no real PII; never commit secrets.
 ## Navigation
 
 - **Overview:** [README](../README.md)
+- **Workshop:** [workshop.md](./workshop.md)
 - **Data model:** [data-model.md](./data-model.md)

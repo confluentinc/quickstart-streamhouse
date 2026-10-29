@@ -8,6 +8,10 @@ River Air runs 180 flights a day through SFO. When flight RA417 from Chicago sli
 - **AI agents** through the [Real-Time Context Engine](https://docs.confluent.io/cloud/current/ai/real-time-context-engine/overview.html) (MCP)
 - **open analytics** through [Tableflow](https://docs.confluent.io/cloud/current/topics/tableflow/overview.html) to Iceberg in S3 with AWS Glue and Athena
 
+## Workshop
+
+Attending the hands-on workshop? Follow the **[self-service workshop guide](./docs/workshop.md)**. In about 60 minutes in your own Confluent Cloud account, you build the Flink tables and the recovery agent yourself and turn on Lightning Tables and RTCE by hand. It covers the live operations and recovery scenes; Tableflow and the Webhooks connector aren't part of it yet.
+
 ## Quickstart
 
 Prerequisites: `uv`, `terraform`, the Confluent CLI, and a Confluent Cloud account. The full setup is in the [walkthrough](./docs/walkthrough.md#prerequisites).
@@ -41,7 +45,7 @@ The browser polls every 2.5 seconds. Lightning credentials stay server-side. Wit
 | [`terraform/core/`](./terraform/core/) | Environment, Kafka cluster, Flink compute pool, service accounts, keys |
 | [`terraform/airline-demo/`](./terraform/airline-demo/) | The demo pipeline. The Flink SQL in [`sql/`](./terraform/airline-demo/sql/) is the source of truth |
 | [`tests/`](./tests/) | `uv run pytest` |
-| [`docs/`](./docs/) | Walkthrough, data model, and architecture diagram |
+| [`docs/`](./docs/) | Walkthrough, workshop guide, data model, and architecture diagram |
 
 Contributors and AI coding agents should read [AGENTS.md](./AGENTS.md).
 

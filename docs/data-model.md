@@ -160,6 +160,7 @@ uv run airport-datagen                 # 30 days of history + today, then stream
 uv run airport-datagen --skip-history  # today only, for a quick rehearsal
 uv run airport-datagen --speed 5       # play the 90-minute stream in 18 (rehearsals; timestamps keep stream time)
 uv run airport-datagen --minutes 0     # publish the current state and exit
+uv run airport-datagen --resume        # pick a stopped stream back up on its original clock
 uv run airport-datagen --dry-run --skip-history --minutes 5   # print JSON, no Kafka, no waiting
 uv run airport-datagen --reset         # tombstone every generated key
 ```

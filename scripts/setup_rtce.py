@@ -18,6 +18,8 @@ Usage:
     uv run setup-rtce --dry-run     # print what would be registered, touch no agent config
     uv run setup-rtce --lightning flight_impact                        # curl: scan a served table
     uv run setup-rtce --lightning passenger_state --key P-0928-417-001  # curl: one passenger
+    uv run setup-rtce --lightning hotel_inventory --run                # run it and print the rows
+    uv run setup-rtce --agent-connection   # the Flink connection the recovery agent's tool uses
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -202,10 +205,39 @@ def _key_owned_by(sa_id: str, api_key: str) -> bool:
         ["confluent", "api-key", "list", "--resource", "global", "--service-account", sa_id, "-o", "json"],
         capture_output=True, text=True, timeout=60,
     )
+    if result.returncode != 0:
+        return True  # can't tell (an expired login, say); keep the stored key
     try:
         return any(k.get("key") == api_key for k in json.loads(result.stdout or "[]"))
     except (json.JSONDecodeError, AttributeError):
         return True  # can't tell; keep the stored key and let the MCP check report it
+
+
+def ensure_global_key(creds_file: Path, creds: dict) -> str:
+    """The RTCE reader's Global API key, created and saved to credentials.env (and `creds`) when
+    there's none yet or the stored one belongs to a service account from an earlier deployment.
+
+    Terraform provisions the service account + role bindings; this creates the Global key
+    (--resource global) via CLI, which the Terraform provider can't do. Returns "" when
+    neither works.
+    """
+    sa_id = _read_core_tf_outputs(creds_file).get(_TF_RTCE_SA_ID, "").strip()
+    stored = (creds.get(_CRED_KEY) or "").strip()
+    if stored and sa_id and not _key_owned_by(sa_id, stored):
+        print(f"Stored RTCE key {stored[:8]}... is not a key of {sa_id} (earlier deployment).")
+        creds[_CRED_KEY] = creds[_CRED_SECRET] = ""
+    if not creds.get(_CRED_KEY) and sa_id:
+        print(f"Creating Global API key for RTCE service account {sa_id} via CLI...")
+        key, secret = _create_rtce_global_key_via_cli(sa_id)
+        if key and secret:
+            print(f"  ✓ Created Global API key: {key[:8]}...")
+            creds[_CRED_KEY] = key
+            creds[_CRED_SECRET] = secret
+            _save_to_env_file(creds_file, _CRED_KEY, key)
+            _save_to_env_file(creds_file, _CRED_SECRET, secret)
+        else:
+            print("  ✗ CLI key creation failed — check that `confluent login` is active.")
+    return creds.get(_CRED_KEY) or ""
 
 
 def _get_credentials(creds_file: Path, creds: dict) -> tuple[str, str]:
@@ -857,20 +889,15 @@ def _build_lightning_query(
     return f"{query} LIMIT {limit}"
 
 
-def lightning_command(
+def _lightning_request(
     infra: dict[str, str],
     api_key: str,
     api_secret: str,
     topic: str,
     key: str | None = None,
     limit: int = 10,
-) -> str:
-    """Build a shell-safe Lightning Queries curl command against this deployment.
-
-    Lightning Queries share the same Global API key + Basic-auth pattern as RTCE, but
-    hit the SQL query endpoint directly instead of going through the MCP protocol —
-    useful for showing "an app hitting current state directly" without an agent hop.
-    """
+) -> tuple[str, dict]:
+    """The Lightning Queries URL and request body for one query against this deployment."""
     region = infra.get("region", "")
     cloud = infra.get("cloud", "aws").lower()
     org_id = infra.get("org_id", "")
@@ -892,23 +919,63 @@ def lightning_command(
             + ", ".join(missing or ["API key/secret"])
         )
     url = f"https://sql.{region}.{cloud}.confluent.cloud/query/v1alpha1"
-    payload = json.dumps(
-        {
-            "catalog_name": env_id,
-            "database_name": cluster_id,
-            "query": _build_lightning_query(topic, key=key, limit=limit),
-        },
-        indent=2,
-    )
+    body = {
+        "catalog_name": env_id,
+        "database_name": cluster_id,
+        "query": _build_lightning_query(topic, key=key, limit=limit),
+    }
+    return url, body
+
+
+def lightning_command(
+    infra: dict[str, str],
+    api_key: str,
+    api_secret: str,
+    topic: str,
+    key: str | None = None,
+    limit: int = 10,
+) -> str:
+    """Build a shell-safe Lightning Queries curl command against this deployment.
+
+    Lightning Queries share the same Global API key + Basic-auth pattern as RTCE, but
+    hit the SQL query endpoint directly instead of going through the MCP protocol —
+    useful for showing "an app hitting current state directly" without an agent hop.
+    """
+    url, body = _lightning_request(infra, api_key, api_secret, topic, key, limit)
     token = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
     return " \\\n  ".join(
         (
             "curl -sS -X POST " + shlex.quote(url),
             "-H " + shlex.quote("Authorization: Basic " + token),
             "-H " + shlex.quote("Content-Type: application/json"),
-            "-d " + shlex.quote(payload),
+            "-d " + shlex.quote(json.dumps(body, indent=2)),
         )
     )
+
+
+def run_lightning_query(
+    infra: dict[str, str],
+    api_key: str,
+    api_secret: str,
+    topic: str,
+    key: str | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    """Run one Lightning Query and return its rows with lowercase column names, as the app reads them.
+
+    Unlike lightning_command, the key never reaches the terminal or its history.
+    """
+    url, body = _lightning_request(infra, api_key, api_secret, topic, key, limit)
+    token = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode(),
+        headers={"Authorization": f"Basic {token}", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        result = json.loads(resp.read()).get("result", {})
+    columns = [c["name"].lower() for c in result.get("schema", {}).get("columns", [])]
+    return [dict(zip(columns, row, strict=False)) for row in result.get("data", [])]
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -948,11 +1015,24 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="N",
         help="with --lightning: max rows to return (default: 10)",
     )
+    parser.add_argument(
+        "--run",
+        action="store_true",
+        help="with --lightning: run the query and print its rows instead of a curl command",
+    )
+    parser.add_argument(
+        "--agent-connection",
+        action="store_true",
+        help=f"create or refresh the Flink connection '{AGENT_CONNECTION}' that the recovery agent's "
+        "tool uses; do not configure an MCP client",
+    )
     args = parser.parse_args(argv)
     if args.lightning and (args.client or args.dry_run):
         parser.error("--lightning cannot be combined with --client or --dry-run")
-    if (args.key or args.limit != 10) and not args.lightning:
-        parser.error("--key/--limit only apply with --lightning")
+    if (args.key or args.limit != 10 or args.run) and not args.lightning:
+        parser.error("--key/--limit/--run only apply with --lightning")
+    if args.agent_connection and (args.lightning or args.client or args.dry_run):
+        parser.error("--agent-connection cannot be combined with --lightning, --client, or --dry-run")
     if args.limit < 1:
         parser.error("--limit must be >= 1")
     return args
@@ -964,31 +1044,12 @@ def main(argv: list[str] | None = None):
     creds_file = _find_credentials_file()
     creds = _load_env_file(creds_file)
 
-    # Auto-create a Global API key when none is stored in credentials.env, or when the
-    # stored one belongs to a service account from an earlier deployment.
-    # Terraform provisions the service account + role bindings; this script creates
-    # the Global key (--resource global) via CLI, which the Terraform provider can't do.
-    sa_id = _read_core_tf_outputs(creds_file).get(_TF_RTCE_SA_ID, "").strip()
-    stored = creds.get(_CRED_KEY, "").strip()
-    if stored and sa_id and not args.dry_run and not _key_owned_by(sa_id, stored):
-        print(f"Stored RTCE key {stored[:8]}... is not a key of {sa_id} (earlier deployment).")
-        creds[_CRED_KEY] = creds[_CRED_SECRET] = ""
-    if not creds.get(_CRED_KEY) and not args.dry_run:
-        if sa_id:
-            print(
-                f"Creating Global API key for RTCE service account {sa_id} via CLI..."
-            )
-            key, secret = _create_rtce_global_key_via_cli(sa_id)
-            if key and secret:
-                print(f"  ✓ Created Global API key: {key[:8]}...")
-                creds[_CRED_KEY] = key
-                creds[_CRED_SECRET] = secret
-                _save_to_env_file(creds_file, _CRED_KEY, key)
-                _save_to_env_file(creds_file, _CRED_SECRET, secret)
-            else:
-                print(
-                    "  ✗ CLI key creation failed — check that `confluent login` is active."
-                )
+    if args.agent_connection:
+        from scripts.login_checks import ensure_confluent_login
+
+        ensure_confluent_login(creds)  # the key and the connection are both made with the CLI
+    if not args.dry_run:
+        ensure_global_key(creds_file, creds)
 
     api_key, api_secret = _get_credentials(creds_file, creds)
     infra = _get_infra(creds_file)
@@ -996,13 +1057,30 @@ def main(argv: list[str] | None = None):
 
     if args.lightning:
         try:
-            print(
-                lightning_command(
-                    infra, api_key, api_secret, args.lightning, args.key, args.limit
+            if args.run:
+                started = time.monotonic()
+                rows = run_lightning_query(infra, api_key, api_secret, args.lightning, args.key, args.limit)
+                for row in rows:
+                    print(json.dumps(row, default=str))
+                print(f"{len(rows)} row(s) in {(time.monotonic() - started) * 1000:.0f} ms, round trip")
+            else:
+                print(
+                    lightning_command(
+                        infra, api_key, api_secret, args.lightning, args.key, args.limit
+                    )
                 )
-            )
         except ValueError as exc:
             sys.exit(str(exc))
+        except urllib.error.HTTPError as exc:
+            sys.exit(f"Lightning query returned HTTP {exc.code}: {exc.read().decode(errors='replace')[:300]}")
+        except urllib.error.URLError as exc:
+            sys.exit(f"Lightning query failed: {exc.reason}")
+        return
+
+    if args.agent_connection:
+        if not create_agent_connection(infra, api_key, api_secret):
+            sys.exit(f"✗ Could not create the Flink connection '{AGENT_CONNECTION}' (see the error above).")
+        print(f"✓ Flink connection '{AGENT_CONNECTION}' points at {_mcp_url(infra)}")
         return
 
     # We name the MCP server ourselves — no prompt. See _DEFAULT_SERVER_NAME.

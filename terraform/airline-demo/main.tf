@@ -19,6 +19,10 @@
 # evolvable in place with CREATE OR ALTER (Flink migrates to the same backing topic,
 # so Lightning/RTCE/Tableflow are unaffected). Tableflow syncs selected tables to
 # Iceberg in S3 with an AWS Glue Data Catalog for Demo 3 — see analytics.tf.
+#
+# The workshop (var.workshop, docs/workshop.md) stops at the source tables and
+# passenger_recommendations: attendees create passenger_state, flight_impact, and
+# the recovery agent from the same .sql files in the SQL workspace.
 # ===========================================================================
 
 data "terraform_remote_state" "core" {
@@ -38,8 +42,8 @@ data "confluent_flink_region" "airport" {
 locals {
   core = data.terraform_remote_state.core.outputs
   # The webhook connector needs a Dedicated cluster. A core state from before the
-  # dedicated_cluster output existed has a Standard one.
-  webhook_enabled = try(local.core.dedicated_cluster, false)
+  # dedicated_cluster output existed has a Standard one. The workshop has no webhook.
+  webhook_enabled = try(local.core.dedicated_cluster, false) && !var.workshop
   catalog         = local.core.confluent_environment_display_name
   database        = local.core.confluent_kafka_cluster_display_name
   rest_endpoint   = data.confluent_flink_region.airport.rest_endpoint
@@ -67,11 +71,24 @@ locals {
   # var.aws_tableflow_access_key — nonsensitive() is needed because
   # count/for_each can't take a sensitive value. try() treats a core state from
   # before this output existed as "no creds", so plan and destroy still work.
-  analytics_enabled = var.enable_analytics && try(nonsensitive(local.core.aws_tableflow_credentials_present), false)
+  # The workshop leaves Tableflow out.
+  analytics_enabled = var.enable_analytics && !var.workshop && try(nonsensitive(local.core.aws_tableflow_credentials_present), false)
 
   # The recovery agent needs Claude on Bedrock (core) and the RTCE connection, which
   # `uv run deploy` creates with the CLI after RTCE is enabled and then sets the toggle.
-  agent_enabled = var.enable_recovery_agent && local.core.bedrock_enabled
+  # Workshop attendees create their own agent on a Confluent-hosted model instead.
+  agent_enabled = var.enable_recovery_agent && local.core.bedrock_enabled && !var.workshop
+
+  # The three source feeds, the recovery offers, and (outside the workshop) the webhook's landing table.
+  tables = merge(
+    {
+      flight_status             = "sql/20-source-flight-status.sql"
+      passenger_itineraries     = "sql/21-source-passenger-itineraries.sql"
+      hotel_inventory           = "sql/22-source-hotel-inventory.sql"
+      passenger_recommendations = "sql/23-serving-passenger-recommendations.sql"
+    },
+    var.workshop ? {} : { hotel_availability_updates = "sql/33-staging-hotel-availability-updates.sql" },
+  )
 
   agent_setup = {
     model        = "sql/28-model-passenger-recovery.sql"
@@ -86,13 +103,7 @@ locals {
 # names use "airport-table-*" so they don't collide with the "airport-create-*"
 # statements an older deployment may still have running.
 resource "confluent_flink_statement" "tables" {
-  for_each = {
-    flight_status              = "sql/20-source-flight-status.sql"
-    passenger_itineraries      = "sql/21-source-passenger-itineraries.sql"
-    hotel_inventory            = "sql/22-source-hotel-inventory.sql"
-    passenger_recommendations  = "sql/23-serving-passenger-recommendations.sql"
-    hotel_availability_updates = "sql/33-staging-hotel-availability-updates.sql"
-  }
+  for_each = local.tables
 
   organization { id = data.confluent_organization.main.id }
   environment { id = local.core.confluent_environment_id }
@@ -113,8 +124,10 @@ resource "confluent_flink_statement" "tables" {
 # --- Per-passenger connection risk: passenger_state (MATERIALIZED TABLE) ----
 # Joins passenger_itineraries to flight_status. A .sql change replaces this
 # statement, which re-runs CREATE OR ALTER and migrates the query onto the same
-# backing topic (consumers unaffected).
+# backing topic (consumers unaffected). Workshop attendees create it themselves.
 resource "confluent_flink_statement" "passenger_state" {
+  count = var.workshop ? 0 : 1
+
   organization { id = data.confluent_organization.main.id }
   environment { id = local.core.confluent_environment_id }
   compute_pool { id = local.core.confluent_flink_compute_pool_id }
@@ -135,8 +148,10 @@ resource "confluent_flink_statement" "passenger_state" {
 
 # --- Per-flight rollup: flight_impact (MATERIALIZED TABLE) ------------------
 # Counts HIGH-risk passengers from passenger_state, so it depends on that
-# materialized table existing.
+# materialized table existing. Workshop attendees create it themselves.
 resource "confluent_flink_statement" "flight_impact" {
+  count = var.workshop ? 0 : 1
+
   organization { id = data.confluent_organization.main.id }
   environment { id = local.core.confluent_environment_id }
   compute_pool { id = local.core.confluent_flink_compute_pool_id }

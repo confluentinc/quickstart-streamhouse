@@ -20,6 +20,7 @@ RA417's offers and the generator writes every other flight's.
     uv run airport-datagen --offers generator  # write RA417's offers even if the agent runs
     uv run airport-datagen --speed 5        # play the 90-minute stream in 18 minutes
     uv run airport-datagen --minutes 0      # publish the current state and exit
+    uv run airport-datagen --resume         # pick a stopped stream back up on its original clock
     uv run airport-datagen --dry-run --skip-history --minutes 5
     uv run airport-datagen --reset          # tombstone every generated key
 """
@@ -448,6 +449,12 @@ def build_plan(start: datetime, seed: int = SEED, history: bool = True) -> Plan:
     return Plan(start, days, tomorrow, recoveries, seed)
 
 
+def passenger_to_follow(plan: Plan) -> Passenger:
+    """The first passenger on the live day's RA417 who misses a connection; the stream names them at the start."""
+    hero = plan.live.hero
+    return next(p for p in plan.live.passengers if p.inbound is hero and p.impacted_at)
+
+
 def _hotel(name: str, rooms: int) -> dict:
     return dict(available_rooms=rooms, nightly_rate=HOTEL_RATES[name])
 
@@ -629,6 +636,11 @@ def _pid_file():
     return get_project_root() / "tmp" / "datagen.pid"
 
 
+def _start_file():
+    """The last stream's start, which --resume picks back up."""
+    return get_project_root() / "tmp" / "datagen.start"
+
+
 def stop_previous_stream() -> None:
     """Stop a stream left running by an earlier deploy or run, so two streams never interleave."""
     path = _pid_file()
@@ -662,6 +674,19 @@ def _due(start: datetime, at: datetime, speed: float) -> datetime:
     return start + (at - start) / speed
 
 
+def _catch_up(events: list, start: datetime, now: datetime, speed: float) -> list:
+    """The events, with the ones already due collapsed to each key's latest.
+
+    A resumed stream then catches up at once instead of replaying, say, RA417's whole delay ramp,
+    which would turn its passengers back to OK for a moment.
+    """
+    due = 0
+    while due < len(events) and _due(start, events[due][0], speed) <= now:
+        due += 1
+    latest = {(topic, key): (at, topic, key, value) for at, topic, key, value in events[:due]}
+    return sorted(latest.values(), key=lambda event: event[0]) + events[due:]
+
+
 def run(start: datetime, seed: int = SEED, history: bool = True, minutes: int = STREAM_MINUTES,
         dry_run: bool = False, stream_only: bool = False, agent_offers: bool = False,
         speed: float = 1.0) -> None:
@@ -687,9 +712,21 @@ def run(start: datetime, seed: int = SEED, history: bool = True, minutes: int = 
     if not dry_run:
         pid_file.parent.mkdir(exist_ok=True)
         pid_file.write_text(str(os.getpid()))
+        _start_file().write_text(f"{plan.start.isoformat()} {speed:g}")
+        events = _catch_up(events, plan.start, datetime.now(timezone.utc).replace(tzinfo=None), speed)
     hero = plan.live.hero
     logging.info("Streaming %d updates for %d minutes (%.4g minutes of waiting at %gx); %s is scheduled at %s UTC",
                  len(events), minutes, minutes / speed, speed, hero.key, f"{hero.scheduled:%H:%M}")
+    follow = passenger_to_follow(plan)
+    logging.info("Passenger to follow: %s, seat %s on %s, connecting to %s for %s", follow.key,
+                 follow.inbound_seat, hero.key, follow.connecting.key, follow.connecting.destination)
+    impacted = [p.impacted_at for p in plan.live.passengers if p.inbound is hero and p.impacted_at]
+    end = plan.start + timedelta(minutes=minutes)
+    for moment, at in ((f"{hero.key}'s first passenger turns HIGH", min(impacted)),
+                       (f"{hero.key}'s last passenger turns HIGH", max(impacted)),
+                       (f"{GRAND_HYATT} sells out", plan.start + SELLOUT)):
+        if at <= end:
+            logging.info("%s at %s UTC", moment, f"{_due(plan.start, at, speed):%H:%M}")
     try:
         minute, sent = None, 0
         for at, topic, key, value in events:
@@ -737,9 +774,20 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--reset", action="store_true", help="write tombstones for every generated key")
     parser.add_argument("--offers", choices=("auto", "agent", "generator"), default="auto",
                         help="who writes RA417's offers (default auto: the agent when Terraform runs it)")
+    parser.add_argument("--resume", action="store_true",
+                        help="pick the last stream back up where its clock is now, at its start and speed, "
+                             "without republishing; with --offers generator, RA417's missed offers arrive at once")
     args = parser.parse_args(argv)
     if args.speed <= 0:
         parser.error("--speed must be greater than 0")
+    if args.resume:
+        if args.now or args.stream_only or args.reset:
+            parser.error("--resume sets its own --now and --stream-only, and can't be combined with --reset")
+        try:
+            args.now, speed = _start_file().read_text().split()
+        except (OSError, ValueError):
+            parser.error("there's no stream to resume yet; start one with `uv run airport-datagen`")
+        args.speed, args.stream_only = float(speed), True
     setup_logging()
     start = _clock(args.now)
     try:

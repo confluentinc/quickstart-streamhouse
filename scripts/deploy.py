@@ -14,6 +14,12 @@ Always runs, in order:
      the coding agent chosen up front (same as `uv run setup-rtce`).
   5. Topic tag colors through the Catalog API, after the recovery agent setup.
 
+With --workshop, steps 1 and 2 build only the three source feeds and
+passenger_recommendations, and deploy stops after the Global API key and tag colors:
+attendees publish the data, build passenger_state, flight_impact, and the recovery
+agent, and turn on Lightning Tables and RTCE themselves (docs/workshop.md). The
+choice is saved to credentials.env, so later runs stay in workshop mode.
+
 AWS-only by design (RTCE + Flink Native Inference are AWS-only), so there is no
 cloud or region choice. Resource names use TF_VAR_resource_prefix from
 credentials.env, or DEFAULT_PREFIX when unset (saved on first run so later
@@ -23,6 +29,7 @@ RIVER-AIR-PROD-ENV and RIVER-AIR-PROD-CLUSTER.
 
 Usage:
   uv run deploy               # interactive; the only command a person needs
+  uv run deploy --workshop    # interactive; the self-service workshop's starting point
   uv run deploy --automated   # bots: non-interactive from credentials.env, registers Claude Code
   uv run deploy --testing     # bots: non-interactive from credentials.env, no MCP registration
 """
@@ -52,6 +59,7 @@ from scripts.ui import prompt_with_default
 DEFAULT_REGION = "us-east-1"  # RTCE-supported; Bedrock Claude available here
 DEFAULT_PREFIX = "flight-recovery"
 DEPLOY_TARGETS = ["core", "airline-demo"]
+WORKSHOP = "TF_VAR_workshop"  # credentials.env flag that keeps a checkout in workshop mode
 # The recovery agent's statements in terraform/airline-demo, applied once RTCE is up.
 AGENT_TARGETS = (
     "confluent_flink_statement.agent_setup",
@@ -59,8 +67,10 @@ AGENT_TARGETS = (
     "confluent_flink_statement.impacted_passengers",
     "confluent_flink_statement.recovery_agent",
     "confluent_flink_statement.recovery_offers",
-    # Conditional (count) on a Dedicated cluster, so Terraform moves them to [0] in state and
-    # rejects a targeted plan that leaves them out.
+    # Conditional (count) outside the workshop or on a Dedicated cluster, so Terraform moves them
+    # to [0] in state and rejects a targeted plan that leaves them out.
+    "confluent_flink_statement.passenger_state",
+    "confluent_flink_statement.flight_impact",
     "confluent_api_key.hotel_webhook",
     "confluent_connector.hotel_webhook",
     "confluent_flink_statement.hotel_inventory_feed",
@@ -159,8 +169,31 @@ def _deploy(root, targets, video_2: bool = False) -> None:
     print("\n✓ All deployments completed successfully!")
 
 
+def _workshop_mode(requested: bool, creds_file, creds: dict) -> bool:
+    """True for a workshop deploy, asked for now or earlier in this checkout; saved so later runs stay in it.
+
+    A checkout with a full deployment can't switch, because a workshop apply destroys what the full one
+    built; `uv run destroy` clears the choice.
+    """
+    if creds.get(WORKSHOP) == "true":
+        return True
+    if not requested:
+        return False
+    if (creds_file.parent / "terraform" / "airline-demo" / "terraform.tfstate").exists():
+        sys.exit("This checkout already has a full deployment, which --workshop would partly destroy. "
+                 "Run `uv run destroy` first, or deploy the workshop from another clone.")
+    _save_env_safe(creds_file, WORKSHOP, "true")
+    creds[WORKSHOP] = "true"
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description="Deploy the Streamhouse airline demo")
+    parser.add_argument(
+        "--workshop",
+        action="store_true",
+        help="Deploy the self-service workshop's starting point (docs/workshop.md): the source feeds only",
+    )
     parser.add_argument(
         "--automated",
         action="store_true",
@@ -177,6 +210,8 @@ def main():
     args = parser.parse_args()
     if args.automated and args.testing:
         parser.error("--automated and --testing are mutually exclusive")
+    if args.workshop and args.video_2:
+        parser.error("--workshop and --video-2 are mutually exclusive")
     if args.speed <= 0:
         parser.error("--speed must be greater than 0")
 
@@ -208,18 +243,26 @@ def main():
 
         region = creds.get("TF_VAR_cloud_region", DEFAULT_REGION) or DEFAULT_REGION
         prefix = creds.get("TF_VAR_resource_prefix", "") or ""
+        workshop = _workshop_mode(args.workshop, creds_file, creds)
         ensure_confluent_login(creds)
-        print(f"✓ Credentials loaded. Region: {region}. Deploying: {', '.join(DEPLOY_TARGETS)}\n")
+        print(f"✓ Credentials loaded. Region: {region}. Deploying: {', '.join(DEPLOY_TARGETS)}"
+              f"{' (workshop)' if workshop else ''}\n")
         write_tfvars_for_deployment(root, region, creds, resource_prefix=prefix)
         for key, value in creds.items():
             if value:
                 os.environ[key] = value
         _deploy(root, DEPLOY_TARGETS, args.video_2)
-        _finish(root, "claude" if args.automated else "none", args.video_2, args.speed)
+        if workshop:
+            _finish_workshop(root)
+        else:
+            _finish(root, "claude" if args.automated else "none", args.video_2, args.speed)
         return
 
     # ---- Interactive -----------------------------------------------------
     creds_file, creds = load_or_create_credentials_file(root)
+    workshop = _workshop_mode(args.workshop, creds_file, creds)
+    if workshop:
+        print("\nWorkshop mode: deploys the source feeds only; the labs in docs/workshop.md build the rest.")
 
     # Confluent Cloud login (saved for auto-login).
     if not (creds.get("CONFLUENT_EMAIL") and creds.get("CONFLUENT_PASSWORD")):
@@ -275,13 +318,67 @@ def main():
     _save_env_safe(creds_file, "TF_VAR_confluent_cloud_api_key", api_key)
     _save_env_safe(creds_file, "TF_VAR_confluent_cloud_api_secret", api_secret)
 
-    # AWS credentials power core's Bedrock connection and the Tableflow S3/Glue
-    # analytics path (Demo 3) — both OPTIONAL, and both use the same identity
-    # in a demo, so one credential covers both.
-    # Try the ambient AWS credential chain first: pasting a long temporary
-    # session token into a plain terminal prompt can freeze some terminals,
-    # and most people running this already have valid AWS creds in their
-    # shell (`aws sso login`, env vars, a profile).
+    # The workshop's agent runs on a Confluent-hosted model, and it has no Tableflow scene.
+    if not workshop:
+        _prompt_aws_credentials(creds_file, creds)
+
+    _flush_pending_writes(creds_file)
+
+    final_creds = dotenv_values(creds_file)
+    print("\n--- Configuration Summary ---")
+    print(f"Resource name prefix: {prefix}")
+    print(f"Region: {region}")
+    api_key_state = "set" if final_creds.get("TF_VAR_confluent_cloud_api_key") else "MISSING"
+    print(f"Confluent Cloud API key: {api_key_state}")
+    print(f"Confluent CLI auto-login: {'saved' if final_creds.get('CONFLUENT_EMAIL') else 'not saved'}")
+    if workshop:
+        print("Workshop: source feeds only; you build the Flink tables and the agent, and turn on RTCE")
+        print(f"Deploying: {', '.join(DEPLOY_TARGETS)}")
+    else:
+        bedrock_state = (
+            "ENABLED" if final_creds.get("TF_VAR_aws_bedrock_access_key") else "skipped (no Bedrock creds)"
+        )
+        print(f"Bedrock connection: {bedrock_state}")
+        analytics_state = (
+            "ENABLED" if final_creds.get("TF_VAR_aws_tableflow_access_key") else "skipped (no Tableflow AWS creds)"
+        )
+        print(f"Tableflow S3/Glue analytics (Demo 3): {analytics_state}")
+        print(f"Deploying: {', '.join(DEPLOY_TARGETS)}, then demo data and RTCE")
+
+    client = "none" if workshop else setup_rtce._pick_client()
+
+    if input("\nReady to deploy? (y/n): ").strip().lower() != "y":
+        print("Deployment cancelled.")
+        sys.exit(0)
+
+    write_tfvars_for_deployment(root, region, final_creds, resource_prefix=prefix)
+    for key, value in final_creds.items():
+        if value:
+            os.environ[key] = value
+    _deploy(root, DEPLOY_TARGETS, args.video_2)
+    if workshop:
+        _finish_workshop(root)
+        return
+    _finish(root, client, args.video_2, args.speed)
+    if input("\nStart the app at http://127.0.0.1:8000 now? (Y/n): ").strip().lower() in ("", "y"):
+        from scripts.airport_app import main as run_app
+
+        run_app([])
+    else:
+        print("Start it later with: uv run airport-app")
+
+
+def _prompt_aws_credentials(creds_file, creds: dict) -> None:
+    """Ask for the optional AWS credentials and save them to credentials.env.
+
+    AWS credentials power core's Bedrock connection and the Tableflow S3/Glue
+    analytics path (Demo 3) — both OPTIONAL, and both use the same identity
+    in a demo, so one credential covers both.
+    Try the ambient AWS credential chain first: pasting a long temporary
+    session token into a plain terminal prompt can freeze some terminals,
+    and most people running this already have valid AWS creds in their
+    shell (`aws sso login`, env vars, a profile).
+    """
     print(
         "\nAWS credentials power the Bedrock connection and the Tableflow S3/Glue"
         "\nanalytics path (Demo 3). Both are optional — without them, everything"
@@ -329,42 +426,6 @@ def main():
             for name in ("aws_session_token", "aws_tableflow_session_token"):
                 _save_env_safe(creds_file, f"TF_VAR_{name}", token)
 
-    _flush_pending_writes(creds_file)
-
-    final_creds = dotenv_values(creds_file)
-    print("\n--- Configuration Summary ---")
-    print(f"Resource name prefix: {prefix}")
-    print(f"Region: {region}")
-    api_key_state = "set" if final_creds.get("TF_VAR_confluent_cloud_api_key") else "MISSING"
-    print(f"Confluent Cloud API key: {api_key_state}")
-    print(f"Confluent CLI auto-login: {'saved' if final_creds.get('CONFLUENT_EMAIL') else 'not saved'}")
-    bedrock_state = "ENABLED" if final_creds.get("TF_VAR_aws_bedrock_access_key") else "skipped (no Bedrock creds)"
-    print(f"Bedrock connection: {bedrock_state}")
-    analytics_state = (
-        "ENABLED" if final_creds.get("TF_VAR_aws_tableflow_access_key") else "skipped (no Tableflow AWS creds)"
-    )
-    print(f"Tableflow S3/Glue analytics (Demo 3): {analytics_state}")
-    print(f"Deploying: {', '.join(DEPLOY_TARGETS)}, then demo data and RTCE")
-
-    client = setup_rtce._pick_client()
-
-    if input("\nReady to deploy? (y/n): ").strip().lower() != "y":
-        print("Deployment cancelled.")
-        sys.exit(0)
-
-    write_tfvars_for_deployment(root, region, final_creds, resource_prefix=prefix)
-    for key, value in final_creds.items():
-        if value:
-            os.environ[key] = value
-    _deploy(root, DEPLOY_TARGETS, args.video_2)
-    _finish(root, client, args.video_2, args.speed)
-    if input("\nStart the app at http://127.0.0.1:8000 now? (Y/n): ").strip().lower() in ("", "y"):
-        from scripts.airport_app import main as run_app
-
-        run_app([])
-    else:
-        print("Start it later with: uv run airport-app")
-
 
 def _finish(root, client: str, video_2: bool = False, speed: float = 1.0) -> None:
     """Publish the demo data, start the live stream, enable Lightning Tables/RTCE, then the agent.
@@ -393,6 +454,22 @@ def _finish(root, client: str, video_2: bool = False, speed: float = 1.0) -> Non
     print("\n=== Applying topic tag colors ===")
     apply_tag_colors(root)
     _print_env_name(root)
+
+
+def _finish_workshop(root) -> None:
+    """Stop where docs/workshop.md begins, adding only the Global API key the app reads Lightning with.
+
+    Attendees publish the data, build passenger_state, flight_impact, and the recovery agent, and turn on
+    Lightning Tables and RTCE in the labs.
+    """
+    print("\n=== Creating the Lightning and RTCE API key ===")
+    creds_file = root / "credentials.env"
+    if not setup_rtce.ensure_global_key(creds_file, dotenv_values(str(creds_file))):
+        print("⚠ No Global API key yet. Rerun `uv run deploy --workshop` to try again.")
+    print("\n=== Applying topic tag colors ===")
+    apply_tag_colors(root)
+    _print_env_name(root)
+    print("\n✓ Your workshop environment is ready. Next: \"Start the data\" in docs/workshop.md.")
 
 
 def _bedrock_enabled(root) -> bool:
@@ -484,6 +561,8 @@ def _print_env_name(root) -> None:
         outputs = run_terraform_output(core_state)
         if "confluent_environment_display_name" in outputs:
             print(f"\nEnvironment name: {outputs['confluent_environment_display_name']}")
+        if "confluent_kafka_cluster_display_name" in outputs:
+            print(f"Cluster name: {outputs['confluent_kafka_cluster_display_name']}")
     except Exception as e:
         print(f"\n⚠ Could not read Terraform outputs: {e}")
 

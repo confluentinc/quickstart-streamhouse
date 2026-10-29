@@ -11,9 +11,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from dotenv import dotenv_values
+from dotenv import dotenv_values, unset_key
 
 from .credentials import load_or_create_credentials_file
+from .deploy import WORKSHOP
 from .login_checks import ensure_confluent_login
 from .terraform import get_project_root
 from .terraform_runner import run_terraform_destroy
@@ -242,6 +243,11 @@ def main():
             sys.exit(1)
 
     _cleanup_mcp(root)
+
+    # With nothing deployed, the next deploy can be either kind again.
+    creds_file = root / "credentials.env"
+    if creds_file.exists() and dotenv_values(str(creds_file)).get(WORKSHOP):
+        unset_key(str(creds_file), WORKSHOP)
 
     print("\n✓ Destroy process completed!")
 

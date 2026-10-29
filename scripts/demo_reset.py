@@ -68,6 +68,8 @@ WEBHOOK_TARGETS = (
     "confluent_connector.hotel_webhook",
     "confluent_flink_statement.hotel_inventory_feed",
 )
+# passenger_state and flight_impact became conditional the same way (the workshop leaves them out).
+SERVING_TARGETS = ("confluent_flink_statement.passenger_state", "confluent_flink_statement.flight_impact")
 
 
 class Flink:
@@ -159,7 +161,7 @@ def reset(root, flink: Flink, speed: float = 1.0) -> None:
 
     print("Rebuilding the staging tables off screen...")
     os.environ["TF_VAR_enable_recovery_agent"] = "true"
-    if not run_terraform(demo, targets=STAGING_TARGETS + WEBHOOK_TARGETS):
+    if not run_terraform(demo, targets=STAGING_TARGETS + SERVING_TARGETS + WEBHOOK_TARGETS):
         raise RuntimeError("Rebuilding passenger_state_changes and impacted_passengers failed")
 
     start = airport_datagen._clock(None)
