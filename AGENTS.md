@@ -20,7 +20,8 @@ This repository is the River Air flight recovery demo on Confluent Cloud. The de
 
 * Run joins, aggregations, enrichment, and complex computation in Flink, not Lightning Tables.
 * The app reads current state through Lightning Tables; connected agents can query it through RTCE/MCP. Flink output reaches Lightning only at its once-a-minute commit, so the app reads flight status and delay from the `flight_status` source and uses `flight_impact` for at-risk counts.
-* Every Lightning query returns at most 200 rows, even with `LIMIT 500` or a filter, and OFFSET, COUNT, and GROUP BY are rejected. Keep one service day at 180 flights so a single windowed query returns it, and page anything larger by key (`WHERE "KEY" > 'last' ORDER BY "KEY" LIMIT 200`).
+* Every Lightning query returns at most 200 rows, even with `LIMIT 500` or a filter, and OFFSET, COUNT, and GROUP BY are rejected. Keep one service day at 180 flights so a single windowed query usually returns it, and page anything larger by key (`WHERE "KEY" > 'last' ORDER BY "KEY" LIMIT 200`). The app pages its flights window by `scheduled_time` instead.
+* After Lightning is enabled on `flight_status`, it can keep a frozen copy of a flight's row beside the live one (seen in the 2026-10-28 workshop run), and no column tells them apart. The app keeps one row per flight: the copy whose delay `flight_impact` reports, or, before Flink catches up, the copy furthest along.
 * Tableflow writes Iceberg to a customer-owned S3 bucket with an AWS Glue catalog when AWS credentials are present (`terraform/airline-demo/analytics.tf`). No Webhooks source connector is deployed yet; the generator publishes hotel rows directly.
 * Use synthetic data only; no real passenger/customer PII.
 * Keep secrets and internal material out of tracked files.

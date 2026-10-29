@@ -279,6 +279,36 @@ def test_flights_show_live_status_and_delay_with_flinks_at_risk_count(fake):
     assert body["counts"]["delayed"] == 1
 
 
+def _copy(status_row, delay, status):
+    """Another flight_status row for the same flight, like the frozen copy Lightning can keep beside the live one."""
+    estimated = datetime.fromisoformat(status_row["scheduled_time"]) + timedelta(minutes=delay)
+    return {**status_row, "estimated_time": f"{estimated:%Y-%m-%d %H:%M:%S}.000000", "status": status}
+
+
+def test_each_flight_shows_once_with_its_live_copy_past_the_200_row_cap(fake):
+    start = NOW - airport_app.WINDOW_BEFORE
+    flights = [_flight(n, f"{start + timedelta(minutes=8 * n):%Y-%m-%d %H:%M:%S}.000000", 0, 0) for n in range(180)]
+    # flight: (frozen copy, live copy, flight_impact's delay), as on 2026-10-29's workshop run
+    cases = {150: ((46, "DELAYED"), (115, "DELAYED"), 115),   # the delay grew
+             151: ((227, "DELAYED"), (225, "DELAYED"), 225),  # an estimate came down
+             152: ((20, "DELAYED"), (25, "LANDED"), 22)}      # Flink hasn't caught up with the landing yet
+    frozen = []
+    for n, ((old_delay, old_status), (delay, status), reported) in cases.items():
+        live, impact = _flight(n, flights[n][0]["scheduled_time"], delay, 9, status)
+        flights[n] = (live, {**impact, "delay_minutes": str(reported)})
+        frozen.append(_copy(live, old_delay, old_status))
+    frozen += [dict(live) for live, _ in flights[:32]]  # copies that never diverged
+    _set_flights(fake, *flights)
+    fake.tables["flight_status"] = frozen + fake.tables["flight_status"]  # 215 rows, the frozen copies first
+    client = TestClient(airport_app.app)
+    body = client.get("/api/state").json()
+    assert [row["key"] for row in body["flights"]] == [live["key"] for live, _ in flights]
+    assert body["counts"]["flights"] == 180
+    shown = {row["key"]: (row["delay_minutes"], row["status"]) for row in body["flights"]}
+    assert [shown[f"RA{n}-20260928"] for n in cases] == [(115, "DELAYED"), (225, "DELAYED"), (25, "LANDED")]
+    assert client.get("/api/flight/RA150-20260928").json()["flight"]["delay_minutes"] == 115
+
+
 def _passenger(n, inbound, connecting, risk):
     return {"key": f"P-0928-{n}", "inbound_flight_id": inbound, "inbound_seat": f"{n % 30 + 1}A",
             "connecting_flight_id": connecting, "connecting_seat": f"{n % 30 + 1}F" if connecting else None,

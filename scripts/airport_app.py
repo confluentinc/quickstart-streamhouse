@@ -31,6 +31,7 @@ PAGE_SIZE = rtce.LIGHTNING_MAX_ROWS
 WINDOW_BEFORE = timedelta(hours=18)
 WINDOW_AFTER = timedelta(hours=6)
 DELAYED_MINUTES = 15
+STAGES = {"BOARDING": 1, "DEPARTED": 2, "LANDED": 2}  # how far along a flight's day is; earlier statuses are 0
 
 
 class Deployment:
@@ -189,16 +190,60 @@ def _hotel_options() -> list[dict]:
                   key=lambda row: Decimal(str(row["nightly_rate"])))
 
 
-def _flights(key: str | None = None, limit: int = PAGE_SIZE, where=(), order_by=None) -> list[dict]:
-    """Status and delay from flight_status (live within seconds) plus flight_impact's at-risk count (about a minute)."""
-    impact = _pool.submit(_rows, "flight_impact", key, limit, where, order_by)
+def _scheduled_rows(topic: str, start: datetime, end: datetime) -> list[dict]:
+    """Every row scheduled in [start, end), paging on scheduled_time past Lightning's 200-row cap."""
+    rows: dict[tuple, dict] = {}
+    since = start
+    while True:
+        page = _rows(topic, where=[("scheduled_time", ">=", since), ("scheduled_time", "<", end)],
+                     order_by=("scheduled_time", "ASC"))
+        rows.update((tuple(row.items()), row) for row in page)  # each page repeats the last one's final time
+        last = _timestamp(page[-1].get("scheduled_time")) if page else None
+        if len(page) < PAGE_SIZE or last is None or last == since:
+            return list(rows.values())
+        since = last
+
+
+def _live_copies(flights: list[dict], impact: dict[str, dict]) -> list[dict]:
+    """One row per flight.
+
+    After Lightning is enabled on flight_status, it can keep a frozen copy of a flight's row beside the live
+    one, and no column tells them apart. The copy whose delay flight_impact reports wins, since Flink keeps
+    flight_impact from the live topic. Until Flink catches up with a change, the copy furthest along wins.
+    """
+    copies: dict[str, list[dict]] = {}
+    for row in flights:
+        copies.setdefault(row["key"], []).append(row)
+    chosen = []
+    for key, rows in copies.items():
+        reported = impact.get(key, {}).get("delay_minutes")
+        matching = [row for row in rows if reported not in (None, "") and row["delay_minutes"] == _int(reported)]
+        chosen.append(max(matching or rows, key=lambda row: (
+            STAGES.get(row.get("status"), 0), row["estimated_time"] or datetime.min)))
+    return chosen
+
+
+def _flights(key: str | None = None, window: tuple[datetime, datetime] | None = None) -> list[dict]:
+    """One flight, or every flight scheduled in a (start, end) window, one row each in scheduled order.
+
+    Status and delay come from flight_status (live within seconds), the at-risk count from flight_impact
+    (about a minute behind).
+    """
+    def read(topic: str) -> list[dict]:
+        # A key lookup asks for more than one row because flight_status can hold a stale copy (_live_copies).
+        return _rows(topic, key=key, limit=10) if key is not None else _scheduled_rows(topic, *window)
+
+    impact = _pool.submit(read, "flight_impact")
     flights = []
-    for row in _rows("flight_status", key=key, limit=limit, where=where, order_by=order_by):
+    for row in read("flight_status"):
         scheduled, estimated = _timestamp(row.get("scheduled_time")), _timestamp(row.get("estimated_time"))
         delay = round((estimated - scheduled) / timedelta(minutes=1)) if scheduled and estimated else 0
         flights.append({**row, "estimated_time": estimated, "delay_minutes": delay})
-    affected = {row["key"]: _int(row.get("affected_passengers")) for row in impact.result()}
-    return [{**row, "affected_passengers": affected.get(row["key"], 0)} for row in flights]
+    impact = {row["key"]: row for row in impact.result()}
+    flights = sorted(_live_copies(flights, impact),
+                     key=lambda row: (_timestamp(row.get("scheduled_time")) or datetime.min, row["key"]))
+    return [{**row, "affected_passengers": _int(impact.get(row["key"], {}).get("affected_passengers"))}
+            for row in flights]
 
 
 @app.get("/api/state")
@@ -206,8 +251,7 @@ def state():
     now = _now()
     booked = _pool.submit(deployment.lightning_scan, OFFERS,
                           [("status", "=", "BOOKED"), ("recommended_at", ">=", now - WINDOW_BEFORE)])
-    window = [("scheduled_time", ">=", now - WINDOW_BEFORE), ("scheduled_time", "<", now + WINDOW_AFTER)]
-    flights = _flights(where=window, order_by=("scheduled_time", "ASC"))
+    flights = _flights(window=(now - WINDOW_BEFORE, now + WINDOW_AFTER))
     booked = booked.result()
     delays = sorted(flights, key=lambda row: (-row["delay_minutes"], row.get("key") or ""))[:10]
     return {
@@ -225,7 +269,7 @@ def state():
 
 @app.get("/api/flight/{flight_id}")
 def flight(flight_id: str):
-    rows = _flights(key=flight_id, limit=1)
+    rows = _flights(key=flight_id)
     if not rows:
         raise HTTPException(status_code=404, detail="Flight not found")
     row = rows[0]
