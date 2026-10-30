@@ -35,7 +35,6 @@ Usage:
 """
 
 import argparse
-import getpass
 import os
 import subprocess
 import sys
@@ -49,12 +48,12 @@ from scripts.credentials import (
     generate_confluent_api_keys,
     load_or_create_credentials_file,
 )
-from scripts.login_checks import _attempt_login_quiet, ensure_confluent_login
+from scripts.login_checks import ensure_confluent_login, prompt_and_save_login
 from scripts.terraform import get_project_root, run_terraform_output
 from scripts.terraform_runner import run_terraform
 from scripts.tfvars import write_tfvars_for_deployment
 from scripts.topic_tags import apply_tag_colors
-from scripts.ui import prompt_with_default
+from scripts.ui import prompt_with_default, prompt_yes_no
 
 DEFAULT_REGION = "us-east-1"  # RTCE-supported; Confluent-hosted Claude available here
 DEFAULT_PREFIX = "flight-recovery"
@@ -263,26 +262,12 @@ def main():
     if workshop:
         print("\nWorkshop mode: deploys the source feeds only; the labs in docs/workshop.md build the rest.")
 
-    # Confluent Cloud login (saved for auto-login).
+    # Confluent Cloud login (saved for auto-login). A saved login that stopped working is asked for again.
+    prompted = False
     if not (creds.get("CONFLUENT_EMAIL") and creds.get("CONFLUENT_PASSWORD")):
-        print("\nConfluent Cloud login (saved to credentials.env for auto-login):")
-        for attempt in range(3):
-            email = input("  Email (Enter to skip): ").strip()
-            if not email:
-                print("  Skipped. Run `confluent login` manually if your session expires.")
-                break
-            password = getpass.getpass("  Password: ")
-            if _attempt_login_quiet(email, password):
-                _save_env_safe(creds_file, "CONFLUENT_EMAIL", email)
-                _save_env_safe(creds_file, "CONFLUENT_PASSWORD", password)
-                creds["CONFLUENT_EMAIL"] = email
-                creds["CONFLUENT_PASSWORD"] = password
-                print("  ✓ Logged in and saved.")
-                break
-            remaining = 2 - attempt
-            print(f"  Login failed. {remaining} attempt(s) left." if remaining else
-                  "  Login failed. Skipping (use `confluent login --sso` if you use SSO).")
-    ensure_confluent_login(creds)
+        prompt_and_save_login(creds_file, creds)
+        prompted = True
+    ensure_confluent_login(creds, creds_file, interactive=not prompted)
     print("✓ Confluent CLI logged in")
 
     # No prompt: us-east-1 unless the user set TF_VAR_cloud_region in credentials.env.
@@ -298,22 +283,24 @@ def main():
     else:
         print(f"Resource name prefix: {prefix} (set TF_VAR_resource_prefix in credentials.env to change)")
 
-    # Optionally generate fresh Confluent Cloud API keys.
-    if input("\nGenerate new Confluent Cloud API keys? (y/n): ").strip().lower() == "y":
+    # Optionally generate fresh Confluent Cloud API keys; new keys are used as-is, without asking for them again.
+    print()
+    api_key = api_secret = None
+    if prompt_yes_no("Generate new Confluent Cloud API keys?", default=False):
         api_key, api_secret = generate_confluent_api_keys(prefix)
-        if api_key and api_secret:
-            _save_env_safe(creds_file, "TF_VAR_confluent_cloud_api_key", api_key)
-            _save_env_safe(creds_file, "TF_VAR_confluent_cloud_api_secret", api_secret)
-            creds["TF_VAR_confluent_cloud_api_key"] = api_key
-            creds["TF_VAR_confluent_cloud_api_secret"] = api_secret
+        if not (api_key and api_secret):
+            print("✗ Could not generate API keys; enter an existing OrganizationAdmin key below.")
 
     print("\n--- Credential Configuration ---")
-    api_key = prompt_with_default(
-        "Confluent Cloud API Key", creds.get("TF_VAR_confluent_cloud_api_key", "")
-    )
-    api_secret = prompt_with_default(
-        "Confluent Cloud API Secret", creds.get("TF_VAR_confluent_cloud_api_secret", ""), secret=True
-    )
+    if api_key and api_secret:
+        print(f"Using the new Confluent Cloud API key {api_key}")
+    else:
+        api_key = prompt_with_default(
+            "Confluent Cloud API Key", creds.get("TF_VAR_confluent_cloud_api_key", "")
+        )
+        api_secret = prompt_with_default(
+            "Confluent Cloud API Secret", creds.get("TF_VAR_confluent_cloud_api_secret", ""), secret=True
+        )
     _save_env_safe(creds_file, "TF_VAR_confluent_cloud_api_key", api_key)
     _save_env_safe(creds_file, "TF_VAR_confluent_cloud_api_secret", api_secret)
 
@@ -343,7 +330,8 @@ def main():
 
     client = "none" if workshop else setup_rtce._pick_client()
 
-    if input("\nReady to deploy? (y/n): ").strip().lower() != "y":
+    print()
+    if not prompt_yes_no("Ready to deploy?"):
         print("Deployment cancelled.")
         sys.exit(0)
 
@@ -356,7 +344,8 @@ def main():
         _finish_workshop(root)
         return
     _finish(root, client, args.video_2, args.speed)
-    if input("\nStart the app at http://127.0.0.1:8000 now? (Y/n): ").strip().lower() in ("", "y"):
+    print()
+    if prompt_yes_no("Start the app at http://127.0.0.1:8000 now?", default=True):
         from scripts.airport_app import main as run_app
 
         run_app([])
@@ -385,10 +374,7 @@ def _prompt_aws_credentials(creds_file, creds: dict) -> None:
     if ambient:
         detected_key, detected_secret, detected_token = ambient
         masked = f"{detected_key[:4]}...{detected_key[-4:]}" if len(detected_key) > 8 else detected_key
-        if input(f"Detected AWS credentials in your environment ({masked}). Use these? (Y/n): ").strip().lower() in (
-            "",
-            "y",
-        ):
+        if prompt_yes_no(f"Detected AWS credentials in your environment ({masked}). Use these?", default=True):
             access_key, secret_key, token = detected_key, detected_secret, detected_token
 
     if not access_key:

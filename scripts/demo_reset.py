@@ -232,7 +232,7 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit("This checkout is in workshop mode, where attendees build Demo 2's agent themselves. "
                  "Nothing to reset.")
     core = run_terraform_output(core_state)
-    ensure_confluent_login(creds)
+    ensure_confluent_login(creds, root / "credentials.env", interactive=sys.stdin.isatty())
     flink = Flink(core)
 
     if args.restore:
