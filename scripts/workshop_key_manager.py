@@ -98,9 +98,7 @@ def get_owner_email(project_root: Path) -> str:
             return creds["TF_VAR_owner_email"].strip("'\"")
 
     # Prompt user and save back to credentials.env
-    email = prompt_with_default(
-        "Owner email for resource tagging (saved to credentials.env)", default=""
-    )
+    email = prompt_with_default("Owner email for resource tagging (saved to credentials.env)", default="")
     if email:
         set_key(str(creds_file), "TF_VAR_owner_email", email)
     return email
@@ -296,18 +294,14 @@ def attach_demo_policy(
     logger.info(f"✓ Attached inline policy '{AWS_POLICY_NAME}'")
 
 
-def create_access_key(
-    iam_client, logger: logging.Logger, username: str = AWS_IAM_USERNAME
-) -> tuple[str, str]:
+def create_access_key(iam_client, logger: logging.Logger, username: str = AWS_IAM_USERNAME) -> tuple[str, str]:
     """Create new access key for IAM user."""
     # Check existing keys
     response = iam_client.list_access_keys(UserName=username)
     existing_keys = response.get("AccessKeyMetadata", [])
 
     if len(existing_keys) >= 2:
-        raise MaxKeysReached(
-            f"User '{username}' already has 2 access keys (AWS limit of 2 per user)."
-        )
+        raise MaxKeysReached(f"User '{username}' already has 2 access keys (AWS limit of 2 per user).")
 
     logger.info("Generating new access key...")
 
@@ -322,9 +316,7 @@ def create_access_key(
     return access_key_id, secret_access_key
 
 
-def test_bedrock_credentials(
-    access_key_id: str, secret_access_key: str, region: str, logger: logging.Logger
-) -> bool:
+def test_bedrock_credentials(access_key_id: str, secret_access_key: str, region: str, logger: logging.Logger) -> bool:
     """Test AWS Bedrock credentials."""
     from .test_bedrock_credentials import test_bedrock_credentials as test_func
 
@@ -354,9 +346,7 @@ def save_aws_credentials_file(
     creds_file = project_root / AWS_CREDENTIALS_FILE
 
     # Format tags for display (exclude LocalPath as it's not useful for workshop participants)
-    tags_display = "\n".join(
-        [f"**{key}:** `{value}`" for key, value in tags.items() if key != "LocalPath"]
-    )
+    tags_display = "\n".join([f"**{key}:** `{value}`" for key, value in tags.items() if key != "LocalPath"])
 
     content = f"""# Workshop Credentials (AWS)
 
@@ -478,9 +468,7 @@ def parse_iam_username_from_md(project_root: Path) -> str | None:
     return None
 
 
-def cleanup_user_dependencies(
-    iam_client, username: str, logger: logging.Logger
-) -> tuple[bool, str | None]:
+def cleanup_user_dependencies(iam_client, username: str, logger: logging.Logger) -> tuple[bool, str | None]:
     """Comprehensively clean up all IAM user dependencies before deletion."""
     errors = []
 
@@ -492,9 +480,7 @@ def cleanup_user_dependencies(
             for group in groups:
                 group_name = group["GroupName"]
                 try:
-                    iam_client.remove_user_from_group(
-                        UserName=username, GroupName=group_name
-                    )
+                    iam_client.remove_user_from_group(UserName=username, GroupName=group_name)
                     logger.debug(f"  Removed from group '{group_name}'")
                 except ClientError as e:
                     if e.response["Error"]["Code"] != "NoSuchEntity":
@@ -542,9 +528,7 @@ def cleanup_user_dependencies(
             for policy in policies:
                 policy_arn = policy["PolicyArn"]
                 try:
-                    iam_client.detach_user_policy(
-                        UserName=username, PolicyArn=policy_arn
-                    )
+                    iam_client.detach_user_policy(UserName=username, PolicyArn=policy_arn)
                     logger.debug(f"  Detached policy {policy_arn}")
                 except ClientError as e:
                     if e.response["Error"]["Code"] != "NoSuchEntity":
@@ -567,9 +551,7 @@ def cleanup_user_dependencies(
         if policy_names:
             for policy_name in policy_names:
                 try:
-                    iam_client.delete_user_policy(
-                        UserName=username, PolicyName=policy_name
-                    )
+                    iam_client.delete_user_policy(UserName=username, PolicyName=policy_name)
                     logger.debug(f"  Deleted inline policy '{policy_name}'")
                 except ClientError as e:
                     if e.response["Error"]["Code"] != "NoSuchEntity":
@@ -605,9 +587,7 @@ def cleanup_user_dependencies(
             for device in devices:
                 serial = device["SerialNumber"]
                 try:
-                    iam_client.deactivate_mfa_device(
-                        UserName=username, SerialNumber=serial
-                    )
+                    iam_client.deactivate_mfa_device(UserName=username, SerialNumber=serial)
                     logger.debug(f"  Deactivated MFA device {serial}")
 
                     if ":mfa/" in serial:
@@ -616,9 +596,7 @@ def cleanup_user_dependencies(
                             logger.debug(f"  Deleted virtual MFA device {serial}")
                         except ClientError as e:
                             if e.response["Error"]["Code"] != "NoSuchEntity":
-                                logger.warning(
-                                    f"  Could not delete virtual MFA device: {e.response['Error']['Code']}"
-                                )
+                                logger.warning(f"  Could not delete virtual MFA device: {e.response['Error']['Code']}")
                 except ClientError as e:
                     if e.response["Error"]["Code"] != "NoSuchEntity":
                         error_msg = f"Failed to deactivate MFA device {serial}: {e.response['Error']['Code']}"
@@ -641,9 +619,7 @@ def cleanup_user_dependencies(
             for key in keys:
                 key_id = key["SSHPublicKeyId"]
                 try:
-                    iam_client.delete_ssh_public_key(
-                        UserName=username, SSHPublicKeyId=key_id
-                    )
+                    iam_client.delete_ssh_public_key(UserName=username, SSHPublicKeyId=key_id)
                     logger.debug(f"  Deleted SSH key {key_id}")
                 except ClientError as e:
                     if e.response["Error"]["Code"] != "NoSuchEntity":
@@ -667,9 +643,7 @@ def cleanup_user_dependencies(
             for cert in certs:
                 cert_id = cert["CertificateId"]
                 try:
-                    iam_client.delete_signing_certificate(
-                        UserName=username, CertificateId=cert_id
-                    )
+                    iam_client.delete_signing_certificate(UserName=username, CertificateId=cert_id)
                     logger.debug(f"  Deleted signing certificate {cert_id}")
                 except ClientError as e:
                     if e.response["Error"]["Code"] != "NoSuchEntity":
@@ -681,9 +655,7 @@ def cleanup_user_dependencies(
         else:
             logger.info("✓ No signing certificates to delete")
     except ClientError as e:
-        error_msg = (
-            f"Failed to list signing certificates: {e.response['Error']['Code']}"
-        )
+        error_msg = f"Failed to list signing certificates: {e.response['Error']['Code']}"
         errors.append(error_msg)
         logger.error(f"✗ {error_msg}")
 
@@ -722,9 +694,7 @@ def cleanup_user_dependencies(
         if e.response["Error"]["Code"] == "NoSuchEntity":
             logger.info("✓ No permission boundary to delete")
         else:
-            error_msg = (
-                f"Failed to delete permission boundary: {e.response['Error']['Code']}"
-            )
+            error_msg = f"Failed to delete permission boundary: {e.response['Error']['Code']}"
             errors.append(error_msg)
             logger.error(f"✗ {error_msg}")
 
@@ -771,9 +741,7 @@ def create_aws_command(args: argparse.Namespace, logger: logging.Logger) -> int:
         tags = get_tags(project_root, owner_email)
 
         # Prompt for IAM username (allows custom name, defaults to standard)
-        iam_username = prompt_with_default(
-            "IAM username for workshop user", default=AWS_IAM_USERNAME
-        )
+        iam_username = prompt_with_default("IAM username for workshop user", default=AWS_IAM_USERNAME)
 
         # Create IAM client (uses default AWS credentials from environment/config)
         iam_client = boto3.client("iam")
@@ -799,9 +767,7 @@ def create_aws_command(args: argparse.Namespace, logger: logging.Logger) -> int:
 
             # Create access key (may raise MaxKeysReached)
             try:
-                access_key_id, secret_access_key = create_access_key(
-                    iam_client, logger, username=iam_username
-                )
+                access_key_id, secret_access_key = create_access_key(iam_client, logger, username=iam_username)
                 break  # success — exit loop
             except MaxKeysReached as e:
                 print(f"\n{e}")
@@ -816,9 +782,7 @@ def create_aws_command(args: argparse.Namespace, logger: logging.Logger) -> int:
                 if "Cancel" in choice:
                     return 1
                 # Prompt for a new username and loop back
-                iam_username = prompt_with_default(
-                    "New IAM username", default=f"{iam_username}-2"
-                )
+                iam_username = prompt_with_default("New IAM username", default=f"{iam_username}-2")
                 print("\n" + "=" * 70)
                 print("CREATING AWS WORKSHOP CREDENTIALS (new user)")
                 print("=" * 70)
@@ -847,9 +811,7 @@ def create_aws_command(args: argparse.Namespace, logger: logging.Logger) -> int:
             print("=" * 70)
             logger.warning("Bedrock test did not pass, but continuing anyway")
         else:
-            logger.info(
-                "✓ Bedrock access test passed - Claude Sonnet 4.5 is accessible"
-            )
+            logger.info("✓ Bedrock access test passed - Claude Sonnet 4.5 is accessible")
 
         # Save credentials
         save_aws_credentials_file(
@@ -929,15 +891,11 @@ def destroy_aws_command(args: argparse.Namespace, logger: logging.Logger) -> int
         logger.info(f"Deleting access key {access_key_id}...")
 
         try:
-            iam_client.delete_access_key(
-                UserName=iam_username, AccessKeyId=access_key_id
-            )
+            iam_client.delete_access_key(UserName=iam_username, AccessKeyId=access_key_id)
             logger.info(f"✓ Deleted access key {access_key_id}")
         except ClientError as e:
             if e.response["Error"]["Code"] == "NoSuchEntity":
-                logger.warning(
-                    f"Access key {access_key_id} not found (may already be deleted)"
-                )
+                logger.warning(f"Access key {access_key_id} not found (may already be deleted)")
             else:
                 raise
 
@@ -956,9 +914,7 @@ def destroy_aws_command(args: argparse.Namespace, logger: logging.Logger) -> int
             if "Yes" in delete_user:
                 # Comprehensive cleanup of all user dependencies
                 logger.info("Cleaning up all IAM user dependencies...")
-                success, error_details = cleanup_user_dependencies(
-                    iam_client, iam_username, logger
-                )
+                success, error_details = cleanup_user_dependencies(iam_client, iam_username, logger)
                 if not success:
                     print("\n" + "=" * 70)
                     print("⚠ WARNING: Could not fully clean up IAM user")
@@ -969,9 +925,7 @@ def destroy_aws_command(args: argparse.Namespace, logger: logging.Logger) -> int
                     print("2. Review and remove remaining dependencies")
                     print("3. Delete the user")
                     print("=" * 70 + "\n")
-                    logger.warning(
-                        f"User {iam_username} could not be deleted automatically"
-                    )
+                    logger.warning(f"User {iam_username} could not be deleted automatically")
                 else:
                     # All dependencies cleaned up, now delete user
                     logger.info(f"Deleting IAM user {iam_username}...")
@@ -981,24 +935,16 @@ def destroy_aws_command(args: argparse.Namespace, logger: logging.Logger) -> int
                         user_deleted = True
                     except ClientError as e:
                         if e.response["Error"]["Code"] == "NoSuchEntity":
-                            logger.warning(
-                                f"User {iam_username} not found (may already be deleted)"
-                            )
+                            logger.warning(f"User {iam_username} not found (may already be deleted)")
                             user_deleted = True
                         else:
                             print("\n" + "=" * 70)
-                            print(
-                                "⚠ WARNING: User cleanup succeeded but deletion failed"
-                            )
+                            print("⚠ WARNING: User cleanup succeeded but deletion failed")
                             print("=" * 70)
                             print(f"\nError: {e}")
                             print(f"User: {iam_username}")
-                            print(
-                                "\nThe user dependencies were cleaned up, but deletion failed."
-                            )
-                            print(
-                                "Try running the command again, or delete manually via AWS Console."
-                            )
+                            print("\nThe user dependencies were cleaned up, but deletion failed.")
+                            print("Try running the command again, or delete manually via AWS Console.")
                             print("=" * 70 + "\n")
                             logger.error(f"Failed to delete user after cleanup: {e}")
         else:
@@ -1030,9 +976,7 @@ def destroy_aws_command(args: argparse.Namespace, logger: logging.Logger) -> int
         if user_deleted:
             print(f"  - IAM user: {iam_username}")
         elif not args.keep_user:
-            print(
-                f"  - IAM user: {iam_username} (cleanup attempted, may require manual deletion)"
-            )
+            print(f"  - IAM user: {iam_username} (cleanup attempted, may require manual deletion)")
         print("  - Credentials cleared from credentials.env")
         print("=" * 70 + "\n")
 
@@ -1044,8 +988,6 @@ def destroy_aws_command(args: argparse.Namespace, logger: logging.Logger) -> int
     except Exception as e:
         logger.error(f"Error destroying credentials: {e}")
         return 1
-
-
 
 
 # ============================================================================
@@ -1069,30 +1011,16 @@ Examples:
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
-    create_parser = subparsers.add_parser(
-        "create", help="Create AWS workshop credentials"
-    )
+    create_parser = subparsers.add_parser("create", help="Create AWS workshop credentials")
     # `cloud` kept as an optional, AWS-only positional for backward compatibility
     # with `api-keys create aws`; hidden from help since AWS is the only option.
-    create_parser.add_argument(
-        "cloud", nargs="?", choices=["aws"], default="aws", help=argparse.SUPPRESS
-    )
-    create_parser.add_argument(
-        "--verbose", action="store_true", help="Enable verbose logging"
-    )
+    create_parser.add_argument("cloud", nargs="?", choices=["aws"], default="aws", help=argparse.SUPPRESS)
+    create_parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
-    destroy_parser = subparsers.add_parser(
-        "destroy", help="Revoke AWS workshop credentials"
-    )
-    destroy_parser.add_argument(
-        "cloud", nargs="?", choices=["aws"], default="aws", help=argparse.SUPPRESS
-    )
-    destroy_parser.add_argument(
-        "--keep-user", action="store_true", help="Keep IAM user for reuse"
-    )
-    destroy_parser.add_argument(
-        "--verbose", action="store_true", help="Enable verbose logging"
-    )
+    destroy_parser = subparsers.add_parser("destroy", help="Revoke AWS workshop credentials")
+    destroy_parser.add_argument("cloud", nargs="?", choices=["aws"], default="aws", help=argparse.SUPPRESS)
+    destroy_parser.add_argument("--keep-user", action="store_true", help="Keep IAM user for reuse")
+    destroy_parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
 

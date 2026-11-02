@@ -62,7 +62,22 @@ SPOKES = ("ORD", "SEA", "LAX", "DEN", "PHX", "DFW", "ATL", "JFK", "BOS", "MSP", 
 ARRIVAL_MINUTES = tuple(360 + round(i * 1020 / 89) for i in range(90))
 DEPARTURE_MINUTES = (
     *(390 + round(i * 930 / 74) for i in range(75)),
-    1330, 1335, 1340, 1345, 1350, 1356, 1362, 1368, 1374, 1380, 1386, 1392, 1398, 1404, 1410)
+    1330,
+    1335,
+    1340,
+    1345,
+    1350,
+    1356,
+    1362,
+    1368,
+    1374,
+    1380,
+    1386,
+    1392,
+    1398,
+    1404,
+    1410,
+)
 LAST_BANK = 75
 
 # Every flight's seat map, modeled after a two-class Boeing 737-900ER: First in rows 1-5
@@ -153,8 +168,13 @@ class Flight:
         return "DELAYED" if self.delay_at(at) >= DELAYED_AT else "ON_TIME"
 
     def row(self, at: datetime) -> dict:
-        return dict(origin=self.origin, destination=self.destination, scheduled_time=self.scheduled,
-                    estimated_time=self.estimated_at(at), status=self.status_at(at))
+        return dict(
+            origin=self.origin,
+            destination=self.destination,
+            scheduled_time=self.scheduled,
+            estimated_time=self.estimated_at(at),
+            status=self.status_at(at),
+        )
 
     def ticks(self, after: datetime, until: datetime):
         """Update times in (after, until], one per `every`, from three hours out to completion."""
@@ -197,10 +217,18 @@ class Recovery:
             status = "OFFERED"
             if final:
                 status = "BOOKED" if index == self.booked else "CLOSED"
-            yield f"{self.passenger.key}-O{index + 1}", dict(
-                passenger_id=self.passenger.key, recommended_flight_id=flight.key, hotel_name=hotel,
-                status=status, hotel_cost=HOTEL_RATES[hotel] if hotel else None,
-                impacted_at=self.passenger.impacted_at, recommended_at=self.recommended_at)
+            yield (
+                f"{self.passenger.key}-O{index + 1}",
+                dict(
+                    passenger_id=self.passenger.key,
+                    recommended_flight_id=flight.key,
+                    hotel_name=hotel,
+                    status=status,
+                    hotel_cost=HOTEL_RATES[hotel] if hotel else None,
+                    impacted_at=self.passenger.impacted_at,
+                    recommended_at=self.recommended_at,
+                ),
+            )
 
 
 @dataclass
@@ -243,8 +271,7 @@ def _clock(value: str | None) -> datetime:
 
 def _delays(flight: Flight, steps) -> None:
     """Announce delays at (minutes from schedule, delay) steps, on this flight's update tick."""
-    flight.reveals = [(flight.scheduled + timedelta(minutes=rel, seconds=flight.offset), delay)
-                      for rel, delay in steps]
+    flight.reveals = [(flight.scheduled + timedelta(minutes=rel, seconds=flight.offset), delay) for rel, delay in steps]
 
 
 def _assign_delays(day: Day, rng: random.Random) -> None:
@@ -257,8 +284,9 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
             start, (first, last) = flight.scheduled - HERO_LEAD, HERO_RAMP
             steps = (last - first) // HERO_EVERY
             flight.every = HERO_EVERY
-            flight.reveals = [(start + first + HERO_EVERY * k, round(HERO_DELAY * k / steps))
-                              for k in range(1, steps + 1)]
+            flight.reveals = [
+                (start + first + HERO_EVERY * k, round(HERO_DELAY * k / steps)) for k in range(1, steps + 1)
+            ]
         elif flight.key in forced:
             continue
         elif flight.key in severe:
@@ -279,6 +307,7 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
 
 def _risk_flip(inbound: Flight, onward: Flight) -> tuple[bool, datetime | None]:
     """Whether the connection's risk changes at most once (OK -> HIGH), and when it does."""
+
     def at_risk(at):
         return onward.estimated_at(at) - inbound.estimated_at(at) < timedelta(minutes=CONNECTION_MINUTES)
 
@@ -306,8 +335,12 @@ def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[P
         else:
             plan = [rng.random() < CONNECTING_SHARE for _ in range(rng.randint(*PASSENGERS_PER_FLIGHT))]
             low, high = CONNECTION_BUFFER
-        candidates = [d for d in day.departures if d.destination != flight.origin
-                      and timedelta(minutes=low) <= d.scheduled - flight.scheduled <= timedelta(minutes=high)]
+        candidates = [
+            d
+            for d in day.departures
+            if d.destination != flight.origin
+            and timedelta(minutes=low) <= d.scheduled - flight.scheduled <= timedelta(minutes=high)
+        ]
         seats = seat_rng.sample(SEATS, len(plan))
         for seq, (connects, seat) in enumerate(zip(plan, seats, strict=True), start=1):
             passenger = Passenger(f"P-{day.service_date:%m%d}-{flight.number:03d}-{seq:03d}", flight, seat)
@@ -362,16 +395,20 @@ def _revise_estimates(day: Day, rng: random.Random) -> None:
             delay = base + rng.choice(REVISION_MINUTES)
             until = min([w for w in announced if w > at] + [settle[0]])
             values = [d for _, d in sorted([*flight.reveals, *revisions, (at, delay), settle])]
-            if (_band(delay) == _band(base) and max(values) - values[-1] <= 3
-                    and all(later >= earlier - 3 for earlier, later in pairwise(values))
-                    and _keeps_risk(flight, onward.get(flight.key, {}).values(), at, until, base, delay)):
+            if (
+                _band(delay) == _band(base)
+                and max(values) - values[-1] <= 3
+                and all(later >= earlier - 3 for earlier, later in pairwise(values))
+                and _keeps_risk(flight, onward.get(flight.key, {}).values(), at, until, base, delay)
+            ):
                 revisions.append((at, delay))
         if revisions:
             flight.reveals = sorted([*flight.reveals, *revisions, settle])
 
 
-def build_day(seed: int, service_date: date, midnight: datetime, live: bool = False,
-              schedule_only: bool = False) -> Day:
+def build_day(
+    seed: int, service_date: date, midnight: datetime, live: bool = False, schedule_only: bool = False
+) -> Day:
     """One service day. The same seed, date, and variant always produce the same keys and values."""
     variant = "live" if live else "schedule" if schedule_only else "history"
     rng = random.Random(f"{seed}:{service_date.isoformat()}:{variant}")
@@ -381,11 +418,27 @@ def build_day(seed: int, service_date: date, midnight: datetime, live: bool = Fa
     for i, minute in enumerate(ARRIVAL_MINUTES):
         hero = minute == HERO_MINUTE
         number = HERO_NUMBER if hero else next(numbers)
-        arrivals.append(Flight(f"{AIRLINE}{number}-{suffix}", number, HERO_ORIGIN if hero else SPOKES[i % 15],
-                               HUB, midnight + timedelta(minutes=minute), 0 if hero else rng.randrange(60)))
-    departures = [Flight(f"{AIRLINE}{601 + i}-{suffix}", 601 + i, HUB, SPOKES[i % 15],
-                         midnight + timedelta(minutes=minute), rng.randrange(60))
-                  for i, minute in enumerate(DEPARTURE_MINUTES)]
+        arrivals.append(
+            Flight(
+                f"{AIRLINE}{number}-{suffix}",
+                number,
+                HERO_ORIGIN if hero else SPOKES[i % 15],
+                HUB,
+                midnight + timedelta(minutes=minute),
+                0 if hero else rng.randrange(60),
+            )
+        )
+    departures = [
+        Flight(
+            f"{AIRLINE}{601 + i}-{suffix}",
+            601 + i,
+            HUB,
+            SPOKES[i % 15],
+            midnight + timedelta(minutes=minute),
+            rng.randrange(60),
+        )
+        for i, minute in enumerate(DEPARTURE_MINUTES)
+    ]
     day = Day(service_date, live, arrivals, departures, [])
     if not schedule_only:
         _assign_delays(day, rng)
@@ -426,11 +479,17 @@ def _recoveries(day: Day, next_day: Day, seed: int, sellout_at: datetime | None)
         choice = 0 if rng.random() < 0.7 or len(options) == 1 else 1
         if books and hotels[choice] == GRAND_HYATT and sellout_at and decided_at >= sellout_at and len(options) > 1:
             choice = 1 - choice
-        recoveries.append(Recovery(
-            passenger, options, hotels, recommended_at,
-            resolved_at=decided_at if books else recommended_at + OFFER_EXPIRY,
-            booked=choice if books else None,
-            completes=not (day.live and passenger.inbound is day.hero)))
+        recoveries.append(
+            Recovery(
+                passenger,
+                options,
+                hotels,
+                recommended_at,
+                resolved_at=decided_at if books else recommended_at + OFFER_EXPIRY,
+                booked=choice if books else None,
+                completes=not (day.live and passenger.inbound is day.hero),
+            )
+        )
     return recoveries
 
 
@@ -438,8 +497,10 @@ def build_plan(start: datetime, seed: int = SEED, history: bool = True) -> Plan:
     """History days, the live day starting at `start`, and tomorrow's schedule for overnight rebookings."""
     midnight = start + HERO_LEAD - timedelta(minutes=HERO_MINUTE)
     today = start.date()
-    days = [build_day(seed, today - timedelta(days=back), midnight - timedelta(days=back))
-            for back in range(HISTORY_DAYS if history else 0, 0, -1)]
+    days = [
+        build_day(seed, today - timedelta(days=back), midnight - timedelta(days=back))
+        for back in range(HISTORY_DAYS if history else 0, 0, -1)
+    ]
     days.append(build_day(seed, today, midnight, live=True))
     _revise_estimates(days[-1], random.Random(f"{seed}:{today.isoformat()}:live:revisions"))
     tomorrow = build_day(seed, today + timedelta(days=1), midnight + timedelta(days=1), schedule_only=True)
@@ -488,9 +549,14 @@ def hotel_warmup(plan: Plan, updates: int = 200):
     for _ in range(-(-updates // len(rooms))):
         steps.append(dict(rooms))
         # Walking back in time: rooms were freer earlier, since guests book through the morning.
-        rooms = {name: min(full, max(1, rooms[name] + rng.choices((-1, 0, 1), (20, 50, 30))[0]))
-                 for name, full in ((GRAND_HYATT, GRAND_HYATT_ROOMS), (MARRIOTT, MARRIOTT_ROOMS * 2),
-                                    (HILTON, HILTON_ROOMS * 2))}
+        rooms = {
+            name: min(full, max(1, rooms[name] + rng.choices((-1, 0, 1), (20, 50, 30))[0]))
+            for name, full in (
+                (GRAND_HYATT, GRAND_HYATT_ROOMS),
+                (MARRIOTT, MARRIOTT_ROOMS * 2),
+                (HILTON, HILTON_ROOMS * 2),
+            )
+        }
     for step in reversed(steps):
         for name in HOTEL_ORDER:
             yield HOTELS, name, _hotel(name, step[name])
@@ -508,11 +574,16 @@ def initial_records(plan: Plan):
         for passenger in day.passengers:
             # History keeps only connecting passengers; nobody else can be impacted.
             if day.live or passenger.connecting:
-                yield ITINERARIES, passenger.key, dict(
-                    inbound_flight_id=passenger.inbound.key,
-                    inbound_seat=passenger.inbound_seat,
-                    connecting_flight_id=passenger.connecting.key if passenger.connecting else None,
-                    connecting_seat=passenger.connecting_seat)
+                yield (
+                    ITINERARIES,
+                    passenger.key,
+                    dict(
+                        inbound_flight_id=passenger.inbound.key,
+                        inbound_seat=passenger.inbound_seat,
+                        connecting_flight_id=passenger.connecting.key if passenger.connecting else None,
+                        connecting_seat=passenger.connecting_seat,
+                    ),
+                )
     for recovery in plan.recoveries:
         for key, value in recovery.rows(at):
             yield OFFERS, key, value
@@ -561,19 +632,28 @@ class Publisher:
         credentials = credentials or {}
         # With a webhook, hotel updates arrive the way a hotel partner's would: over HTTPS.
         self.webhook = credentials.get("hotel_webhook_url")
-        self.webhook_auth = (credentials.get("hotel_webhook_api_key", ""),
-                             credentials.get("hotel_webhook_api_secret", ""))
-        self.schema_registry = SchemaRegistryClient({
-            "url": credentials["schema_registry_url"],
-            "basic.auth.user.info": (
-                f"{credentials['schema_registry_api_key']}:{credentials['schema_registry_api_secret']}")})
-        self.producer = Producer({
-            "bootstrap.servers": credentials["bootstrap_servers"],
-            "security.protocol": "SASL_SSL", "sasl.mechanism": "PLAIN",
-            "sasl.username": credentials["kafka_api_key"],
-            "sasl.password": credentials["kafka_api_secret"],
-            "linger.ms": 20,
-        })
+        self.webhook_auth = (
+            credentials.get("hotel_webhook_api_key", ""),
+            credentials.get("hotel_webhook_api_secret", ""),
+        )
+        self.schema_registry = SchemaRegistryClient(
+            {
+                "url": credentials["schema_registry_url"],
+                "basic.auth.user.info": (
+                    f"{credentials['schema_registry_api_key']}:{credentials['schema_registry_api_secret']}"
+                ),
+            }
+        )
+        self.producer = Producer(
+            {
+                "bootstrap.servers": credentials["bootstrap_servers"],
+                "security.protocol": "SASL_SSL",
+                "sasl.mechanism": "PLAIN",
+                "sasl.username": credentials["kafka_api_key"],
+                "sasl.password": credentials["kafka_api_secret"],
+                "linger.ms": 20,
+            }
+        )
 
     def publish(self, topic: str, key: str, value: dict | None) -> None:
         if self.dry_run:
@@ -586,8 +666,11 @@ class Publisher:
             registered = self.schema_registry.get_latest_version(f"{topic}-value")
             schema = json.loads(registered.schema.schema_str)
             self.serializers[topic] = (
-                AvroSerializer(self.schema_registry, registered.schema.schema_str,
-                               conf={"auto.register.schemas": False, "use.latest.version": True}),
+                AvroSerializer(
+                    self.schema_registry,
+                    registered.schema.schema_str,
+                    conf={"auto.register.schemas": False, "use.latest.version": True},
+                ),
                 {field["name"]: field["type"] for field in schema["fields"]},
             )
         serializer, fields = self.serializers[topic]
@@ -623,7 +706,7 @@ class Publisher:
                 problem = str(error)
             if attempt == WEBHOOK_ATTEMPTS - 1:
                 raise RuntimeError(f"The hotel webhook rejected {name}: {problem}")
-            time.sleep(2 ** attempt)  # a retry can duplicate a record; hotel_inventory keeps only the latest
+            time.sleep(2**attempt)  # a retry can duplicate a record; hotel_inventory keeps only the latest
 
     def flush(self) -> None:
         if not self.dry_run:
@@ -650,8 +733,9 @@ def stop_previous_stream() -> None:
         return
     if pid != os.getpid():
         try:
-            command = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
-                                     capture_output=True, text=True, check=False).stdout
+            command = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True, check=False
+            ).stdout
         except OSError:
             command = ""
         if "airport-datagen" in command or "airport_datagen" in command:
@@ -687,9 +771,16 @@ def _catch_up(events: list, start: datetime, now: datetime, speed: float) -> lis
     return sorted(latest.values(), key=lambda event: event[0]) + events[due:]
 
 
-def run(start: datetime, seed: int = SEED, history: bool = True, minutes: int = STREAM_MINUTES,
-        dry_run: bool = False, stream_only: bool = False, agent_offers: bool = False,
-        speed: float = 1.0) -> None:
+def run(
+    start: datetime,
+    seed: int = SEED,
+    history: bool = True,
+    minutes: int = STREAM_MINUTES,
+    dry_run: bool = False,
+    stream_only: bool = False,
+    agent_offers: bool = False,
+    speed: float = 1.0,
+) -> None:
     plan = build_plan(start, seed, history=history and not stream_only)
     if agent_offers:
         plan.recoveries = [r for r in plan.recoveries if r.passenger.inbound is not plan.live.hero]
@@ -703,8 +794,7 @@ def run(start: datetime, seed: int = SEED, history: bool = True, minutes: int = 
             publisher.publish(topic, key, value)
             count += 1
         publisher.flush()
-        logging.info("Published %d records: %d history days, today, and tomorrow's schedule",
-                     count, len(plan.days) - 1)
+        logging.info("Published %d records: %d history days, today, and tomorrow's schedule", count, len(plan.days) - 1)
     events = stream_events(plan, minutes)
     if not events:
         return
@@ -715,16 +805,31 @@ def run(start: datetime, seed: int = SEED, history: bool = True, minutes: int = 
         _start_file().write_text(f"{plan.start.isoformat()} {speed:g}")
         events = _catch_up(events, plan.start, datetime.now(timezone.utc).replace(tzinfo=None), speed)
     hero = plan.live.hero
-    logging.info("Streaming %d updates for %d minutes (%.4g minutes of waiting at %gx); %s is scheduled at %s UTC",
-                 len(events), minutes, minutes / speed, speed, hero.key, f"{hero.scheduled:%H:%M}")
+    logging.info(
+        "Streaming %d updates for %d minutes (%.4g minutes of waiting at %gx); %s is scheduled at %s UTC",
+        len(events),
+        minutes,
+        minutes / speed,
+        speed,
+        hero.key,
+        f"{hero.scheduled:%H:%M}",
+    )
     follow = passenger_to_follow(plan)
-    logging.info("Passenger to follow: %s, seat %s on %s, connecting to %s for %s", follow.key,
-                 follow.inbound_seat, hero.key, follow.connecting.key, follow.connecting.destination)
+    logging.info(
+        "Passenger to follow: %s, seat %s on %s, connecting to %s for %s",
+        follow.key,
+        follow.inbound_seat,
+        hero.key,
+        follow.connecting.key,
+        follow.connecting.destination,
+    )
     impacted = [p.impacted_at for p in plan.live.passengers if p.inbound is hero and p.impacted_at]
     end = plan.start + timedelta(minutes=minutes)
-    for moment, at in ((f"{hero.key}'s first passenger turns HIGH", min(impacted)),
-                       (f"{hero.key}'s last passenger turns HIGH", max(impacted)),
-                       (f"{GRAND_HYATT} sells out", plan.start + SELLOUT)):
+    for moment, at in (
+        (f"{hero.key}'s first passenger turns HIGH", min(impacted)),
+        (f"{hero.key}'s last passenger turns HIGH", max(impacted)),
+        (f"{GRAND_HYATT} sells out", plan.start + SELLOUT),
+    ):
         if at <= end:
             logging.info("%s at %s UTC", moment, f"{_due(plan.start, at, speed):%H:%M}")
     try:
@@ -762,21 +867,37 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="uv run airport-datagen", description="River Air flight recovery data")
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--now", help="ISO-8601 UTC stream start (default: now)")
-    parser.add_argument("--minutes", type=int, default=STREAM_MINUTES,
-                        help=f"minutes of live updates to stream (default: {STREAM_MINUTES}; 0 exits after publishing)")
-    parser.add_argument("--speed", type=float, default=1.0,
-                        help="play the stream this many times faster, e.g. 5 runs 90 minutes in 18 (default: 1). "
-                             "Event timestamps keep stream time, so the dashboard's clock runs ahead of the wall clock")
+    parser.add_argument(
+        "--minutes",
+        type=int,
+        default=STREAM_MINUTES,
+        help=f"minutes of live updates to stream (default: {STREAM_MINUTES}; 0 exits after publishing)",
+    )
+    parser.add_argument(
+        "--speed",
+        type=float,
+        default=1.0,
+        help="play the stream this many times faster, e.g. 5 runs 90 minutes in 18 (default: 1). "
+        "Event timestamps keep stream time, so the dashboard's clock runs ahead of the wall clock",
+    )
     parser.add_argument("--skip-history", action="store_true", help=f"skip the {HISTORY_DAYS} days of history")
-    parser.add_argument("--stream-only", action="store_true",
-                        help="stream the live updates for an earlier --now without republishing")
+    parser.add_argument(
+        "--stream-only", action="store_true", help="stream the live updates for an earlier --now without republishing"
+    )
     parser.add_argument("--dry-run", action="store_true", help="print records as JSON; no Kafka writes, no waiting")
     parser.add_argument("--reset", action="store_true", help="write tombstones for every generated key")
-    parser.add_argument("--offers", choices=("auto", "agent", "generator"), default="auto",
-                        help="who writes RA417's offers (default auto: the agent when Terraform runs it)")
-    parser.add_argument("--resume", action="store_true",
-                        help="pick the last stream back up where its clock is now, at its start and speed, "
-                             "without republishing; with --offers generator, RA417's missed offers arrive at once")
+    parser.add_argument(
+        "--offers",
+        choices=("auto", "agent", "generator"),
+        default="auto",
+        help="who writes RA417's offers (default auto: the agent when Terraform runs it)",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="pick the last stream back up where its clock is now, at its start and speed, "
+        "without republishing; with --offers generator, RA417's missed offers arrive at once",
+    )
     args = parser.parse_args(argv)
     if args.speed <= 0:
         parser.error("--speed must be greater than 0")
@@ -795,8 +916,16 @@ def main(argv: list[str] | None = None) -> None:
             reset(start, args.seed, args.dry_run)
         else:
             agent = args.offers == "agent" or (args.offers == "auto" and agent_enabled())
-            run(start, args.seed, history=not args.skip_history, minutes=args.minutes,
-                dry_run=args.dry_run, stream_only=args.stream_only, agent_offers=agent, speed=args.speed)
+            run(
+                start,
+                args.seed,
+                history=not args.skip_history,
+                minutes=args.minutes,
+                dry_run=args.dry_run,
+                stream_only=args.stream_only,
+                agent_offers=agent,
+                speed=args.speed,
+            )
     except KeyboardInterrupt:
         logging.info("Stopped")
 

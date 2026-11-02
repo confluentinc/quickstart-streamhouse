@@ -76,9 +76,7 @@ def find_state_files(cloud_provider: str, base_dir: Path) -> tuple[Path, Path]:
     return core_state, local_state
 
 
-def extract_kafka_credentials(
-    cloud_provider: str, project_root: Path | None = None
-) -> dict[str, str]:
+def extract_kafka_credentials(cloud_provider: str, project_root: Path | None = None) -> dict[str, str]:
     """
     Extract Kafka and Schema Registry credentials from terraform state.
 
@@ -100,9 +98,7 @@ def extract_kafka_credentials(
     if project_root is None:
         project_root = Path(__file__).parent.parent
 
-    logger.info(
-        f"Extracting {cloud_provider.upper()} credentials from terraform state..."
-    )
+    logger.info(f"Extracting {cloud_provider.upper()} credentials from terraform state...")
 
     # Find state files
     core_state, local_state = find_state_files(cloud_provider, project_root)
@@ -149,9 +145,11 @@ def extract_kafka_credentials(
             missing_keys.append(tf_key)
 
     # The hotel webhook is optional: an older deployment has none, and the generator falls back to Kafka.
-    for tf_key, cred_key in (("hotel_webhook_url", "hotel_webhook_url"),
-                             ("hotel_webhook_api_key", "hotel_webhook_api_key"),
-                             ("hotel_webhook_api_secret", "hotel_webhook_api_secret")):
+    for tf_key, cred_key in (
+        ("hotel_webhook_url", "hotel_webhook_url"),
+        ("hotel_webhook_api_key", "hotel_webhook_api_key"),
+        ("hotel_webhook_api_secret", "hotel_webhook_api_secret"),
+    ):
         if tf_key in local_outputs:
             credentials[cred_key] = local_outputs[tf_key]
 
@@ -168,16 +166,13 @@ def extract_kafka_credentials(
 
     logger.info("Successfully extracted all required credentials")
     logger.info(
-        f"Connecting to cluster '{credentials['cluster_name']}' "
-        f"in environment '{credentials['environment_name']}'"
+        f"Connecting to cluster '{credentials['cluster_name']}' in environment '{credentials['environment_name']}'"
     )
 
     return credentials
 
 
-def validate_terraform_state(
-    cloud_provider: str, project_root: Path | None = None
-) -> bool:
+def validate_terraform_state(cloud_provider: str, project_root: Path | None = None) -> bool:
     """
     Validate that terraform state files exist and contain required outputs.
 
@@ -223,6 +218,4 @@ def get_project_root() -> Path:
             logger.debug(f"Found project root from script location: {parent}")
             return parent
 
-    raise FileNotFoundError(
-        "Could not find project root (pyproject.toml not found in any parent directory)"
-    )
+    raise FileNotFoundError("Could not find project root (pyproject.toml not found in any parent directory)")

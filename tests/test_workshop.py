@@ -26,15 +26,15 @@ def _sql_blocks() -> list[str]:
     """Every ```sql block in the guide, dedented by its fence's indent the way GitHub renders it."""
     blocks = []
     for indent, body in re.findall(r"^( *)```sql\n(.*?)^\1```", GUIDE.read_text(), re.M | re.S):
-        blocks.append("\n".join(line[len(indent):] if line.startswith(indent) else line.lstrip()
-                                for line in body.splitlines()))
+        blocks.append(
+            "\n".join(line[len(indent) :] if line.startswith(indent) else line.lstrip() for line in body.splitlines())
+        )
     return blocks
 
 
 def _pipeline_blocks() -> list[str]:
     """The guide's CREATE and INSERT statements, the ones that build the pipeline."""
-    return [block for block in _sql_blocks()
-            if block.removeprefix(UTC).lstrip().startswith(("CREATE", "INSERT"))]
+    return [block for block in _sql_blocks() if block.removeprefix(UTC).lstrip().startswith(("CREATE", "INSERT"))]
 
 
 def _files() -> dict[str, str]:
@@ -114,8 +114,12 @@ def test_workshop_terraform_builds_only_the_source_tables():
 def test_a_resumed_stream_catches_up_with_each_keys_latest_update():
     start = datetime(2026, 10, 27, 17)
     at = [start.replace(minute=m) for m in (5, 6, 7, 30)]
-    events = [(at[0], "flight_status", "RA417", {"delay": 10}), (at[1], "hotel_inventory", "Hilton", {"rooms": 9}),
-              (at[2], "flight_status", "RA417", {"delay": 20}), (at[3], "flight_status", "RA417", {"delay": 90})]
+    events = [
+        (at[0], "flight_status", "RA417", {"delay": 10}),
+        (at[1], "hotel_inventory", "Hilton", {"rooms": 9}),
+        (at[2], "flight_status", "RA417", {"delay": 20}),
+        (at[3], "flight_status", "RA417", {"delay": 90}),
+    ]
     caught_up = airport_datagen._catch_up(events, start, now=start.replace(minute=20), speed=1)
     assert caught_up == [events[1], events[2], events[3]]
     assert airport_datagen._catch_up(events, start, now=start, speed=1) == events
@@ -170,16 +174,25 @@ def test_lightning_run_returns_rows_like_the_app(monkeypatch):
 
     def urlopen(request, timeout):
         sent.update(url=request.full_url, body=json.loads(request.data), auth=request.headers["Authorization"])
-        return _Response({"result": {"schema": {"columns": [{"name": "KEY"}, {"name": "AVAILABLE_ROOMS"}]},
-                                     "data": [["Grand Hyatt at SFO", 12]]}})
+        return _Response(
+            {
+                "result": {
+                    "schema": {"columns": [{"name": "KEY"}, {"name": "AVAILABLE_ROOMS"}]},
+                    "data": [["Grand Hyatt at SFO", 12]],
+                }
+            }
+        )
 
     monkeypatch.setattr(setup_rtce.urllib.request, "urlopen", urlopen)
     infra = {"region": "us-east-1", "org_id": "o", "env_id": "env-1", "cluster_id": "lkc-1"}
     rows = setup_rtce.run_lightning_query(infra, "KEY", "SECRET", "hotel_inventory")
     assert rows == [{"key": "Grand Hyatt at SFO", "available_rooms": 12}]
     assert sent["url"] == "https://sql.us-east-1.aws.confluent.cloud/query/v1alpha1"
-    assert sent["body"] == {"catalog_name": "env-1", "database_name": "lkc-1",
-                            "query": "SELECT * FROM `hotel_inventory` LIMIT 10"}
+    assert sent["body"] == {
+        "catalog_name": "env-1",
+        "database_name": "lkc-1",
+        "query": "SELECT * FROM `hotel_inventory` LIMIT 10",
+    }
     assert sent["auth"].startswith("Basic ")
 
 
@@ -189,8 +202,10 @@ def test_a_failed_key_check_keeps_the_stored_key(monkeypatch):
     assert setup_rtce._key_owned_by("sa-1", "KEY")
 
 
-@pytest.mark.parametrize("argv", [["--run"], ["--agent-connection", "--lightning", "flight_status"],
-                                  ["--agent-connection", "--client", "claude"]])
+@pytest.mark.parametrize(
+    "argv",
+    [["--run"], ["--agent-connection", "--lightning", "flight_status"], ["--agent-connection", "--client", "claude"]],
+)
 def test_setup_rtce_rejects_flags_that_dont_combine(argv):
     with pytest.raises(SystemExit):
         setup_rtce._parse_args(argv)

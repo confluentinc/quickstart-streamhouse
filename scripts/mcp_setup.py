@@ -105,10 +105,7 @@ def _resolve_npx() -> str:
             f"Warning: Node {path_node_version} (ABI {path_node_abi}) has no prebuilt "
             f"@confluentinc/kafka-javascript binary."
         )
-        print(
-            "  npx will compile it from source the first time the MCP server starts — "
-            "this can take several minutes."
-        )
+        print("  npx will compile it from source the first time the MCP server starts — this can take several minutes.")
     else:
         print("Warning: 'node' not found on PATH or in well-known locations.")
     print("  To avoid the wait, install Node 24 LTS:")
@@ -116,11 +113,7 @@ def _resolve_npx() -> str:
     print("    With Homebrew: brew install node@24")
     print("  Then re-run `uv run setup-mcp`.")
     if path_node_abi is not None:
-        answer = (
-            input(f"  Continue anyway with Node {path_node_version}? [y/N] ")
-            .strip()
-            .lower()
-        )
+        answer = input(f"  Continue anyway with Node {path_node_version}? [y/N] ").strip().lower()
         if answer != "y":
             sys.exit(0)
     else:
@@ -167,17 +160,8 @@ def _clear_broken_npx_cache(npx_bin: str) -> None:
             continue
         if not (entry / "node_modules" / "@confluentinc" / "mcp-confluent").exists():
             continue
-        build_release = (
-            entry
-            / "node_modules"
-            / "@confluentinc"
-            / "kafka-javascript"
-            / "build"
-            / "Release"
-        )
-        node_files = (
-            list(build_release.glob("*.node")) if build_release.exists() else []
-        )
+        build_release = entry / "node_modules" / "@confluentinc" / "kafka-javascript" / "build" / "Release"
+        node_files = list(build_release.glob("*.node")) if build_release.exists() else []
         if not node_files:
             reason = "missing native binary"
         elif active_abi is not None and not any(
@@ -204,9 +188,7 @@ def _clear_broken_npx_cache(npx_bin: str) -> None:
             continue  # cache entry looks fine
         print(f"  Clearing broken npx cache ({reason}): {entry.name}")
         shutil.rmtree(entry)
-        print(
-            "  npx will re-download @confluentinc/mcp-confluent on next MCP server start."
-        )
+        print("  npx will re-download @confluentinc/mcp-confluent on next MCP server start.")
 
 
 def _build_env_vars(core_outputs: dict) -> dict:
@@ -238,9 +220,7 @@ def _pick_agent() -> str:
 _CLAUDE_SERVER_NAME = "confluent-cloud-mcp-server"
 
 
-def _claude_argv_stdio(
-    env_vars: dict, npx_bin: str
-) -> tuple[list[str], list[str]]:
+def _claude_argv_stdio(env_vars: dict, npx_bin: str) -> tuple[list[str], list[str]]:
     """(remove, add) argv for the local stdio Confluent MCP server.
 
     Stdio invocation:
@@ -258,9 +238,7 @@ def _claude_argv_stdio(
     )
 
 
-def _register_with_claude_code(
-    env_vars: dict, npx_bin: str, project_root: Path
-) -> None:
+def _register_with_claude_code(env_vars: dict, npx_bin: str, project_root: Path) -> None:
     """Register the local stdio Confluent MCP server with Claude Code.
 
     Primary path runs `claude mcp add --scope local`.
@@ -274,10 +252,7 @@ def _register_with_claude_code(
         subprocess.run(remove_argv, capture_output=True)
         result = subprocess.run(add_argv, capture_output=True, text=True)
         if result.returncode == 0:
-            print(
-                f"✓ Confluent MCP server registered as '{_CLAUDE_SERVER_NAME}' "
-                "(local scope, via claude CLI)"
-            )
+            print(f"✓ Confluent MCP server registered as '{_CLAUDE_SERVER_NAME}' (local scope, via claude CLI)")
             print("  Restart Claude Code to activate.")
             return
         detail = result.stderr.strip() or f"exit {result.returncode}"
@@ -288,9 +263,7 @@ def _register_with_claude_code(
     _register_with_claude_code_filewrite(env_vars, npx_bin, project_root)
 
 
-def _register_with_claude_code_filewrite(
-    env_vars: dict, npx_bin: str, project_root: Path
-) -> None:
+def _register_with_claude_code_filewrite(env_vars: dict, npx_bin: str, project_root: Path) -> None:
     """Fallback: write the MCP server entry into ~/.claude.json under the project key.
 
     Produces the same entry `claude mcp add --scope local` would, without needing the
@@ -305,11 +278,9 @@ def _register_with_claude_code_filewrite(
         claude_data = {}
 
     project_key = str(project_root)
-    (
-        claude_data.setdefault("projects", {})
-        .setdefault(project_key, {})
-        .setdefault("mcpServers", {})
-    )[_CLAUDE_SERVER_NAME] = {
+    (claude_data.setdefault("projects", {}).setdefault(project_key, {}).setdefault("mcpServers", {}))[
+        _CLAUDE_SERVER_NAME
+    ] = {
         "command": npx_bin,
         "args": ["-y", "@confluentinc/mcp-confluent"],
         "env": env_vars,
@@ -319,10 +290,7 @@ def _register_with_claude_code_filewrite(
         json.dump(claude_data, f, indent=2)
         f.write("\n")
 
-    print(
-        f"✓ Confluent MCP server registered as '{_CLAUDE_SERVER_NAME}' "
-        "(local scope, direct write)"
-    )
+    print(f"✓ Confluent MCP server registered as '{_CLAUDE_SERVER_NAME}' (local scope, direct write)")
     print("  Restart Claude Code to activate.")
 
 
@@ -343,9 +311,7 @@ def _write_codex_config(config_path: Path, env_vars: dict, npx_bin: str) -> None
         try:
             doc = tomlkit.parse(config_path.read_text())
         except Exception as exc:
-            print(
-                f"  Warning: could not parse existing config.toml ({exc}); preserving as .bak"
-            )
+            print(f"  Warning: could not parse existing config.toml ({exc}); preserving as .bak")
             config_path.rename(config_path.with_suffix(".toml.bak"))
             doc = tomlkit.document()
 
@@ -373,9 +339,7 @@ def _codex_config_paths(project_root: Path) -> list[Path]:
     paths = [home_config_path]
 
     project_config_path = project_root / ".codex" / "config.toml"
-    if project_config_path.exists() and (
-        project_config_path.resolve() != home_config_path.resolve()
-    ):
+    if project_config_path.exists() and (project_config_path.resolve() != home_config_path.resolve()):
         paths.append(project_config_path)
 
     return paths
@@ -394,9 +358,7 @@ def _register_with_codex(env_vars: dict, npx_bin: str, project_root: Path) -> No
     for codex_config_path in config_paths:
         _write_codex_config(codex_config_path, env_vars, npx_bin)
 
-    print(
-        f"✓ Confluent MCP server registered as 'confluent-cloud-mcp-server' in {config_paths[0]}"
-    )
+    print(f"✓ Confluent MCP server registered as 'confluent-cloud-mcp-server' in {config_paths[0]}")
     for shadow_config_path in config_paths[1:]:
         print(f"✓ Updated project-local Codex config at {shadow_config_path}")
     print("  Restart Codex CLI to activate.")
@@ -410,9 +372,7 @@ def main():
     state_path = project_root / "terraform" / "core" / "terraform.tfstate"
 
     if not state_path.exists():
-        print(
-            "Error: terraform/core/terraform.tfstate not found. Run `uv run deploy` first."
-        )
+        print("Error: terraform/core/terraform.tfstate not found. Run `uv run deploy` first.")
         sys.exit(1)
 
     core_outputs = run_terraform_output(state_path)
@@ -426,11 +386,7 @@ def main():
     if npx_bin != "npx":
         node_bin_dir = str(Path(npx_bin).parent)
         inherited_path = os.environ.get("PATH", "")
-        env_vars["PATH"] = (
-            f"{node_bin_dir}{os.pathsep}{inherited_path}"
-            if inherited_path
-            else node_bin_dir
-        )
+        env_vars["PATH"] = f"{node_bin_dir}{os.pathsep}{inherited_path}" if inherited_path else node_bin_dir
 
     agent = _pick_agent()
     if agent == "codex":

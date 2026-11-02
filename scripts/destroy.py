@@ -84,18 +84,14 @@ TABLEFLOW_PROVIDER_INTEGRATION = "confluent_provider_integration.tableflow[0]"
 
 def release_provider_integration(env_path: Path) -> bool:
     """Drop the provider integration from state if it's the only resource left."""
-    listed = subprocess.run(
-        ["terraform", "state", "list"], cwd=env_path, capture_output=True, text=True
-    )
+    listed = subprocess.run(["terraform", "state", "list"], cwd=env_path, capture_output=True, text=True)
     if listed.returncode != 0:
         return False
     managed = [r for r in listed.stdout.split() if not r.startswith("data.")]
     if managed != [TABLEFLOW_PROVIDER_INTEGRATION]:
         return False
 
-    removed = subprocess.run(
-        ["terraform", "state", "rm", TABLEFLOW_PROVIDER_INTEGRATION], cwd=env_path
-    )
+    removed = subprocess.run(["terraform", "state", "rm", TABLEFLOW_PROVIDER_INTEGRATION], cwd=env_path)
     if removed.returncode != 0:
         return False
     print(
@@ -156,9 +152,7 @@ def _cleanup_pit_decisions(root: Path) -> None:
 def main():
     """Main entry point for destroy."""
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(
-        description="Destroy the Streamhouse lab resources"
-    )
+    parser = argparse.ArgumentParser(description="Destroy the Streamhouse lab resources")
     parser.add_argument(
         "--lab",
         choices=tuple(LABS),
@@ -222,9 +216,7 @@ def main():
         # Step 4: Show summary and confirm
         print("\n--- Destroy Summary ---")
         print(f"Destroying: {', '.join(envs_to_destroy)}")
-        print(
-            f"\n⚠️  WARNING: This will permanently destroy {', '.join(envs_to_destroy)}!"
-        )
+        print(f"\n⚠️  WARNING: This will permanently destroy {', '.join(envs_to_destroy)}!")
 
         confirm = input("\nAre you sure you want to proceed? (y/n): ").strip().lower()
         if confirm != "y":

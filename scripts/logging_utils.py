@@ -8,9 +8,7 @@ to ensure consistent logging behavior and formatting.
 import logging
 
 
-def setup_logging(
-    verbose: bool = False, default_level: str = "INFO", suppress_azure: bool = False
-) -> logging.Logger:
+def setup_logging(verbose: bool = False, default_level: str = "INFO", suppress_azure: bool = False) -> logging.Logger:
     """
     Set up logging configuration with consistent formatting.
 
@@ -32,9 +30,7 @@ def setup_logging(
 
     # Suppress verbose Azure SDK logging if requested
     if suppress_azure and not verbose:
-        logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
-            logging.WARNING
-        )
+        logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
         logging.getLogger("azure.identity").setLevel(logging.WARNING)
         logging.getLogger("azure.mgmt").setLevel(logging.WARNING)
         logging.getLogger("urllib3").setLevel(logging.WARNING)

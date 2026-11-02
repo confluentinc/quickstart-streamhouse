@@ -23,7 +23,7 @@ def _request(session, method, url, **kwargs):
                 return response.json()
             if response.status_code not in (404, 429, 500, 502, 503, 504) or attempt == 4:
                 raise RuntimeError(f"Catalog request failed: HTTP {response.status_code}")
-        time.sleep(2 ** attempt)
+        time.sleep(2**attempt)
 
 
 def update_tag_color(session, endpoint: str, name: str, color: str) -> bool:
@@ -33,9 +33,9 @@ def update_tag_color(session, endpoint: str, name: str, color: str) -> bool:
     tag = _request(session, "GET", tag_url)
     if tag.get("color") == color:
         return False
-    payload = {key: tag[key] for key in (
-        "name", "description", "entityTypes", "attributeDefs", "superTypes"
-    ) if key in tag}
+    payload = {
+        key: tag[key] for key in ("name", "description", "entityTypes", "attributeDefs", "superTypes") if key in tag
+    }
     payload["color"] = color
     result = _request(session, "PUT", url, json=[payload])
     if not isinstance(result, list) or len(result) != 1 or result[0].get("error"):
@@ -44,7 +44,7 @@ def update_tag_color(session, endpoint: str, name: str, color: str) -> bool:
         if _request(session, "GET", tag_url).get("color") == color:
             return True
         if attempt < 4:
-            time.sleep(2 ** attempt)
+            time.sleep(2**attempt)
     raise RuntimeError(f"Color verification failed for {name}: expected {color}")
 
 
@@ -55,8 +55,7 @@ def apply_tag_colors(root: Path) -> None:
     if not colors:
         raise RuntimeError("Missing topic_tag_colors output; deploy the updated tag configuration first")
     with requests.Session() as session:
-        session.auth = (core["app_manager_schema_registry_api_key"],
-                        core["app_manager_schema_registry_api_secret"])
+        session.auth = (core["app_manager_schema_registry_api_key"], core["app_manager_schema_registry_api_secret"])
         for name, color in sorted(colors.items()):
             changed = update_tag_color(session, core["confluent_schema_registry_rest_endpoint"], name, color)
             print(f"✓ {name}: {color} ({'updated and verified' if changed else 'already matches'})")

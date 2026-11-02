@@ -135,9 +135,7 @@ confluent_cloud_api_secret = "{api_secret}"
     return content
 
 
-def write_tfvars_for_deployment(
-    root: Path, region: str, creds: dict[str, str], resource_prefix: str = ""
-) -> None:
+def write_tfvars_for_deployment(root: Path, region: str, creds: dict[str, str], resource_prefix: str = "") -> None:
     """
     Write terraform.tfvars for the core module (AWS-only, airline demo).
 

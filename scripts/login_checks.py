@@ -103,8 +103,11 @@ def prompt_and_save_login(creds_file, creds: dict) -> bool:
             print("  ✓ Logged in and saved.")
             return True
         remaining = 2 - attempt
-        print(f"  Login failed. {remaining} attempt(s) left." if remaining else
-              "  Login failed. Skipping (use `confluent login --sso` if you use SSO).")
+        print(
+            f"  Login failed. {remaining} attempt(s) left."
+            if remaining
+            else "  Login failed. Skipping (use `confluent login --sso` if you use SSO)."
+        )
     return False
 
 
@@ -118,9 +121,7 @@ def ensure_confluent_login(creds: dict | None = None, creds_file=None, interacti
     if check_confluent_login():
         return
     if creds is None:
-        creds = dotenv_values(
-            str(Path(__file__).parent.parent / "credentials.env")
-        )
+        creds = dotenv_values(str(Path(__file__).parent.parent / "credentials.env"))
     if attempt_confluent_auto_login(creds):
         return
     if interactive and creds_file:
