@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.11'",
@@ -1152,7 +1152,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.26.0,<2.0" },
-    { name = "confluent-kafka", extras = ["avro", "schema-registry"], specifier = ">=2.3.0" },
+    { name = "confluent-kafka", extras = ["avro", "schema-registry"], specifier = ">=2.4.0" },
     { name = "fastapi", specifier = ">=0.110.0,<1.0" },
     { name = "python-dotenv", specifier = ">=1.0.0,<2.0" },
     { name = "pyyaml", specifier = ">=6.0.1,<7.0" },

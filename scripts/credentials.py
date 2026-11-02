@@ -42,7 +42,7 @@ def load_or_create_credentials_file(root: Path) -> tuple[Path, dict[str, str]]:
 
 
 def generate_confluent_api_keys(
-    prefix: str = "flight-recovery",
+    prefix: str = "streamhouse",
 ) -> tuple[str | None, str | None]:
     """
     Generate Confluent API keys using CLI.
@@ -50,7 +50,7 @@ def generate_confluent_api_keys(
     Creates a service account and generates API keys with OrganizationAdmin role.
 
     Args:
-        prefix: Prefix for service account name (default: "flight-recovery")
+        prefix: Prefix for service account name (default: "streamhouse")
 
     Returns:
         Tuple of (api_key, api_secret) or (None, None) if generation fails

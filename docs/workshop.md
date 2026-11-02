@@ -101,8 +101,8 @@ Deploy asks for the following:
 **Deploy takes about 10 minutes to create all of the workshop infrastructure and source topics.** When finished, you'll see your environment and cluster names, which you need in Lab 2:
 
 ```text
-Environment name: flight-recovery-1a2b3c4d-env
-Cluster name: flight-recovery-1a2b3c4d-cluster
+Environment name: streamhouse-1a2b3c4d-env
+Cluster name: streamhouse-1a2b3c4d-cluster
 ```
 
 ### 5. Start the datagen
@@ -123,7 +123,7 @@ It publishes today's 180 flights, about 13,000 passenger itineraries, tomorrow's
 
 River Air's data comes from different systems: itineraries from ticketing, flight status from the airports' operational databases, and hotel rooms from a partner. Let's look at them as they arrive.
 
-1. Open [Confluent Cloud](https://confluent.cloud). Select **Environments**, then your environment (`flight-recovery-…-env`), then **Clusters** and your cluster.
+1. Open [Confluent Cloud](https://confluent.cloud). Select **Environments**, then your environment (`streamhouse-…-env`), then **Clusters** and your cluster.
 
 2. Select **Topics**. You see the four topics deploy created, each tagged with the kind of data it holds: `flight_status`, `passenger_itineraries`, `hotel_inventory`, and `passenger_recommendations`.
 
@@ -135,9 +135,9 @@ River Air's data comes from different systems: itineraries from ticketing, fligh
 
 Now we'll use Flink to join every itinerary to the live status of both of its flights and keep the result current as flights change.
 
-1. In your Confluent Cloud environment, open **Flink** from the left menu, go to the **Compute pools** tab, select  **SQL Workspace** on the `flight-recovery-…-compute-pool` pool, then click **Open SQL workspace**. Above the editor, set the **catalog** to your environment and the **database** to your cluster.
+1. In your Confluent Cloud environment, open **Flink** from the left menu, go to the **Compute pools** tab, select  **SQL Workspace** on the `streamhouse-…-compute-pool` pool, then click **Open SQL workspace**. Above the editor, set the **catalog** to your environment and the **database** to your cluster.
 
-![The Compute pools tab under Flink, with the running flight-recovery compute pool and its SQL Workspace button](./images/compute-pool-view.png)
+![The Compute pools tab under Flink, with the running streamhouse compute pool and its SQL Workspace button](./images/compute-pool-view.png)
 
 2. Check the source tables:
 
@@ -628,7 +628,7 @@ Congratulations! You built a pipeline that turns raw flight and itinerary feeds 
 
     It deletes your environment and everything in it: the cluster, the topics, the tables and agent you created, and the Flink connection.
 
-3. Delete the setup service account. In Confluent Cloud, open the **Administration** menu (top right), select **Accounts & access**, open **Service accounts**, and delete each `flight-recovery-setup-sa-…` (one for every time you answered `y` to new keys).
+3. Delete the setup service account. In Confluent Cloud, open the **Administration** menu (top right), select **Accounts & access**, open **Service accounts**, and delete each `streamhouse-setup-sa-…` (one for every time you answered `y` to new keys).
 
 4. Delete `credentials.env`, which holds your password:
 

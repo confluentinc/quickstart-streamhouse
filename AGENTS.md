@@ -6,6 +6,10 @@ Instructions for AI coding agents and contributors working in this repository. `
 
 This repository is the River Air flight recovery demo on Confluent Cloud. The demo script is the source of truth for the story; the [data model](./docs/data-model.md) is the data contract that serves it. The Flink SQL is in `terraform/airline-demo/sql/20` through `32`; `uv run airport-datagen` and `uv run airport-app` run the generator and app. The [self-service workshop](./docs/workshop.md) turns the first two scenes into hands-on labs.
 
+## Labs
+
+The repo holds two labs that share `terraform/core`. `uv run deploy` asks which to deploy (`--lab flight-disruptions|agentic-pit-decisions|both`) and saves the answer as `DEPLOY_LABS` in `credentials.env`. Everything below "Demo direction" is the Flight Disruptions lab. Agentic Pit Decisions is described under its own heading.
+
 ## Demo direction
 
 * Use the script's three demo scenes: live flight and passenger queries, Flink connection risk with hotel-aware recovery, then Tableflow to Iceberg and AWS Glue/Athena for the historical questions.
@@ -15,6 +19,14 @@ This repository is the River Air flight recovery demo on Confluent Cloud. The de
 * Recovery time is `recommended_at - impacted_at`; it excludes the customer's decision time.
 * Keep the generator behind `uv run airport-datagen`. `uv run deploy` publishes the same data, starts the 90-minute live stream in the background, then enables Lightning Tables and RTCE. People run only `uv run deploy` (workshop attendees `uv run deploy --workshop`); its `--automated`/`--testing` flags are for bots. Use targeted Terraform apply for incremental changes to an existing deployment.
 * The workshop covers scenes 1 and 2 without Tableflow or the Webhooks connector. `uv run deploy --workshop` sets `TF_VAR_workshop` in `credentials.env` (so later runs stay in workshop mode) and creates only `sql/20`–`23` and the Global API key. Attendees start the data with `uv run airport-datagen --skip-history`, paste `sql/24`–`27`, the agent's Confluent-hosted model (`sql/32`), and `sql/29`–`31` from the guide, and turn on RTCE per topic in the Console. They need no AWS credentials. The statements that read `CURRENT_TIMESTAMP` (`sql/27`, `31`) get a leading `SET 'sql.local-time-zone' = 'UTC';` in the guide. `tests/test_workshop.py` keeps the guide's SQL identical to the files. When an attendee's agent writes no offers, `uv run airport-datagen --resume --offers generator` writes RA417's on the same clock.
+
+## Agentic Pit Decisions
+
+* The [walkthrough](./docs/agentic-pit-decisions/walkthrough.md) is the source of truth. Attendees write `car_state`, `pit_strategy_agent`, and `pit_decisions` by hand; the reference SQL is in `docs/agentic-pit-decisions/sql/`.
+* `terraform/agentic-pit-decisions/` creates only the source tables (`car_telemetry`, `race_standings`, `driver_race_history`) and `llm_textgen_model` (Claude hosted in Confluent). Deploy then writes the credential card `tmp/agentic-pit-decisions-card.env` (gitignored, `F1_*` keys) and seeds `driver_race_history`.
+* The code is in `scripts/pit_decisions/`: `uv run f1-race` (simulator), `uv run f1-pitwall` (dashboard on port 8001, since `airport-app` uses 8000), `uv run f1-sql`, and `uv run f1-reset`.
+* The labs share one environment, so lab object names must not overlap, and `f1-reset` stops and drops only statements and topics that name this lab's objects.
+* RTCE reuses `uv run setup-rtce` and its one `confluent-streamhouse-rtce` MCP server for both labs.
 
 ## Technical boundaries
 
@@ -28,9 +40,10 @@ This repository is the River Air flight recovery demo on Confluent Cloud. The de
 
 ## Repository layout
 
-* [`scripts/`](./scripts/) — one flat Python package: deploy/destroy, credential and Terraform helpers, RTCE setup, the generator (`airport_datagen.py`), and the app (`airport_app.py`, `static/`).
+* [`scripts/`](./scripts/) — a Python package (`scripts/pit_decisions/` holds the second lab): deploy/destroy, credential and Terraform helpers, RTCE setup, the generator (`airport_datagen.py`), and the app (`airport_app.py`, `static/`).
 * [`terraform/core/`](./terraform/core/) — Confluent Cloud environment, cluster, Flink pool, service accounts, keys, optional Bedrock connection.
-* [`terraform/airline-demo/`](./terraform/airline-demo/) — the demo pipeline (Flink SQL in `sql/`) and Tableflow to S3/Glue. Separate root because its provider reads core's outputs.
+* [`terraform/airline-demo/`](./terraform/airline-demo/) — the Flight Disruptions pipeline (Flink SQL in `sql/`) and Tableflow to S3/Glue. Separate root because its provider reads core's outputs.
+* [`terraform/agentic-pit-decisions/`](./terraform/agentic-pit-decisions/) — the Agentic Pit Decisions source tables and hosted model; also reads core's outputs.
 * [`tests/`](./tests/) — pytest suites.
 * [`docs/`](./docs/) — walkthrough, workshop guide, data model, and architecture diagram.
 
