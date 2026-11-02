@@ -3,13 +3,16 @@
 // ---- config ----
 const OUR_CAR = 88;
 // One orbit of the track == one race lap. We don't hardcode the duration because
-// it varies by feed (live = seconds_per_lap, default 60s; mock replays much faster)
+// it varies by feed (live = seconds_per_lap, default 20s; mock replays much faster)
 // and the live dashboard can't read seconds_per_lap from the Kafka data. Instead we
 // measure the wall-clock time between lap-number changes and orbit at that rate.
-const DEFAULT_LAP_MS = 60000; // orbit period until the feed's lap cadence is observed
+const DEFAULT_LAP_MS = 20000; // orbit period until the feed's lap cadence is observed
 const LAP_MS_MIN = 800;       // clamp measured cadence to sane bounds
 const LAP_MS_MAX = 120000;
 const GAP_SCALE = 0.012;      // seconds of gap -> fraction of a lap on the map
+// Corrections (lap sync, gap changes) may change a car's speed by at most this share of
+// normal pace, so they read as a car speeding up or easing off — never running backwards.
+const MAX_CORRECTION = 0.4;
 
 const TEAM_COLORS = {
   "River Racing": "#1fc77b",
@@ -28,13 +31,26 @@ const teamColor = (t) => TEAM_COLORS[t] || "#9aa7b8";
 
 // ---- state ----
 let latest = null;
-const carEls = new Map();
+const carOffsets = new Map();  // car_number -> displayed lap fraction behind the leader
 
-const track = document.getElementById("track");
-const trackPath = document.getElementById("track-path");
-const carsGroup = document.getElementById("cars");
-let pathLen = 0;
-window.addEventListener("load", () => { pathLen = trackPath.getTotalLength(); });
+const mapEl = document.getElementById("map");
+const mapMsg = document.getElementById("map-msg");
+
+// Places a car from its lap fraction (0..1 from the start/finish line, in race
+// direction); set once the circuit map is up.
+let placeCarAt = null;
+
+window.addEventListener("load", async () => {
+  try {
+    placeCarAt = await initMap();
+  } catch (err) {
+    // Leaflet comes from cdnjs, so an offline laptop or a venue that blocks the CDN
+    // ends up here; the rest of the pit wall keeps working without the map.
+    console.warn("Circuit map unavailable:", err);
+    mapEl.classList.add("hidden");
+    mapMsg.classList.remove("hidden");
+  }
+});
 
 // Visual orbit state — one lap of the track per race lap, paced by the feed.
 let lapPeriodMs = DEFAULT_LAP_MS;       // measured time for one race lap
@@ -42,8 +58,12 @@ let orbitPhase = 0;                     // 0..1 position around the track
 let lastFrameMs = performance.now();
 let lapSeenNum = null;                  // last lap number observed
 let lapSeenAt = 0;                      // when we observed it (performance.now)
+let phaseNudge = 0;                     // lap-sync correction still to be applied
 
-// Track how fast the feed advances laps so the animation matches race speed.
+// Track how fast the feed advances laps so the animation matches race speed, and
+// phase-lock the leader to the start/finish line whenever a new lap begins: the lap
+// number is clock-driven by the simulator, so this is the only moment we know where
+// the leader "is". The correction is spread out (see animate) rather than snapped.
 function trackLapCadence(lap) {
   if (lap == null) return;
   const now = performance.now();
@@ -52,8 +72,11 @@ function trackLapCadence(lap) {
     lapPeriodMs = clamp(0.5 * lapPeriodMs + 0.5 * observed, LAP_MS_MIN, LAP_MS_MAX);
     lapSeenNum = lap;
     lapSeenAt = now;
+    phaseNudge = wrapHalf(-orbitPhase);
   } else if (lapSeenNum == null || lap < lapSeenNum) {
-    // First snapshot, or the race looped back to lap 1 — reset the baseline.
+    // First snapshot (we joined mid-lap, so don't sync yet), or the race looped back
+    // to lap 1 — reset the baseline.
+    if (lapSeenNum != null) phaseNudge = wrapHalf(-orbitPhase);
     lapSeenNum = lap;
     lapSeenAt = now;
   }
@@ -170,45 +193,149 @@ function animate() {
   const now = performance.now();
   const dt = now - lastFrameMs;
   lastFrameMs = now;
-  if (latest && pathLen) {
-    // Advance the orbit by the fraction of a lap elapsed since the last frame.
-    orbitPhase = (orbitPhase + dt / lapPeriodMs) % 1;
+  if (latest && placeCarAt) {
+    // Advance the orbit by the fraction of a lap elapsed since the last frame, folding
+    // in a rate-limited slice of any pending lap-sync correction.
+    const pace = dt / lapPeriodMs;
+    const limit = MAX_CORRECTION * pace;
+    const fix = clamp(phaseNudge, -limit, limit);
+    phaseNudge -= fix;
+    orbitPhase = (((orbitPhase + pace + fix) % 1) + 1) % 1;
     for (const c of latest.standings) {
-      let frac = orbitPhase - (c.gap_to_leader_sec || 0) * GAP_SCALE;
+      // Gaps only update once per lap (and jump at pit stops); glide to the new one
+      // instead of teleporting. Worst case pace - limit - limit stays above zero.
+      const target = (c.gap_to_leader_sec || 0) * GAP_SCALE;
+      const prev = carOffsets.get(c.car_number);
+      const offset = prev == null ? target : prev + clamp(target - prev, -limit, limit);
+      carOffsets.set(c.car_number, offset);
+      let frac = orbitPhase - offset;
       frac = ((frac % 1) + 1) % 1;
-      const pt = trackPath.getPointAtLength(frac * pathLen);
-      placeCar(c, pt);
+      placeCarAt(c, frac);
     }
   }
   requestAnimationFrame(animate);
 }
 requestAnimationFrame(animate);
 
-function placeCar(c, pt) {
-  let el = carEls.get(c.car_number);
-  if (!el) {
-    el = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    const ours = c.car_number === OUR_CAR;
-    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    circle.setAttribute("r", ours ? 11 : 6);
-    circle.setAttribute("fill", teamColor(c.team));
-    circle.setAttribute("class", ours ? "car-dot car-dot-ours" : "car-dot");
-    if (ours) { circle.setAttribute("stroke", "#ffffff"); circle.setAttribute("stroke-width", "2"); }
-    el.appendChild(circle);
-    if (ours) {
-      const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      label.setAttribute("text-anchor", "middle");
-      label.setAttribute("dy", "4");
-      label.setAttribute("class", "car-label");
-      label.textContent = "88";
-      el.appendChild(label);
-    }
-    carsGroup.appendChild(el);
-    carEls.set(c.car_number, el);
+// ---- circuit map (Leaflet) ----
+// circuits/<name>.geojson is the GP centreline, starting at the start/finish line and
+// ordered in race direction, so a lap fraction maps straight onto distance along it.
+// The server picks the default circuit (PITWALL_CIRCUIT / --circuit) and renders it as
+// the selected option of #circuit-select; the dropdown swaps circuits live, and a
+// viewer's pick is remembered in this browser and in the URL (?circuit=).
+const circuitSelect = document.getElementById("circuit-select");
+const CIRCUIT_STORE_KEY = "pitwall.circuit";
+
+function initialCircuit() {
+  const known = new Set([...circuitSelect.options].map((o) => o.value));
+  let saved = null;
+  try { saved = localStorage.getItem(CIRCUIT_STORE_KEY); } catch (_) { /* storage blocked */ }
+  for (const k of [new URLSearchParams(location.search).get("circuit"), saved]) {
+    if (k && known.has(k)) return k;
   }
-  el.setAttribute("transform", `translate(${pt.x.toFixed(1)},${pt.y.toFixed(1)})`);
-  // keep our car drawn on top
-  if (c.car_number === OUR_CAR) carsGroup.appendChild(el);
+  return circuitSelect.value;
+}
+
+async function fetchCircuit(key) {
+  const res = await fetch(`/static/circuits/${encodeURIComponent(key)}.geojson`);
+  if (!res.ok) throw new Error(`circuit ${key} HTTP ${res.status}`);
+  const line = (await res.json()).features[0].geometry.coordinates.map(([lon, lat]) => [lat, lon]);
+  // Cumulative distance along the line; equirectangular metres are plenty at this scale.
+  const kx = Math.cos(line[0][0] * Math.PI / 180);
+  const cum = [0];
+  for (let i = 1; i < line.length; i++) {
+    const dy = line[i][0] - line[i - 1][0];
+    const dx = (line[i][1] - line[i - 1][1]) * kx;
+    cum.push(cum[i - 1] + Math.hypot(dx, dy));
+  }
+  return { line, cum, total: cum[cum.length - 1] };
+}
+
+async function initMap() {
+  if (!window.L) throw new Error("Leaflet not loaded");
+  let key = initialCircuit();
+  let geo = await fetchCircuit(key);
+  const map = L.map(mapEl, { zoomSnap: 0.25, scrollWheelZoom: false, attributionControl: true });
+  // Standard OSM tiles (no API key), darkened in CSS to match the pit wall theme.
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    className: "map-tiles",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · circuit: ' +
+      '<a href="https://github.com/bacinger/f1-circuits">bacinger/f1-circuits</a>',
+  }).addTo(map);
+  window.addEventListener("resize", () => map.invalidateSize());
+  // Own pane under the cars (overlayPane is z 400), so a swapped-in circuit never covers them.
+  map.createPane("circuit").style.zIndex = 350;
+
+  let trackLine = null, startMark = null;
+  function drawCircuit() {
+    if (trackLine) trackLine.remove();
+    if (startMark) startMark.remove();
+    trackLine = L.polyline(geo.line, { pane: "circuit", className: "map-track", weight: 7, interactive: false })
+      .addTo(map);
+    startMark = L.circleMarker(geo.line[0], { pane: "circuit", className: "map-start", radius: 4, weight: 2, interactive: false })
+      .addTo(map);
+    map.fitBounds(trackLine.getBounds(), { padding: [16, 16] });
+    circuitSelect.value = key;
+    document.title = `River Racing · Pit Wall · ${circuitSelect.selectedOptions[0].textContent}`;
+  }
+  drawCircuit();
+
+  circuitSelect.disabled = false;
+  circuitSelect.addEventListener("change", async () => {
+    const next = circuitSelect.value;
+    try {
+      geo = await fetchCircuit(next);
+    } catch (err) {
+      console.warn(err);
+      circuitSelect.value = key;
+      return;
+    }
+    key = next;
+    seg = 0;
+    drawCircuit();
+    try { localStorage.setItem(CIRCUIT_STORE_KEY, key); } catch (_) { /* storage blocked */ }
+    const url = new URL(location.href);
+    url.searchParams.set("circuit", key);
+    history.replaceState(null, "", url);
+  });
+
+  const markers = new Map();
+  let seg = 0; // last segment hit; cars are drawn in a sweep so this rarely moves far
+  function pointAtFraction(frac) {
+    const { line, cum, total } = geo;
+    const d = frac * total;
+    if (seg > cum.length - 2 || d < cum[seg] || d > cum[seg + 1]) {
+      seg = 0;
+      while (seg < cum.length - 2 && cum[seg + 1] < d) seg++;
+    }
+    const t = (d - cum[seg]) / ((cum[seg + 1] - cum[seg]) || 1);
+    const a = line[seg], b = line[seg + 1];
+    return [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+  }
+
+  return (c, frac) => {
+    const ll = pointAtFraction(frac);
+    let m = markers.get(c.car_number);
+    if (!m) {
+      const tip = `#${c.car_number} ${c.driver ?? ""}`;
+      if (c.car_number === OUR_CAR) {
+        // A DOM marker so #88 gets its label and glow, and sits above the pack's pane.
+        m = L.marker(ll, {
+          icon: L.divIcon({ className: "map-car-ours", html: "<span>88</span>", iconSize: [24, 24] }),
+          keyboard: false,
+        }).bindTooltip(tip, { className: "map-tip" });
+      } else {
+        m = L.circleMarker(ll, {
+          radius: 6, weight: 1, color: "#06121a", fillColor: teamColor(c.team), fillOpacity: 1,
+        }).bindTooltip(tip, { className: "map-tip" });
+      }
+      m.addTo(map);
+      markers.set(c.car_number, m);
+    } else {
+      m.setLatLng(ll);
+    }
+  };
 }
 
 // ---- helpers ----
@@ -217,6 +344,7 @@ function setBar(barId, valId, pct, text) {
   document.getElementById(valId).textContent = text;
 }
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function wrapHalf(v) { return v - Math.round(v); }   // wrap a phase delta into [-0.5, 0.5]
 function fmt(v, d) { return v == null ? "--" : Number(v).toFixed(d); }
 function heatColor(t) {
   if (t == null) return "#2a3a4e";

@@ -3,6 +3,7 @@
   uv run f1-pitwall                       # live, card written by `uv run deploy`
   uv run f1-pitwall --creds <prefix>.env  # live, from a specific card
   uv run f1-pitwall --mock                # offline demo / dev (no Kafka)
+  PITWALL_CIRCUIT=monza uv run f1-pitwall  # draw another circuit (or --circuit monza)
 
 Starts a local web server, opens a browser, and streams the race — leaderboard,
 car #88 telemetry gauges, and (once you build them in Step 1 and Step 3) the anomaly
@@ -25,6 +26,7 @@ import webbrowser
 import uvicorn
 
 from scripts.pit_decisions.card import load_card
+from scripts.pit_decisions.pitwall.circuits import CIRCUIT_ENV_VAR, CIRCUITS, DEFAULT_CIRCUIT, resolve_circuit
 from scripts.pit_decisions.pitwall.server import create_app
 from scripts.pit_decisions.pitwall.state import RaceState
 
@@ -44,9 +46,17 @@ def main() -> None:
         "-v",
         "--verbose",
         action="store_true",
-        help="Also log the errors the consumer suppresses (e.g. car_state missing before LAB 3)",
+        help="Also log the errors the consumer suppresses (e.g. car_state missing before Step 1)",
+    )
+    parser.add_argument(
+        "--circuit",
+        choices=sorted(CIRCUITS),
+        metavar="NAME",
+        help=f"Circuit drawn on the map (visual only; the race is the same). "
+        f"Default: ${CIRCUIT_ENV_VAR}, else {DEFAULT_CIRCUIT}. One of: {', '.join(sorted(CIRCUITS))}",
     )
     args = parser.parse_args()
+    circuit = resolve_circuit(args.circuit)
 
     # Configure logging from the parsed args, not at import time: the consumer's
     # deliberate suppressions log at DEBUG, so INFO makes them unreachable — which
@@ -78,7 +88,8 @@ def main() -> None:
     if not args.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
-    app = create_app(state)
+    logger.info("Circuit map: %s (%s)", CIRCUITS[circuit][1], circuit)
+    app = create_app(state, circuit)
     try:
         uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
     except KeyboardInterrupt:

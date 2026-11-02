@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>River Racing · Pit Wall</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
+        integrity="sha512-Zcn6bjR/8RZbLEpLIeOwNtzREBAJnUKESxces60Mpoj+2okopSAcSUIUOseddDm0cxnGQzxIR7vJgsLZbdLE3w=="
+        crossorigin="anonymous" referrerpolicy="no-referrer" />
   <link rel="stylesheet" href="/static/pitwall.css" />
 </head>
 <body>
@@ -14,7 +17,8 @@
       <span class="brand-sub">PIT WALL</span>
     </div>
     <div class="race-meta">
-      <span class="circuit">SILVERSTONE</span>
+      <!-- Enabled by pitwall.js once the map loads. -->
+      <select id="circuit-select" class="circuit" aria-label="Circuit" disabled>{{CIRCUIT_OPTIONS}}</select>
       <span class="lap">LAP <b id="lap">--</b><span class="lap-total">/60</span></span>
       <span id="conn" class="conn offline">● CONNECTING</span>
     </div>
@@ -24,21 +28,10 @@
     <!-- Track map -->
     <section class="card track-card">
       <h2 class="card-title">CIRCUIT</h2>
-      <svg id="track" viewBox="0 0 800 460" preserveAspectRatio="xMidYMid meet">
-        <path id="track-path"
-          d="M 90 360
-             C 60 300, 70 210, 140 180
-             C 210 150, 250 200, 320 180
-             C 390 160, 400 90, 470 80
-             C 560 68, 600 130, 660 140
-             C 730 152, 760 210, 720 260
-             C 690 298, 610 290, 560 320
-             C 500 356, 470 410, 390 408
-             C 300 406, 280 350, 210 348
-             C 150 346, 120 410, 90 360 Z"
-          fill="none" />
-        <g id="cars"></g>
-      </svg>
+      <div id="map"></div>
+      <div id="map-msg" class="map-msg hidden">
+        Circuit map unavailable — it needs internet access to load Leaflet (cdnjs) and OpenStreetMap tiles.
+      </div>
       <p class="track-note">Car positions are an illustrative approximation from race order &amp; gaps.</p>
     </section>
 
@@ -105,6 +98,9 @@
     </section>
   </main>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"
+          integrity="sha512-BwHfrr4c9kmRkLw6iXFdzcdWV/PGkVgiIyIWLLlTSXzWQzxuSg4DiQUCpauz/EWjgk5TYQqX/kvn9pG1NpYfqg=="
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script src="/static/pitwall.js"></script>
 </body>
 </html>

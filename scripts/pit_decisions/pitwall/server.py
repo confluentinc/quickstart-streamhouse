@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import html
 import json
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from scripts.pit_decisions.pitwall.circuits import CIRCUITS, DEFAULT_CIRCUIT
 from scripts.pit_decisions.pitwall.state import RaceState
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -48,20 +50,25 @@ class NoCacheStaticFiles(StaticFiles):
         return response
 
 
-def _render_index() -> str:
-    html = (STATIC_DIR / "index.html").read_text()
+def _render_index(circuit: str = DEFAULT_CIRCUIT) -> str:
+    page = (STATIC_DIR / "index.html").read_text()
     for key, value in STEP_LABELS.items():
-        html = html.replace(f"{{{{{key}_TITLE}}}}", value).replace(f"{{{{{key}}}}}", value.upper())
-    return html
+        page = page.replace(f"{{{{{key}_TITLE}}}}", value).replace(f"{{{{{key}}}}}", value.upper())
+    options = "".join(
+        f'<option value="{key}" title="{html.escape(full_name)}"{" selected" if key == circuit else ""}>'
+        f"{html.escape(label.upper())}</option>"
+        for key, (label, full_name) in sorted(CIRCUITS.items(), key=lambda kv: kv[1][0])
+    )
+    return page.replace("{{CIRCUIT_OPTIONS}}", options)
 
 
-def create_app(state: RaceState) -> FastAPI:
+def create_app(state: RaceState, circuit: str = DEFAULT_CIRCUIT) -> FastAPI:
     app = FastAPI(title="F1 Pit Wall")
     app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/")
     async def index() -> HTMLResponse:
-        return HTMLResponse(_render_index(), headers=NO_CACHE)
+        return HTMLResponse(_render_index(circuit), headers=NO_CACHE)
 
     @app.get("/healthz")
     async def healthz() -> dict:
