@@ -57,7 +57,7 @@ def test_hero_flight_strands_150_of_170_passengers(plan):
     first, last = g.HERO_RAMP
     assert all(START + first < p.impacted_at <= START + last for p in impacted)
     assert len({p.impacted_at for p in impacted}) == 11  # one wave per destination
-    assert [when for when, _ in hero.reveals] == [START + first + g.HERO_EVERY * k for k in range(1, 41)]
+    assert [when for when, _ in hero.reveals] == [START + first + g.UPDATE_EVERY * k for k in range(1, 41)]
     delays = [delay for _, delay in hero.reveals]
     assert delays == sorted(delays) and delays[-1] == g.HERO_DELAY == 115
 
@@ -107,6 +107,19 @@ def test_delays_only_grow_and_statuses_only_move_forward(plan):
             statuses = [order[flight.status_at(t)] for t in flight.ticks(datetime.min, datetime.max)]
             assert statuses == sorted(statuses)
             assert flight.status_at(datetime.max) in {"LANDED", "DEPARTED"}
+
+
+def test_live_delays_climb_with_each_update_and_history_keeps_its_notices(plan):
+    climbing = 0
+    for flight in plan.live.flights:
+        assert {when for when, _ in flight.reveals} <= set(flight.ticks(datetime.min, datetime.max))
+        delays = [delay for _, delay in flight.reveals]
+        if max(delays, default=0) >= g.DELAYED_AT:
+            climbing += 1
+            assert all(abs(later - earlier) <= 3 for earlier, later in pairwise([0, *delays]))
+    assert climbing >= 20
+    for day in plan.days[:-1]:
+        assert all(len(flight.reveals) <= 4 for flight in day.flights)
 
 
 def test_connection_risk_changes_at_most_once(plan):
@@ -191,13 +204,16 @@ def test_initial_records_stay_within_lightning_row_cap(plan, records):
     )
 
 
-def test_stream_updates_flights_every_minute_ra417_every_30_seconds_and_hotels_every_15(plan):
+def test_stream_updates_flights_every_30_seconds_and_hotels_every_15(plan):
     events = g.stream_events(plan, g.STREAM_MINUTES)
     assert all(START < at <= START + timedelta(minutes=g.STREAM_MINUTES) for at, *_ in events)
     assert [at for at, *_ in events] == sorted(at for at, *_ in events)
     hero = plan.live.hero
-    per_flight = Counter((key, at.replace(second=0)) for at, topic, key, _ in events if topic == g.FLIGHTS)
-    assert {n for (key, _), n in per_flight.items() if key != hero.key} == {1}
+    updates = {}
+    for at, topic, key, _ in events:
+        if topic == g.FLIGHTS:
+            updates.setdefault(key, []).append(at)
+    assert all(later - earlier == g.UPDATE_EVERY for times in updates.values() for earlier, later in pairwise(times))
     hero_updates = [value for _, topic, key, value in events if topic == g.FLIGHTS and key == hero.key]
     assert len(hero_updates) == 2 * g.STREAM_MINUTES
     assert hero_updates[-1]["estimated_time"] == hero.scheduled + timedelta(minutes=115)

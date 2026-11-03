@@ -5,11 +5,12 @@ flight uses one 182-seat layout, modeled after a two-class Boeing 737-900ER, and
 passenger has a seat on each of their flights.
 The live day is shifted so flight RA417 from Chicago is scheduled 50 minutes after the
 stream starts. Its delay grows every 30 seconds from +5 to +25 minutes, and 150 of its 170
-passengers miss their connection. Every active flight publishes its status once a minute
-(RA417 every 30 seconds), en-route arrivals revise their estimate by a minute or two along
-the way, and both hotels publish their rooms every 15 seconds. Announced delays only grow
-(a severe delay may shrink by at most three minutes near landing), so a flight never goes
-from hours late back to on time.
+passengers miss their connection. Every active flight publishes its status every 30 seconds,
+and on the live day each growing delay climbs a little with every update, as RA417's does.
+En-route arrivals revise their estimate by a minute or two along the way, and the three
+hotels publish their rooms every 15 seconds. Announced delays only grow (a severe delay may
+shrink by at most three minutes near landing), so a flight never goes from hours late back
+to on time.
 
 The generator writes two rebooking offers a few seconds after a connection becomes HIGH
 risk. Past bookings are completed the way customers would complete them; RA417's offers
@@ -33,10 +34,12 @@ import random
 import signal
 import subprocess
 import time
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from itertools import pairwise
+from operator import itemgetter
 
 import requests
 from confluent_kafka import Producer
@@ -89,7 +92,6 @@ HERO_ORIGIN = "ORD"
 HERO_MINUTE = 21 * 60 + 40
 HERO_LEAD = timedelta(minutes=50)
 # From +5 to +25 minutes into the stream, each 30-second RA417 update adds to its delay, up to 115.
-HERO_EVERY = timedelta(seconds=30)
 HERO_RAMP = (timedelta(minutes=5), timedelta(minutes=25))
 HERO_DELAY = 115
 HERO_CONNECTING = 150
@@ -107,9 +109,11 @@ MODERATE_DELAY = (15, 60)
 DELAYED_AT = 15
 MAP_AT_RISK = 45  # the dashboard's flight map colors a flight this many minutes late as at risk
 ACTIVE_BEFORE = timedelta(minutes=180)
+UPDATE_EVERY = timedelta(seconds=30)  # how often an active flight publishes its status
 BOARDING = timedelta(minutes=30)
-# Live-stream arrival-time revisions: chance per update, minutes off the announced delay, and when they stop.
-REVISION_CHANCE = 0.8
+# Live-stream arrival-time revisions: chance per update (about one a minute), minutes off the
+# announced delay, and when they stop.
+REVISION_CHANCE = 0.4
 REVISION_MINUTES = (-1, 0, 1, 2)
 SETTLE_BEFORE = timedelta(minutes=10)
 
@@ -141,20 +145,16 @@ class Flight:
     origin: str
     destination: str
     scheduled: datetime
-    offset: int = 0  # seconds after each minute this flight publishes
-    reveals: list[tuple[datetime, int]] = field(default_factory=list)  # (published at, delay minutes)
-    every: timedelta = timedelta(minutes=1)  # how often it publishes while active
+    offset: int = 0  # shifts this flight's updates by this many seconds, so flights don't all publish at once
+    reveals: list[tuple[datetime, int]] = field(default_factory=list)  # (published at, delay minutes), in time order
 
     @property
     def arrival(self) -> bool:
         return self.destination == HUB
 
     def delay_at(self, at: datetime) -> int:
-        delay = 0
-        for when, minutes in self.reveals:
-            if when <= at:
-                delay = minutes
-        return delay
+        announced = bisect_right(self.reveals, at, key=itemgetter(0))
+        return self.reveals[announced - 1][1] if announced else 0
 
     def estimated_at(self, at: datetime = datetime.max) -> datetime:
         return self.scheduled + timedelta(minutes=self.delay_at(at))
@@ -177,14 +177,14 @@ class Flight:
         )
 
     def ticks(self, after: datetime, until: datetime):
-        """Update times in (after, until], one per `every`, from three hours out to completion."""
+        """Update times in (after, until], one per UPDATE_EVERY, from three hours out to completion."""
         tick = self.scheduled - ACTIVE_BEFORE + timedelta(seconds=self.offset)
         last = self.estimated_at() + timedelta(seconds=self.offset)
         if tick <= after:
-            tick += self.every * ((after - tick) // self.every + 1)
+            tick += UPDATE_EVERY * ((after - tick) // UPDATE_EVERY + 1)
         while tick <= min(last, until):
             yield tick
-            tick += self.every
+            tick += UPDATE_EVERY
 
 
 @dataclass
@@ -269,9 +269,23 @@ def _clock(value: str | None) -> datetime:
     return dt.astimezone(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
 
 
-def _delays(flight: Flight, steps) -> None:
-    """Announce delays at (minutes from schedule, delay) steps, on this flight's update tick."""
-    flight.reveals = [(flight.scheduled + timedelta(minutes=rel, seconds=flight.offset), delay) for rel, delay in steps]
+def _climb(first: datetime, last: datetime, delay: int) -> list[tuple[datetime, int]]:
+    """A delay that grows with every update after `first`, reaching `delay` at `last`, the way RA417's does."""
+    steps = (last - first) // UPDATE_EVERY
+    return [(first + UPDATE_EVERY * k, round(delay * k / steps)) for k in range(1, steps + 1)]
+
+
+def _delays(flight: Flight, steps, climb: bool = False) -> None:
+    """Announce delays at (minutes from schedule, delay) steps, on this flight's update ticks.
+
+    With `climb`, the delay grows a little with every update from the first step to the
+    longest one instead of jumping at each step; a make-up step after that still lands at once.
+    """
+    notices = [(flight.scheduled + timedelta(minutes=rel, seconds=flight.offset), delay) for rel, delay in steps]
+    if climb:
+        peak = max(notices, key=itemgetter(1))
+        notices = _climb(notices[0][0], *peak) + notices[notices.index(peak) + 1 :]
+    flight.reveals = notices
 
 
 def _assign_delays(day: Day, rng: random.Random) -> None:
@@ -279,14 +293,14 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
     forced = {f.key for f in day.departures[LAST_BANK:]} if day.live else set()
     pool = [f for f in day.flights if f is not hero and f.key not in forced]
     severe = {f.key for f in rng.sample(pool, SEVERE_PER_DAY - (1 if hero else 0))}
+    # The live day streams its updates, so its delays climb the way RA417's does. History days
+    # publish only their final rows, so they keep their two or three notices and the
+    # historical answers stay the same.
+    climb = day.live
     for flight in day.flights:
         if flight is hero:
             start, (first, last) = flight.scheduled - HERO_LEAD, HERO_RAMP
-            steps = (last - first) // HERO_EVERY
-            flight.every = HERO_EVERY
-            flight.reveals = [
-                (start + first + HERO_EVERY * k, round(HERO_DELAY * k / steps)) for k in range(1, steps + 1)
-            ]
+            flight.reveals = _climb(start + first, start + last, HERO_DELAY)
         elif flight.key in forced:
             continue
         elif flight.key in severe:
@@ -295,10 +309,10 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
             makeup = rng.randint(0, 3) if flight.arrival else 0
             if makeup:
                 steps.append((delay - 20, delay - makeup))
-            _delays(flight, steps)
+            _delays(flight, steps, climb)
         elif rng.random() < MODERATE_SHARE:
             delay = rng.randint(*MODERATE_DELAY)
-            _delays(flight, [(-90, delay // 2), (-45, delay)])
+            _delays(flight, [(-90, delay // 2), (-45, delay)], climb)
         else:
             delay = rng.randint(-8 if flight.arrival else 0, 12)
             if delay:
