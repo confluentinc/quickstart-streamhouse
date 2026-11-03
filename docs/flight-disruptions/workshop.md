@@ -597,12 +597,6 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
     WHERE recommended_flight_id IS NOT NULL;
     ```
 
-    <img src="../images/flight-disruptions/start-agent-1.png" alt="The first half of the INSERT INTO passenger_recommendations statement that runs the agent" width="750">
-
-    Scroll down in the cell to see the rest of the statement, now **Running**:
-
-    <img src="../images/flight-disruptions/start-agent-2.png" alt="The second half of the statement, now Running" width="750">
-
 > [!WARNING]
 >
 > This statement must keep running for the rest of the workshop. Don't stop it.
