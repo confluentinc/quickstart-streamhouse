@@ -1,4 +1,4 @@
-# Agentic Pit Decisions walkthrough
+# F1 Agentic Pit Decisions walkthrough
 
 ![Agentic Pit Decisions architecture](../images/agentic-pit-decisions/architecture.png)
 

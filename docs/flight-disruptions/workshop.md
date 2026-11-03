@@ -1,4 +1,4 @@
-# River Air Flight Recovery Workshop
+# River Air Agentic Flight Recovery Workshop
 
 ![River Air flight recovery architecture](../images/flight-disruptions/architecture.png)
 
