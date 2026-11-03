@@ -18,14 +18,13 @@ Flight Disruptions runs, in order:
      history and today's flights, then a 90-minute live stream in the background.
   4. Lightning Tables and RTCE on the demo topics, plus the RTCE MCP server for
      the coding agent chosen up front (same as `uv run setup-rtce`).
-  5. Topic tag colors through the Catalog API, after the recovery agent setup.
 
 Both labs deploy their attendee starting point by default and prebuild the rest with
 --with-labs. Flight Disruptions' starting point is the workshop: steps 1 and 2 build only
-the three source feeds and passenger_recommendations, and deploy stops after the Global
-API key and tag colors. Attendees publish the data, build passenger_state, flight_impact,
+the three source feeds, passenger_recommendations, and the agent's hosted model, and deploy
+stops after the Global API key. Attendees publish the data, build passenger_state, flight_impact,
 and the recovery agent, and turn on Lightning Tables and RTCE themselves
-(docs/flight-disruptions/workshop.md). Steps 1 to 5 above are the full demo, which
+(docs/flight-disruptions/workshop.md). Steps 1 to 4 above are the full demo, which
 --with-labs, --video-2, and the bots deploy. The choice is saved to credentials.env, so
 later runs stay in workshop mode, and a checkout that already has the full demo keeps it.
 
@@ -63,7 +62,6 @@ from scripts.login_checks import ensure_confluent_login, prompt_and_save_login
 from scripts.terraform import get_project_root, run_terraform_output
 from scripts.terraform_runner import run_terraform
 from scripts.tfvars import write_tfvars_for_deployment
-from scripts.topic_tags import apply_tag_colors
 from scripts.ui import prompt_choice, prompt_with_default, prompt_yes_no
 
 DEFAULT_REGION = "us-east-1"  # RTCE-supported; Confluent-hosted Claude available here
@@ -515,8 +513,6 @@ def _finish(root, client: str, video_2: bool = False, speed: float = 1.0) -> Non
     else:
         print("\n=== Starting the recovery agent ===")
         _start_agent(root)
-    print("\n=== Applying topic tag colors ===")
-    apply_tag_colors(root)
     _print_env_name(root)
 
 
@@ -530,8 +526,6 @@ def _finish_workshop(root) -> None:
     creds_file = root / "credentials.env"
     if not setup_rtce.ensure_global_key(creds_file, dotenv_values(str(creds_file))):
         print("⚠ No Global API key yet. Rerun `uv run deploy` to try again.")
-    print("\n=== Applying topic tag colors ===")
-    apply_tag_colors(root)
     _print_env_name(root)
     print('\n✓ Your workshop environment is ready. Next: "Start the datagen" in docs/flight-disruptions/workshop.md.')
 

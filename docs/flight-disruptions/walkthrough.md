@@ -121,10 +121,6 @@ uv run deploy --with-labs
 
 Resource names get a random suffix so workshop deployments can share an org. For a recording, add `TF_VAR_deployment_name=RIVER-AIR-PROD` to `credentials.env` before deploying to get fixed names: `RIVER-AIR-PROD-ENV`, `RIVER-AIR-PROD-CLUSTER`, and so on. Service account names must be unique across the org, so a second fixed deployment needs its own `TF_VAR_deployment_name`. To still show `RIVER-AIR-PROD` on screen, set `TF_VAR_environment_name=RIVER-AIR-PROD`, which renames only the environment, cluster, and compute pool.
 
-### Topic tag colors
-
-Deploy finishes by applying topic tag colors: green for `DATA_PRODUCT`, pink for `PII`, gray for `RAW_DATA`, and blue for `PARTNER_DATA`. Terraform owns the tag definitions and topic assignments in [tags.tf](../../terraform/airline-demo/tags.tf), while the Catalog API sets the colors because the Terraform provider has no color attribute. Run `uv run setup-topic-tags` to restore the configured colors after a manual Terraform update.
-
 ## The app
 
 `uv run airport-app` serves the FastAPI app:
