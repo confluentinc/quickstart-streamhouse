@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>River Air flight recovery</title>
+  <link rel="icon" type="image/svg+xml" href="/static/river-air-logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&family=Space+Grotesk:wght@600;700&display=swap">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img class="brand-mark" src="/static/river-air-logo.svg" alt="" width="44" height="44">
+      <div class="brand-text">
+        <div class="brand-line">
+          <h1 class="wordmark">River <span>Air</span></h1>
+          <span class="brand-divider" aria-hidden="true"></span>
+          <span class="brand-product">Flight Recovery</span>
+          <span class="live-pill"><span class="live-dot" id="live-dot"></span>Live</span>
+        </div>
+        <p class="sub">Live flight status, connection risk, and passenger offers (times in UTC)</p>
+      </div>
+    </div>
+    <div class="counts" id="counts"></div>
+  </header>
+  <main class="dashboard">
+    <section class="panel map-panel">
+      <div class="panel-head"><h2>Live flight map</h2><span class="src">Positions approximate progress toward/from the SFO hub</span></div>
+      <div class="map-wrap">
+        <svg id="flight-map" class="flight-map"></svg>
+        <div id="map-infobox" class="map-infobox hidden"></div>
+        <div class="map-controls">
+          <button class="map-zoom-btn" data-zoom="in" title="Zoom in">+</button>
+          <button class="map-zoom-btn" data-zoom="out" title="Zoom out">&minus;</button>
+          <button class="map-zoom-btn" data-zoom="reset" title="Reset view">&#8634;</button>
+        </div>
+        <button id="map-show-all" class="ghost map-show-all hidden">&#9664; Show all flights</button>
+        <div class="map-legend">
+          <span class="legend-item"><i class="legend-dot plane-ok"></i>On time</span>
+          <span class="legend-item"><i class="legend-dot plane-tight"></i>Delayed</span>
+          <span class="legend-item"><i class="legend-dot plane-miss"></i>At risk</span>
+          <span class="legend-item"><i class="legend-dot plane-waiting"></i>At gate</span>
+          <span class="legend-item"><i class="legend-dot plane-done"></i>Landed/departed</span>
+        </div>
+      </div>
+    </section>
+    <div class="data-rail">
+      <section class="panel"><div class="panel-head"><h2>Operations</h2><span class="src" id="flights-src">Lightning Tables</span></div>
+        <div class="table-wrap scroll"><table><thead><tr><th>Flight</th><th>Route</th><th>Scheduled</th><th>Status</th>
+          <th>Delay (min)</th><th>At risk</th></tr></thead>
+        <tbody id="flights"></tbody></table></div>
+      </section>
+      <section class="panel"><div class="panel-head"><h2 id="flight-title">Flight passengers</h2><span class="src" id="flight-sub"></span></div>
+        <div id="flight-empty" class="pax-empty">Select a flight.</div>
+        <div class="seat-map hidden" id="seat-map">
+          <div class="cabin" id="cabin" role="group" aria-label="Seat map, front of the plane on the left"></div>
+          <div class="map-legend">
+            <span class="legend-item"><i class="legend-dot plane-miss"></i>At risk <b id="seats-miss">0</b></span>
+            <span class="legend-item"><i class="legend-dot plane-ok"></i>Not at risk <b id="seats-ok">0</b></span>
+            <span class="legend-item"><i class="legend-dot seat-open"></i>Open <b id="seats-open">0</b></span>
+          </div>
+        </div>
+        <div class="table-wrap scroll hidden" id="flight-table"><table><thead><tr><th>Passenger</th><th>Seat</th><th>Going to</th>
+          <th id="other-flight-head">Connection</th><th>Minutes</th><th>Risk</th></tr></thead>
+        <tbody id="passengers"></tbody></table></div>
+      </section>
+      <section class="panel" id="delays-panel"><div class="panel-head"><h2>Biggest delays</h2></div>
+        <div class="table-wrap"><table><thead><tr><th>Flight</th><th>Route</th><th>Delay (min)</th><th>At risk</th></tr></thead>
+        <tbody id="delays"></tbody></table></div>
+      </section>
+      <section class="panel hidden" id="hotels-panel"><div class="panel-head"><h2>Hotel options</h2><span class="src">Lightning Tables</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Hotel</th><th>Rooms left</th><th>Nightly rate</th><th>Availability</th></tr></thead>
+        <tbody id="hotels"></tbody></table></div>
+      </section>
+      <section class="panel"><div class="panel-head"><h2>Passenger recovery</h2></div>
+        <div id="passenger-card" class="pax-empty">Select a passenger.</div></section>
+    </div>
+  </main>
+  <footer class="foot"><span id="status-line">Loading…</span><button id="refresh" class="ghost">Refresh</button></footer>
+  <div id="seat-tip" class="map-infobox seat-tip hidden" role="tooltip"></div>
+  <script src="/static/flightmap.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

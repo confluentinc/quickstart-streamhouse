@@ -1,0 +1,59 @@
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Node
+node_modules/
+npm-debug.log*
+dist/
+.next/
+
+# Env / secrets
+.env
+.env.*
+credentials.env
+API-KEYS-AWS.md
+*.pem
+*.key
+secrets/
+**/credentials.json
+*.tfvars.backup
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfplan
+*.plan
+crash.log
+
+# Logs & temp output
+*.log
+tmp/
+.tmp/
+
+# Recordings (raw/large media only; keep recordings/manifest/ tracked)
+recordings/**/*.mp4
+recordings/**/*.mov
+
+# Local-only working docs (never commit)
+internal/
+handoffs/
+terraform/core/DEPLOYED_RESOURCES.md
+
+# Local-only scratch and provider lock files
+passenger-flight-join-example.md
+.terraform.lock.hcl

@@ -1,0 +1,102 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "streamhouse-demo"
+version = "0.1.0"
+description = "Streamhouse labs on Confluent Cloud: Flight Disruptions and Agentic Pit Decisions."
+readme = "README.md"
+authors = [
+    {name = "Brenner Heintz", email = "bheintz@confluent.io"},
+]
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+
+dependencies = [
+    "PyYAML>=6.0.1,<7.0",
+    "python-dotenv>=1.0.0,<2.0",
+    "requests>=2.31.0",
+    "confluent-kafka[avro,schema-registry]>=2.4.0",
+    "boto3>=1.26.0,<2.0",
+    "questionary>=2.0.0",
+    "rich>=13.0.0",
+    "tomlkit>=0.13.0",
+    "fastapi>=0.110.0,<1.0",
+    "uvicorn[standard]>=0.29.0,<1.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.11",
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+deploy = "scripts.deploy:main"
+destroy = "scripts.destroy:main"
+setup-mcp = "scripts.mcp_setup:main"
+setup-rtce = "scripts.setup_rtce:main"
+setup-topic-tags = "scripts.topic_tags:main"
+airport-datagen = "scripts.airport_datagen:main"
+api-keys = "scripts.workshop_key_manager:main"
+test-bedrock = "scripts.test_bedrock_credentials:main"
+airport-app = "scripts.airport_app:main"
+reset-demo-2 = "scripts.demo_reset:main"
+# Agentic Pit Decisions lab
+f1-race = "scripts.pit_decisions.race:main"
+f1-pitwall = "scripts.pit_decisions.pitwall.app:main"
+f1-sql = "scripts.pit_decisions.sql_shell:main"
+f1-reset = "scripts.pit_decisions.reset:main"
+
+[project.urls]
+Repository = "https://github.com/confluentinc/quickstart-streamhouse"
+
+[tool.hatch.build.targets.wheel]
+packages = ["scripts"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "scripts/",
+    "README.md",
+    "LICENSE",
+]
+exclude = [
+    "/.git",
+    "/.github",
+    "/terraform",
+    "*.pyc",
+    "__pycache__",
+]
+
+# One command covers the whole suite: `uv run pytest`.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test-*.py", "test_*.py"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes (unused imports, undefined names)
+    "I",    # isort (import order)
+    "B",    # flake8-bugbear (likely bugs and design issues)
+    "UP",   # pyupgrade (modernize Python syntax)
+    "RUF",  # Ruff-specific rules
+]
+ignore = [
+    "B008",  # do not perform function calls in default arguments
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Long lines here are inside generated-markdown string templates.
+"scripts/generate_deployment_summary.py" = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
