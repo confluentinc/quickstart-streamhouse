@@ -22,7 +22,7 @@ and the [data model](./data-model.md) explains every field.
 
 ## Run the demo
 
-`uv run deploy` provisions everything, publishes 30 days of history and today's flights, starts a
+`uv run deploy --with-labs` provisions everything, publishes 30 days of history and today's flights, starts a
 90-minute live stream in the background (log: `tmp/datagen.log`), enables Lightning Tables and RTCE,
 and offers to start the app at http://127.0.0.1:8000.
 
@@ -44,8 +44,9 @@ Ask the questions as "in the last 30 days"; the data covers a trailing 30-day wi
 Deploy also starts the recovery agent. It is Claude hosted in Confluent, reading live flights and
 hotel rooms through RTCE/MCP, and it writes the live day's offers for RA417
 ([SQL 26–32](../../terraform/airline-demo/sql/)). The generator writes every other flight's offers.
-A deployment from before the agent moved off Amazon Bedrock keeps its Bedrock model until
-`uv run reset-demo-2 --full` swaps it for the hosted one. The Webhooks source connector is still
+A deployment from before the agent moved off Amazon Bedrock still has a Bedrock model, which stops
+working once the next deploy removes the Bedrock connection. Run `uv run reset-demo-2 --full` to
+swap it for the hosted one. The Webhooks source connector is still
 planned, so the generator publishes hotel updates directly to Kafka.
 
 To record Demo 2 with its statements run live, run `uv run reset-demo-2` first. It keeps Demo 1
@@ -105,10 +106,10 @@ Deploy the platform (`terraform/core` then `terraform/airline-demo` — cluster,
 source tables, `passenger_state`, `flight_impact`, and Tableflow to S3/Glue when AWS creds are present):
 
 ```bash
-uv run deploy
+uv run deploy --with-labs
 ```
 
-It asks which lab to deploy (choose **Flight Disruptions** or **Both**), then prompts for your Confluent Cloud login and API key, optional AWS credentials, and which coding agent should get the RTCE MCP server. After Terraform finishes, it publishes 30 days of history and today's flights, starts a 90-minute live stream in the background, enables RTCE and Lightning on the demo topics, and offers to start the app at http://127.0.0.1:8000. Later, run `uv run airport-app` to restart the app, `uv run airport-datagen` to restart the scene, or `uv run setup-rtce` to re-register the MCP server.
+`--with-labs` builds the whole demo. Without it, deploy builds only the [workshop](./workshop.md)'s starting point. It asks which lab to deploy (choose **Flight Disruptions** or **Both**), then prompts for your Confluent Cloud login and API key, optional AWS credentials, and which coding agent should get the RTCE MCP server. After Terraform finishes, it publishes 30 days of history and today's flights, starts a 90-minute live stream in the background, enables RTCE and Lightning on the demo topics, and offers to start the app at http://127.0.0.1:8000. Later, run `uv run airport-app` to restart the app, `uv run airport-datagen` to restart the scene, or `uv run setup-rtce` to re-register the MCP server.
 
 > [!NOTE]
 >
@@ -119,10 +120,6 @@ It asks which lab to deploy (choose **Flight Disruptions** or **Both**), then pr
 ### Fixed resource names
 
 Resource names get a random suffix so workshop deployments can share an org. For a recording, add `TF_VAR_deployment_name=RIVER-AIR-PROD` to `credentials.env` before deploying to get fixed names: `RIVER-AIR-PROD-ENV`, `RIVER-AIR-PROD-CLUSTER`, and so on. Service account names must be unique across the org, so a second fixed deployment needs its own `TF_VAR_deployment_name`. To still show `RIVER-AIR-PROD` on screen, set `TF_VAR_environment_name=RIVER-AIR-PROD`, which renames only the environment, cluster, and compute pool.
-
-### Topic tag colors
-
-Deploy finishes by applying topic tag colors: green for `DATA_PRODUCT`, pink for `PII`, gray for `RAW_DATA`, and blue for `PARTNER_DATA`. Terraform owns the tag definitions and topic assignments in [tags.tf](../../terraform/airline-demo/tags.tf), while the Catalog API sets the colors because the Terraform provider has no color attribute. Run `uv run setup-topic-tags` to restore the configured colors after a manual Terraform update.
 
 ## The app
 

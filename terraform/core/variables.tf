@@ -2,8 +2,7 @@
 # Core infrastructure variables — AWS-only.
 #
 # This demo is AWS-only by design: Real-Time Context Engine (RTCE) and Flink
-# Native Inference / Bedrock are both AWS-only. There is deliberately no Azure
-# path here.
+# Native Inference are both AWS-only. There is deliberately no Azure path here.
 # ---------------------------------------------------------------------------
 
 variable "resource_prefix" {
@@ -68,33 +67,8 @@ variable "confluent_cloud_api_secret" {
   sensitive   = true
 }
 
-# AWS Bedrock credentials — used to create the managed Flink Bedrock connection
-# that powers the recovery streaming agent (built in terraform/airline-demo).
-variable "aws_bedrock_access_key" {
-  description = "AWS Access Key ID for Bedrock"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "aws_bedrock_secret_key" {
-  description = "AWS Secret Access Key for Bedrock"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "aws_session_token" {
-  description = "AWS Session Token for temporary credentials (required when the access key starts with ASIA)"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 # AWS credentials for the Tableflow S3/Glue provider integration
-# (terraform/airline-demo/analytics.tf) — separate from the Bedrock
-# creds above since this needs broader IAM/S3/Glue create permissions, not
-# just bedrock:InvokeModel. Optional, same pattern as Bedrock: leave empty and
+# (terraform/airline-demo/analytics.tf). Optional: leave empty and
 # airline-demo skips enable_analytics instead of failing.
 variable "aws_tableflow_access_key" {
   description = "AWS Access Key ID for the Tableflow S3/Glue provider integration (optional)"

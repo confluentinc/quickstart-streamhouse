@@ -4,9 +4,9 @@ from scripts import ui
 
 
 def test_is_secret_name_hides_secrets_not_key_ids():
-    for name in ("TF_VAR_confluent_cloud_api_secret", "CONFLUENT_PASSWORD", "TF_VAR_aws_session_token"):
+    for name in ("TF_VAR_confluent_cloud_api_secret", "CONFLUENT_PASSWORD", "TF_VAR_aws_tableflow_session_token"):
         assert ui.is_secret_name(name)
-    for name in ("TF_VAR_confluent_cloud_api_key", "TF_VAR_aws_bedrock_access_key", "CONFLUENT_EMAIL"):
+    for name in ("TF_VAR_confluent_cloud_api_key", "TF_VAR_aws_tableflow_access_key", "CONFLUENT_EMAIL"):
         assert not ui.is_secret_name(name)
 
 

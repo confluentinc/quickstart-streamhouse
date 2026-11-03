@@ -21,6 +21,5 @@ provider "confluent" {
 # Random Provider Configuration
 provider "random" {}
 
-# No AWS provider is required: Confluent's managed Bedrock connection is created
-# with pre-provided Bedrock credentials (var.aws_bedrock_*), so Terraform only
-# ever talks to the Confluent Cloud API.
+# No AWS provider is required: core only ever talks to the Confluent Cloud API.
+# The Tableflow S3/Glue path's AWS provider lives in terraform/airline-demo.
