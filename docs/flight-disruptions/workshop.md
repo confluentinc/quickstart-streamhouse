@@ -397,13 +397,13 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
 >
 > For the same reason, the agent handles only three of today's delayed flights: RA417, RA183, and RA185, picked by the flight-number filter in `impacted_passengers` in step 2. It could handle every flight, but then RA417's offers would wait behind the rest of the day's delayed passengers. The data generator writes the other flights' offers.
 
-1. Connect Flink to RTCE. **In your terminal window in the `quickstart-streamhouse` folder**, run:
+1. Connect Flink to RTCE, so the agent can look up live flights and hotel rooms. In a terminal, from the repo's root folder (`quickstart-streamhouse`), run:
 
     ```bash
     uv run setup-rtce --agent-connection
     ```
 
-    It creates a Flink connection named `rtce-connection` that points at your cluster's RTCE endpoint and signs in with the API key in `credentials.env`, so no secret appears in your SQL.
+    It creates `rtce-connection`, which the agent's tool uses in step 3. The API key stays in the connection, so your SQL holds no secrets.
 
     <img src="../images/flight-disruptions/setup-rtce-agent-connection.png" alt="Output of uv run setup-rtce --agent-connection, confirming that the Flink connection rtce-connection points at the RTCE endpoint" width="750">
 
