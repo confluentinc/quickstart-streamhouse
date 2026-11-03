@@ -86,8 +86,8 @@
         "type": 3
       },
       "seed": 1,
-      "version": 2,
-      "versionNonce": 32088186,
+      "version": 4,
+      "versionNonce": 1719692799,
       "isDeleted": false,
       "boundElements": [
         {
@@ -99,15 +99,15 @@
           "type": "arrow"
         },
         {
-          "id": "a_ops",
+          "id": "a_state_impact",
           "type": "arrow"
         },
         {
-          "id": "a_state_impact",
+          "id": "a_ops",
           "type": "arrow"
         }
       ],
-      "updated": 1793683169288,
+      "updated": 1793697914324,
       "link": null,
       "locked": false,
       "id": "passenger_risk",
@@ -182,8 +182,8 @@
         "type": 3
       },
       "seed": 1,
-      "version": 3,
-      "versionNonce": 1133928186,
+      "version": 10,
+      "versionNonce": 1546619601,
       "isDeleted": false,
       "boundElements": [
         {
@@ -193,13 +193,9 @@
         {
           "id": "a_recs_dash",
           "type": "arrow"
-        },
-        {
-          "id": "a_agents",
-          "type": "arrow"
         }
       ],
-      "updated": 1793683190217,
+      "updated": 1793697941508,
       "link": null,
       "locked": false,
       "id": "passenger_recommendations",
@@ -228,20 +224,16 @@
         "type": 3
       },
       "seed": 1001,
-      "version": 3,
-      "versionNonce": 1461306042,
+      "version": 7,
+      "versionNonce": 1285825201,
       "isDeleted": false,
       "boundElements": [
         {
           "id": "a_state_impact",
           "type": "arrow"
-        },
-        {
-          "id": "a_impact_dash",
-          "type": "arrow"
         }
       ],
-      "updated": 1793683194017,
+      "updated": 1793697926456,
       "link": null,
       "locked": false,
       "id": "flight_impact",
@@ -308,8 +300,8 @@
         "type": 3
       },
       "seed": 1,
-      "version": 2,
-      "versionNonce": 426371750,
+      "version": 45,
+      "versionNonce": 694250047,
       "isDeleted": false,
       "boundElements": [
         {
@@ -317,21 +309,21 @@
           "type": "arrow"
         },
         {
-          "id": "a_recs_dash",
+          "id": "a_impact_dash",
           "type": "arrow"
         },
         {
-          "id": "a_impact_dash",
+          "id": "B5z2HR4vhe5SKMXmC4WAx",
           "type": "arrow"
         }
       ],
-      "updated": 1793683169288,
+      "updated": 1793697957678,
       "link": null,
       "locked": false,
       "id": "dashboard",
       "type": "rectangle",
-      "x": 1736.359375,
-      "y": 195,
+      "x": 1740,
+      "y": 440,
       "width": 280,
       "height": 110,
       "index": "a7",
@@ -340,10 +332,10 @@
     {
       "angle": 0,
       "strokeColor": "#1e1e1e",
-      "backgroundColor": "#a5d8ff",
+      "backgroundColor": "#b2f2bb",
       "fillStyle": "solid",
       "strokeWidth": 2,
-      "strokeStyle": "dashed",
+      "strokeStyle": "solid",
       "roughness": 1,
       "opacity": 100,
       "groupIds": [
@@ -354,16 +346,16 @@
         "type": 3
       },
       "seed": 1,
-      "version": 3,
-      "versionNonce": 1231634938,
-      "isDeleted": false,
+      "version": 5,
+      "versionNonce": 819446705,
+      "isDeleted": true,
       "boundElements": [
         {
           "id": "a_agents",
           "type": "arrow"
         }
       ],
-      "updated": 1793683281817,
+      "updated": 1793697855165,
       "link": null,
       "locked": false,
       "id": "passenger_app",
@@ -395,16 +387,7 @@
       "version": 3,
       "versionNonce": 1031469606,
       "isDeleted": true,
-      "boundElements": [
-        {
-          "id": "a_analytics",
-          "type": "arrow"
-        },
-        {
-          "id": "a_impact_analytics",
-          "type": "arrow"
-        }
-      ],
+      "boundElements": [],
       "updated": 1793683187360,
       "link": null,
       "locked": false,
@@ -1188,17 +1171,17 @@
       "frameId": null,
       "roundness": null,
       "seed": 1,
-      "version": 2,
-      "versionNonce": 1452973670,
+      "version": 40,
+      "versionNonce": 1782986001,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1793683169288,
+      "updated": 1793697923885,
       "link": null,
       "locked": false,
       "id": "dashboard_text",
       "type": "text",
-      "x": 1803.0859375,
-      "y": 215,
+      "x": 1806.7265625,
+      "y": 460,
       "width": 146.546875,
       "height": 70,
       "text": "Operations\ndashboard",
@@ -1230,11 +1213,11 @@
       "frameId": null,
       "roundness": null,
       "seed": 1,
-      "version": 2,
-      "versionNonce": 1823564538,
-      "isDeleted": false,
+      "version": 4,
+      "versionNonce": 1010584543,
+      "isDeleted": true,
       "boundElements": [],
-      "updated": 1793683169288,
+      "updated": 1793697855165,
       "link": null,
       "locked": false,
       "id": "passenger_app_text",
@@ -1243,8 +1226,8 @@
       "y": 465,
       "width": 238.921875,
       "height": 70,
-      "text": "PASSENGER APP\nexternal agent",
-      "originalText": "PASSENGER APP\nexternal agent",
+      "text": "PASSENGER VIEW\ndashboard app",
+      "originalText": "PASSENGER VIEW\ndashboard app",
       "fontSize": 28,
       "fontFamily": 5,
       "textAlign": "center",
@@ -1434,21 +1417,21 @@
       "frameId": null,
       "roundness": null,
       "seed": 1,
-      "version": 2,
-      "versionNonce": 608841766,
-      "isDeleted": false,
+      "version": 4,
+      "versionNonce": 1901338655,
+      "isDeleted": true,
       "boundElements": [],
-      "updated": 1793683169288,
+      "updated": 1793697856901,
       "link": null,
       "locked": false,
       "id": "lbl_agents",
       "type": "text",
       "x": 1538.8203125,
       "y": 458,
-      "width": 165.078125,
+      "width": 183.42013888888889,
       "height": 35,
-      "text": "AI AGENTS",
-      "originalText": "AI AGENTS",
+      "text": "PASSENGERS",
+      "originalText": "PASSENGERS",
       "fontSize": 28,
       "fontFamily": 5,
       "textAlign": "left",
@@ -1674,11 +1657,11 @@
       "frameId": null,
       "roundness": null,
       "seed": 1,
-      "version": 2,
-      "versionNonce": 661002726,
-      "isDeleted": false,
+      "version": 3,
+      "versionNonce": 355722335,
+      "isDeleted": true,
       "boundElements": [],
-      "updated": 1793683169288,
+      "updated": 1793697884186,
       "link": null,
       "locked": false,
       "id": "n_dash",
@@ -1714,28 +1697,28 @@
       "frameId": null,
       "roundness": null,
       "seed": 1,
-      "version": 2,
-      "versionNonce": 2098028410,
+      "version": 206,
+      "versionNonce": 1373200753,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1793683169288,
+      "updated": 1793698344671,
       "link": null,
       "locked": false,
       "id": "n_app",
       "type": "text",
-      "x": 1742.359375,
-      "y": 575,
-      "width": 298.1875,
-      "height": 50,
-      "text": "Pings the passenger, re-checks\nthe hotel, books the offer",
-      "originalText": "Pings the passenger, re-checks\nthe hotel, books the offer",
-      "fontSize": 20,
+      "x": 1640,
+      "y": 700,
+      "width": 256.90476190476187,
+      "height": 41.499999999999986,
+      "text": "Re-checks the hotel and books\nthe offer the passenger picks",
+      "originalText": "Re-checks the hotel and books the offer the passenger picks",
+      "fontSize": 16.599999999999994,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "middle",
       "lineHeight": 1.25,
       "containerId": null,
-      "autoResize": true,
+      "autoResize": false,
       "index": "ag",
       "created": null,
       "labelPosition": null,
@@ -1754,21 +1737,21 @@
       "frameId": null,
       "roundness": null,
       "seed": 1005,
-      "version": 2,
-      "versionNonce": 748023078,
+      "version": 7,
+      "versionNonce": 2059279377,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1793683169288,
+      "updated": 1793698017692,
       "link": null,
       "locked": false,
       "id": "n_drill",
       "type": "text",
       "x": 1080,
       "y": 87,
-      "width": 196,
+      "width": 385.93963623046875,
       "height": 25,
-      "text": "passenger drill-down",
-      "originalText": "passenger drill-down",
+      "text": "passenger drill-down (Lightning Queries)",
+      "originalText": "passenger drill-down (Lightning Queries)",
       "fontSize": 20,
       "fontFamily": 5,
       "textAlign": "left",
@@ -1874,17 +1857,17 @@
       "frameId": null,
       "roundness": null,
       "seed": 1012,
-      "version": 13,
-      "versionNonce": 1604576058,
-      "isDeleted": false,
+      "version": 28,
+      "versionNonce": 260652145,
+      "isDeleted": true,
       "boundElements": [],
-      "updated": 1793683352847,
+      "updated": 1793697996263,
       "link": null,
       "locked": false,
       "id": "n_lightning_hotel",
       "type": "text",
-      "x": 1520,
-      "y": 700,
+      "x": 1440,
+      "y": 780,
       "width": 88,
       "height": 25,
       "text": "Lightning",
@@ -2214,27 +2197,27 @@
       "frameId": null,
       "roundness": null,
       "seed": 1,
-      "version": 2,
-      "versionNonce": 1147272186,
+      "version": 3,
+      "versionNonce": 1941853311,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1793683169288,
+      "updated": 1793697913239,
       "link": null,
       "locked": false,
       "id": "a_join_risk",
       "type": "arrow",
       "x": 386.453125,
       "y": 500,
-      "width": 60,
-      "height": 0,
+      "width": 58,
+      "height": 0.011781250000012733,
       "points": [
         [
           0,
           0
         ],
         [
-          60,
-          0
+          58,
+          0.011781250000012733
         ]
       ],
       "lastCommittedPoint": null,
@@ -2243,8 +2226,8 @@
       "elbowed": false,
       "startBinding": null,
       "endBinding": {
-        "mode": "orbit",
         "elementId": "passenger_risk",
+        "mode": "orbit",
         "fixedPoint": [
           0,
           0.5001
@@ -2266,18 +2249,18 @@
       "frameId": null,
       "roundness": null,
       "seed": 1,
-      "version": 2,
-      "versionNonce": 667375782,
+      "version": 3,
+      "versionNonce": 1998417055,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1793683169288,
+      "updated": 1793697913241,
       "link": null,
       "locked": false,
       "id": "a_risk_agent",
       "type": "arrow",
-      "x": 704.453125,
-      "y": 500,
-      "width": 112,
+      "x": 706.453125,
+      "y": 500.01300000000003,
+      "width": 108,
       "height": 0,
       "points": [
         [
@@ -2285,7 +2268,7 @@
           0
         ],
         [
-          112,
+          108,
           0
         ]
       ],
@@ -2294,16 +2277,16 @@
       "endArrowhead": "arrow",
       "elbowed": false,
       "startBinding": {
-        "mode": "orbit",
         "elementId": "passenger_risk",
+        "mode": "orbit",
         "fixedPoint": [
           1,
           0.5001
         ]
       },
       "endBinding": {
-        "mode": "orbit",
         "elementId": "recovery_agent",
+        "mode": "orbit",
         "fixedPoint": [
           0,
           0.5001
@@ -2325,18 +2308,18 @@
       "frameId": null,
       "roundness": null,
       "seed": 1,
-      "version": 2,
-      "versionNonce": 494169274,
+      "version": 3,
+      "versionNonce": 1260683455,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1793683169288,
+      "updated": 1793697913241,
       "link": null,
       "locked": false,
       "id": "a_agent_recs",
       "type": "arrow",
-      "x": 1074.453125,
-      "y": 500,
-      "width": 112,
+      "x": 1076.453125,
+      "y": 500.01300000000003,
+      "width": 108,
       "height": 0,
       "points": [
         [
@@ -2344,7 +2327,7 @@
           0
         ],
         [
-          112,
+          108,
           0
         ]
       ],
@@ -2353,16 +2336,16 @@
       "endArrowhead": "arrow",
       "elbowed": false,
       "startBinding": {
-        "mode": "orbit",
         "elementId": "recovery_agent",
+        "mode": "orbit",
         "fixedPoint": [
           1,
           0.5001
         ]
       },
       "endBinding": {
-        "mode": "orbit",
         "elementId": "passenger_recommendations",
+        "mode": "orbit",
         "fixedPoint": [
           0,
           0.5001
@@ -2412,16 +2395,16 @@
       "endArrowhead": "arrow",
       "elbowed": false,
       "startBinding": {
-        "mode": "orbit",
         "elementId": "hotel_inventory",
+        "mode": "orbit",
         "fixedPoint": [
           0.5001,
           0
         ]
       },
       "endBinding": {
-        "mode": "orbit",
         "elementId": "recovery_agent",
+        "mode": "orbit",
         "fixedPoint": [
           0.5001,
           1
@@ -2443,35 +2426,35 @@
       "frameId": null,
       "roundness": null,
       "seed": 1,
-      "version": 2,
-      "versionNonce": 880461178,
+      "version": 41,
+      "versionNonce": 496315249,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1793683169288,
+      "updated": 1793697923884,
       "link": null,
       "locked": false,
       "id": "a_ops",
       "type": "arrow",
-      "x": 490,
-      "y": 431,
-      "width": 1386.359375,
-      "height": 311,
+      "x": 490.00000000000006,
+      "y": 429,
+      "width": 1389.9592132812495,
+      "height": 314,
       "points": [
         [
           0,
           0
         ],
         [
-          0,
-          -311
+          -5.684341886080802e-14,
+          -309
         ],
         [
           1386.359375,
-          -311
+          -309
         ],
         [
-          1386.359375,
-          -240
+          1389.9592132812495,
+          5
         ]
       ],
       "lastCommittedPoint": null,
@@ -2479,16 +2462,16 @@
       "endArrowhead": "arrow",
       "elbowed": false,
       "startBinding": {
-        "mode": "orbit",
         "elementId": "passenger_risk",
+        "mode": "orbit",
         "fixedPoint": [
           0.15818750000000023,
           0.15818750000000031
         ]
       },
       "endBinding": {
-        "mode": "orbit",
         "elementId": "dashboard",
+        "mode": "orbit",
         "fixedPoint": [
           0.5001,
           0
@@ -2510,27 +2493,27 @@
       "frameId": null,
       "roundness": null,
       "seed": 1,
-      "version": 2,
-      "versionNonce": 2040129318,
+      "version": 92,
+      "versionNonce": 1546965233,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1793683169288,
+      "updated": 1793697941508,
       "link": null,
       "locked": false,
       "id": "a_recs_dash",
       "type": "arrow",
-      "x": 1510.359375,
-      "y": 451,
-      "width": 222,
-      "height": 168,
+      "x": 1512.359375,
+      "y": 500.0075804556032,
+      "width": 229.28125000000023,
+      "height": 0.007580455603260816,
       "points": [
         [
           0,
           0
         ],
         [
-          222,
-          -168
+          229.28125000000023,
+          -0.007580455603260816
         ]
       ],
       "lastCommittedPoint": null,
@@ -2538,21 +2521,14 @@
       "endArrowhead": "arrow",
       "elbowed": false,
       "startBinding": {
-        "mode": "orbit",
         "elementId": "passenger_recommendations",
-        "fixedPoint": [
-          0.6315788360039948,
-          0.6315788360039951
-        ]
-      },
-      "endBinding": {
         "mode": "orbit",
-        "elementId": "dashboard",
         "fixedPoint": [
-          0.3195984292299613,
-          0.31959842922996184
+          0.5001,
+          0.5001
         ]
       },
+      "endBinding": null,
       "index": "ax",
       "created": null
     },
@@ -2569,27 +2545,27 @@
       "frameId": null,
       "roundness": null,
       "seed": 1,
-      "version": 2,
-      "versionNonce": 1924662842,
-      "isDeleted": false,
+      "version": 7,
+      "versionNonce": 1196159441,
+      "isDeleted": true,
       "boundElements": [],
-      "updated": 1793683169288,
+      "updated": 1793697936942,
       "link": null,
       "locked": false,
       "id": "a_agents",
       "type": "arrow",
-      "x": 1510.359375,
-      "y": 500,
-      "width": 222,
-      "height": 0,
+      "x": 1512.359375,
+      "y": 500.0126548672567,
+      "width": 220,
+      "height": 0.01265486725668552,
       "points": [
         [
           0,
           0
         ],
         [
-          222,
-          0
+          220,
+          -0.01265486725668552
         ]
       ],
       "lastCommittedPoint": null,
@@ -2597,21 +2573,14 @@
       "endArrowhead": "arrow",
       "elbowed": false,
       "startBinding": {
-        "mode": "orbit",
         "elementId": "passenger_recommendations",
+        "mode": "orbit",
         "fixedPoint": [
           1,
           0.5001
         ]
       },
-      "endBinding": {
-        "mode": "orbit",
-        "elementId": "passenger_app",
-        "fixedPoint": [
-          0,
-          0.5001
-        ]
-      },
+      "endBinding": null,
       "index": "ay",
       "created": null
     },
@@ -2656,8 +2625,8 @@
       "endArrowhead": "arrow",
       "elbowed": false,
       "startBinding": {
-        "mode": "orbit",
         "elementId": "passenger_recommendations",
+        "mode": "orbit",
         "fixedPoint": [
           0.6316026782999329,
           0.3683973217000672
@@ -2680,31 +2649,31 @@
       "frameId": null,
       "roundness": null,
       "seed": 1006,
-      "version": 2,
-      "versionNonce": 554643194,
+      "version": 3,
+      "versionNonce": 288944785,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1793683169288,
+      "updated": 1793697912068,
       "link": null,
       "locked": false,
       "id": "a_state_impact",
       "type": "arrow",
-      "x": 600,
-      "y": 431,
-      "width": 216.453125,
-      "height": 181,
+      "x": 600.0000000000001,
+      "y": 429.00000000000006,
+      "width": 214.453125,
+      "height": 179.00000000000006,
       "points": [
         [
           0,
           0
         ],
         [
-          0,
-          -181
+          -1.1368683772161603e-13,
+          -179.00000000000006
         ],
         [
-          216.453125,
-          -181
+          214.4531249999999,
+          -178.98735381671278
         ]
       ],
       "lastCommittedPoint": null,
@@ -2712,16 +2681,16 @@
       "endArrowhead": "arrow",
       "elbowed": false,
       "startBinding": {
-        "mode": "orbit",
         "elementId": "passenger_risk",
+        "mode": "orbit",
         "fixedPoint": [
           0.5981875,
           0.4018125000000006
         ]
       },
       "endBinding": {
-        "mode": "orbit",
         "elementId": "flight_impact",
+        "mode": "orbit",
         "fixedPoint": [
           0,
           0.5001
@@ -2743,47 +2712,44 @@
       "frameId": null,
       "roundness": null,
       "seed": 1008,
-      "version": 2,
-      "versionNonce": 502977958,
+      "version": 222,
+      "versionNonce": 2785809,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1793683169288,
+      "updated": 1793697934435,
       "link": null,
       "locked": false,
       "id": "a_impact_dash",
       "type": "arrow",
-      "x": 1074.453125,
-      "y": 250,
-      "width": 657.90625,
-      "height": 0,
+      "x": 1080,
+      "y": 240,
+      "width": 679.8059615634588,
+      "height": 194.54904756879478,
       "points": [
         [
           0,
           0
         ],
         [
-          657.90625,
-          0
+          420,
+          20
+        ],
+        [
+          679.8059615634588,
+          194.54904756879478
         ]
       ],
       "lastCommittedPoint": null,
       "startArrowhead": null,
       "endArrowhead": "arrow",
       "elbowed": false,
-      "startBinding": {
-        "mode": "orbit",
-        "elementId": "flight_impact",
-        "fixedPoint": [
-          1,
-          0.5001
-        ]
-      },
+      "startBinding": null,
       "endBinding": {
-        "mode": "orbit",
         "elementId": "dashboard",
+        "mode": "orbit",
         "fixedPoint": [
-          0,
-          0.5001
+          0.43190393510335934,
+          0.5680960648966401
         ]
       },
       "index": "b01",
@@ -2838,8 +2804,8 @@
       "endArrowhead": "arrow",
       "elbowed": false,
       "startBinding": {
-        "mode": "orbit",
         "elementId": "flight_impact",
+        "mode": "orbit",
         "fixedPoint": [
           0.8076923076923076,
           0.8076923076923082
@@ -2902,16 +2868,16 @@
       "endArrowhead": "arrow",
       "elbowed": false,
       "startBinding": {
-        "mode": "orbit",
         "elementId": "hotel_inventory",
+        "mode": "orbit",
         "fixedPoint": [
           0.9035369774919614,
           0.9035369774919593
         ]
       },
       "endBinding": {
-        "mode": "orbit",
         "elementId": "passenger_app",
+        "mode": "orbit",
         "fixedPoint": [
           1,
           0.5001
@@ -3036,7 +3002,7 @@
       "version": 3,
       "versionNonce": 949104954,
       "isDeleted": true,
-      "boundElements": null,
+      "boundElements": [],
       "updated": 1793683300012,
       "created": 1793683298937,
       "link": null,
@@ -3078,7 +3044,7 @@
       "version": 41,
       "versionNonce": 1270196986,
       "isDeleted": true,
-      "boundElements": null,
+      "boundElements": [],
       "updated": 1793683312100,
       "created": 1793683307824,
       "link": null,
@@ -3122,7 +3088,7 @@
       "version": 36,
       "versionNonce": 254623610,
       "isDeleted": true,
-      "boundElements": null,
+      "boundElements": [],
       "updated": 1793683323791,
       "created": 1793683321282,
       "link": null,
@@ -3155,8 +3121,8 @@
       "type": "arrow",
       "x": 1100,
       "y": 758.7634267274846,
-      "width": 799.2749513884385,
-      "height": 118.76342672748459,
+      "width": 799.9999999999998,
+      "height": 202.76342672748456,
       "angle": 0,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "#d0bfff",
@@ -3170,11 +3136,11 @@
       "index": "b09",
       "roundness": null,
       "seed": 954935546,
-      "version": 200,
-      "versionNonce": 1116851174,
+      "version": 243,
+      "versionNonce": 1763280415,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1793683368069,
+      "updated": 1793697957678,
       "created": 1793683328791,
       "link": null,
       "locked": false,
@@ -3188,12 +3154,19 @@
           0
         ],
         [
-          799.2749513884386,
-          -118.76342672748459
+          799.9999999999998,
+          -202.76342672748456
         ]
       ],
       "startBinding": null,
-      "endBinding": null,
+      "endBinding": {
+        "elementId": "dashboard",
+        "mode": "orbit",
+        "fixedPoint": [
+          0.5721062983008738,
+          0.5721062983008747
+        ]
+      },
       "startArrowhead": null,
       "endArrowhead": "arrow",
       "elbowed": false
@@ -3221,7 +3194,7 @@
       "version": 4,
       "versionNonce": 714002234,
       "isDeleted": true,
-      "boundElements": null,
+      "boundElements": [],
       "updated": 1793683340786,
       "created": 1793683340104,
       "link": null,
@@ -3237,6 +3210,86 @@
       "autoResize": true,
       "lineHeight": 1.25,
       "labelPosition": 0.5
+    },
+    {
+      "angle": 0,
+      "strokeColor": "#1971c2",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "roundness": null,
+      "seed": 1506788191,
+      "version": 46,
+      "versionNonce": 1887498385,
+      "isDeleted": false,
+      "boundElements": [],
+      "updated": 1793698004245,
+      "link": null,
+      "locked": false,
+      "id": "7dQ13Oa0aoNN0gF85ipTo",
+      "type": "text",
+      "x": 1540,
+      "y": 520,
+      "width": 166.390625,
+      "height": 25,
+      "text": "Lightning Queries",
+      "originalText": "Lightning Queries",
+      "fontSize": 20,
+      "fontFamily": 5,
+      "textAlign": "left",
+      "verticalAlign": "middle",
+      "lineHeight": 1.25,
+      "containerId": null,
+      "autoResize": true,
+      "index": "b0B",
+      "created": 1793697998455,
+      "labelPosition": null,
+      "baseFontSize": null
+    },
+    {
+      "angle": 0,
+      "strokeColor": "#1971c2",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "roundness": null,
+      "seed": 1383000383,
+      "version": 73,
+      "versionNonce": 1132320895,
+      "isDeleted": false,
+      "boundElements": [],
+      "updated": 1793698007431,
+      "link": null,
+      "locked": false,
+      "id": "KUColZgTNe_RHoDoRjCNi",
+      "type": "text",
+      "x": 1360,
+      "y": 780,
+      "width": 166.390625,
+      "height": 25,
+      "text": "Lightning Queries",
+      "originalText": "Lightning Queries",
+      "fontSize": 20,
+      "fontFamily": 5,
+      "textAlign": "left",
+      "verticalAlign": "middle",
+      "lineHeight": 1.25,
+      "containerId": null,
+      "autoResize": true,
+      "index": "b0C",
+      "created": 1793698005806,
+      "labelPosition": null,
+      "baseFontSize": null
     }
   ],
   "appState": {
