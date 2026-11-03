@@ -331,7 +331,7 @@ This is where River Air finally gets its answer to *"How many flights are delaye
 
 One click per topic does it. Enabling a topic's **Lightning Table** keeps a low-latency table of its latest rows that apps query directly, and the Real-Time Context Engine (RTCE) exposes the same table to AI agents over MCP. The dashboard you open in this lab and the recovery agent you build in Lab 4 read the same live state, each in the form it needs.
 
-1. Back in the Console, open your cluster's **Topics**. `passenger_state` and `flight_impact` are there now; we created them with Flink in Lab 2.
+1. Back in the Console, open **[Topics](https://confluent.cloud/go/topics)** and select your **environment** (`streamhouse-…-env`) and **cluster** (`streamhouse-…-cluster`). `passenger_state` and `flight_impact` are there now; we created them with Flink in Lab 2.
 
 2. Find the **Lightning Table** column (scroll right if you need to) and click **+ Enable** for `flight_status`.
 
