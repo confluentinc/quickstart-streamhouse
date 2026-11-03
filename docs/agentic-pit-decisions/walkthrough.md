@@ -1,6 +1,6 @@
 # Agentic Pit Decisions walkthrough
 
-![Agentic Pit Decisions architecture](./images/architecture.png)
+![Agentic Pit Decisions architecture](../images/agentic-pit-decisions/architecture.png)
 
 In this ~45-minute lab, River Racing's car #88 streams live telemetry from Silverstone. Flink uses `ML_DETECT_ANOMALIES` to flag a front-left tire anomaly, and a streaming agent running on Confluent-hosted Claude recommends `STAY OUT`, `PIT SOON`, or `PIT NOW` on every lap. You'll provision your own Confluent Cloud environment with `uv run deploy` and run the race simulator locally.
 
@@ -59,7 +59,7 @@ You need a Confluent Cloud account ([Sign up for Confluent Cloud](https://www.co
     uv run deploy
     ```
 
-    <img src="./images/selfservice-up.png" alt="uv run deploy: API key generation, configuration prompts, and the ready prompt" width="600">
+    <img src="../images/agentic-pit-decisions/selfservice-up.png" alt="uv run deploy: API key generation, configuration prompts, and the ready prompt" width="600">
 
     The command prompts for the following:
 
@@ -163,7 +163,7 @@ The provisioning step sets up source tables for car telemetry, live race standin
 
     The dashboard at http://localhost:8001 shows the Silverstone track map, the live leaderboard, and car #88's tire and fuel gauges. The **Anomaly Detection** panel unlocks as `car_state` emits rows, and the **AI Pit Strategist** panel unlocks once you create `pit_decisions` in Section 3.
 
-    ![Pit Wall dashboard showing a nominal front-left tire temperature](./images/pitwall-nominal.png)
+    ![Pit Wall dashboard showing a nominal front-left tire temperature](../images/agentic-pit-decisions/pitwall-nominal.png)
 
 5. Verify the stream in a new SQL cell:
 
@@ -286,7 +286,7 @@ Next we create the `pit_decisions` table, which invokes `pit_strategy_agent` on 
     FROM `pit_decisions`;
     ```
 
-    ![Flink SQL workspace showing pit_decisions results progressing from PIT SOON to PIT NOW](./images/pit-decisions-query.png)
+    ![Flink SQL workspace showing pit_decisions results progressing from PIT SOON to PIT NOW](../images/agentic-pit-decisions/pit-decisions-query.png)
 
 2. Filter for the tire temperature anomaly to inspect the lap 24 pit call:
 
@@ -297,7 +297,7 @@ Next we create the `pit_decisions` table, which invokes `pit_strategy_agent` on 
     WHERE anomaly_tire_temp_fl = true;
     ```
 
-    ![Flink SQL workspace showing the lap 24 PIT NOW row with the agent's full reasoning](./images/pit-decisions-anomaly-query.png)
+    ![Flink SQL workspace showing the lap 24 PIT NOW row with the agent's full reasoning](../images/agentic-pit-decisions/pit-decisions-anomaly-query.png)
 
 > [!NOTE]
 >
@@ -312,7 +312,7 @@ Next we create the `pit_decisions` table, which invokes `pit_strategy_agent` on 
 >
 > As `car_state` and `pit_decisions` produce rows, the Pit Wall dashboard unlocks its **Anomaly Detection** and **AI Pit Strategist** panels:
 
-![Pit Wall dashboard with both Anomaly Detection and AI Pit Strategist panels unlocked, showing the PIT NOW call at lap 24](./images/pitwall-pit-now.png)
+![Pit Wall dashboard with both Anomaly Detection and AI Pit Strategist panels unlocked, showing the PIT NOW call at lap 24](../images/agentic-pit-decisions/pitwall-pit-now.png)
 
 ## (Optional) Expose `car_telemetry` to AI agents with Real-Time Context Engine
 
@@ -320,11 +320,11 @@ Real-Time Context Engine (RTCE) exposes a Kafka topic as an MCP tool, so any MCP
 
 1. Under your environment's cluster, open **[Topics](https://confluent.cloud/go/topics) → `car_telemetry`**, open the **Real-Time Context Engine** panel, and click **Enable** (or **Turn on**). Once enabled, the **Topics** list shows Real-Time Context Engine **On**:
 
-    ![Topics list with the Real-Time Context Engine column](./images/rtce-topics-list.png)
+    ![Topics list with the Real-Time Context Engine column](../images/agentic-pit-decisions/rtce-topics-list.png)
 
     The panel displays the enablement details — environment, cluster, cloud, and region — that an MCP client uses to reach it:
 
-    ![Real-Time Context Engine enabled for car_telemetry](./images/rtce-enabled.png)
+    ![Real-Time Context Engine enabled for car_telemetry](../images/agentic-pit-decisions/rtce-enabled.png)
 
 2. Point your coding agent at it in one command:
 
@@ -338,19 +338,19 @@ Real-Time Context Engine (RTCE) exposes a Kafka topic as an MCP tool, so any MCP
     What topics do I have access to in the Real-Time Context Engine?
     ```
 
-    ![Claude listing the topics enabled in the Real-Time Context Engine](./images/rtce-listtopics.png)
+    ![Claude listing the topics enabled in the Real-Time Context Engine](../images/agentic-pit-decisions/rtce-listtopics.png)
 
     ```text
     How has the engine temperature been trending over the last few laps?
     ```
 
-    ![Claude answering how the engine temperature has trended over the last few laps by calling the Real-Time Context Engine](./images/rtce-engine-trend.png)
+    ![Claude answering how the engine temperature has trended over the last few laps by calling the Real-Time Context Engine](../images/agentic-pit-decisions/rtce-engine-trend.png)
 
     ```text
     What's the front-left tire temperature on car 88 right now?
     ```
 
-    ![Claude answering the front-left tire temperature question by calling the Real-Time Context Engine](./images/rtce-cartemp.png)
+    ![Claude answering the front-left tire temperature question by calling the Real-Time Context Engine](../images/agentic-pit-decisions/rtce-cartemp.png)
 
     ```text
     At what lap in the race does the engine temperature peak?

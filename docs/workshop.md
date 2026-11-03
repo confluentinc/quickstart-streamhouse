@@ -1,6 +1,6 @@
 # River Air Flight Recovery Workshop
 
-![River Air flight recovery architecture](./architecture.png)
+![River Air flight recovery architecture](./images/flight-disruptions/architecture.png)
 
 In this workshop, you run operations for River Air, an airline with 180 flights a day through its SFO hub. Flight RA417 from Chicago is about to run almost two hours late, and 150 of its passengers will miss their connections. Starting from three raw feeds (flight status, passenger itineraries, and hotel rooms), you'll compute every passenger's connection risk with Flink, serve the live state to an operations app through Lightning Tables, and build a streaming agent that reads live flights and hotel rooms through the Real-Time Context Engine (RTCE) to offer each stranded passenger a new flight and a hotel. 
 
@@ -129,7 +129,7 @@ River Air's data comes from different systems: itineraries from ticketing, fligh
 
 3. Explore the topics by clicking a topic name, then selecting **Messages** to view some of the incoming messages, their keys, and values. 
 
-![The flight_status topic's Messages tab, with one message open in Message details](./images/topic-exploration.png)
+![The flight_status topic's Messages tab, with one message open in Message details](./images/flight-disruptions/topic-exploration.png)
 
 ## Lab 2 — Compute connection risk with Flink
 
@@ -137,7 +137,7 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
 
 1. In your Confluent Cloud environment, open **Flink** from the left menu, go to the **Compute pools** tab, select  **SQL Workspace** on the `streamhouse-…-compute-pool` pool, then click **Open SQL workspace**. Above the editor, set the **catalog** to your environment and the **database** to your cluster.
 
-![The Compute pools tab under Flink, with the running streamhouse compute pool and its SQL Workspace button](./images/compute-pool-view.png)
+![The Compute pools tab under Flink, with the running streamhouse compute pool and its SQL Workspace button](./images/flight-disruptions/compute-pool-view.png)
 
 2. Check the source tables:
 
@@ -243,7 +243,7 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
 
     As the flight is further delayed, you'll continue to see passengers delay risk change from "OK" to "HIGH".
 
-    ![Query results from passenger_state: RA417's passengers with their seat, final destination, connection minutes, and risk](./images/passenger-state-query.png)
+    ![Query results from passenger_state: RA417's passengers with their seat, final destination, connection minutes, and risk](./images/flight-disruptions/passenger-state-query.png)
 
 6. Check the flight itself:
 
@@ -255,7 +255,7 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
 
     As today's flight RA417 becomes further delayed, the number of impacted passengers increases. 
 
-    ![Query results from flight_impact: today's RA417 delayed with affected passengers, and tomorrow's RA417 on time](./images/flight-impact-query.png)
+    ![Query results from flight_impact: today's RA417 delayed with affected passengers, and tomorrow's RA417 on time](./images/flight-disruptions/flight-impact-query.png)
 
 > [!NOTE]
 >
@@ -269,11 +269,11 @@ Enabling Lightning Tables for a topic does two things. Confluent keeps a low-lat
 
 2. Find the **Lightning Table** column (scroll right if you need to) and click **+ Enable** for `flight_status`.
 
-![The cluster's Topics list, with + Enable in the Lightning Tables column](./images/enable-lightning-tables.png)
+![The cluster's Topics list, with + Enable in the Lightning Tables column](./images/flight-disruptions/enable-lightning-tables.png)
 
 3. In the **Enable Lightning Table** panel, click **Enable**. It may take a minute for the query engine and infrastructure to be finalized, but you can go ahead and **close the panel and enable the next topics**.
 
-![The Enable a Lightning Table for flight_status? panel](./images/lightning-tables-panel.png)
+![The Enable a Lightning Table for flight_status? panel](./images/flight-disruptions/lightning-tables-panel.png)
 
 4. Repeat for `passenger_itineraries`, `passenger_state`, `flight_impact`, `passenger_recommendations`, and `hotel_inventory`.
 
@@ -281,7 +281,7 @@ Enabling Lightning Tables for a topic does two things. Confluent keeps a low-lat
 >
 > Each topic shows **Provisioning** while Confluent loads its rows, then **Active**. Wait until all six show **Active** before you continue.
 
-![The Topics list with all six Lightning Tables Active](./images/lightning-tables-active.png)
+![The Topics list with all six Lightning Tables Active](./images/flight-disruptions/lightning-tables-active.png)
 
 5. Run your first Lightning Query. **In a terminal window, run**:
 
@@ -299,7 +299,7 @@ Enabling Lightning Tables for a topic does two things. Confluent keeps a low-lat
 
     Open [http://127.0.0.1:8000](http://127.0.0.1:8000). **Leave this terminal running too.**
 
-    ![The River Air app: the live flight map, Operations, and Biggest delays, with RA417 tagged Biggest impact](./images/dashboard-view.png)
+    ![The River Air app: the live flight map, Operations, and Biggest delays, with RA417 tagged Biggest impact](./images/flight-disruptions/dashboard-view.png)
 
 7. Explore the operations view:
 
@@ -308,8 +308,8 @@ Enabling Lightning Tables for a topic does two things. Confluent keeps a low-lat
     - **Biggest delays** lists the ten latest flights. RA417 (ORD → SFO, up to 115 minutes late) is the one tagged **Biggest impact**, with **At risk 150**: other flights are later, but none strands as many passengers.
     - Click **RA417-…**. The seat map colors every seat red (at risk), green (not at risk), or grey (open). Hover a seat to see that passenger's itinerary. The table below lists RA417's passengers, `HIGH` first.
 
-    ![The live flight map with RA417 selected, showing its ORD to SFO route and late estimated arrival](./images/dashboard-flight-selection.png)
-    ![RA417's seat map, with at-risk seats in red and a passenger's itinerary shown on hover](./images/dashboard-seating-chart.png)
+    ![The live flight map with RA417 selected, showing its ORD to SFO route and late estimated arrival](./images/flight-disruptions/dashboard-flight-selection.png)
+    ![RA417's seat map, with at-risk seats in red and a passenger's itinerary shown on hover](./images/flight-disruptions/dashboard-seating-chart.png)
 
 
 ## Lab 4 — Build the recovery agent
@@ -531,13 +531,13 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
 
     Within a few minutes, each of RA417's 150 at-risk passengers has two offers for tomorrow morning: the first with the Grand Hyatt at SFO ($329), the second with the SFO Airport Marriott Waterfront ($229). If the Grand Hyatt had already sold out when your agent ran, it offers the Marriott and the Hilton instead.
 
-    ![Query results from passenger_recommendations: RA417 passengers' offers with the Grand Hyatt at SFO and the SFO Airport Marriott Waterfront](./images/passenger-recommendations-query.png)
+    ![Query results from passenger_recommendations: RA417 passengers' offers with the Grand Hyatt at SFO and the SFO Airport Marriott Waterfront](./images/flight-disruptions/passenger-recommendations-query.png)
 
 ## Lab 5 — Recover a passenger
 
 1. In the dashboard app, click **RA417-…**, then click a delayed passenger's seat. **Scroll to Passenger recovery**, which shows their two offers.
 
-![Hotel options and Passenger recovery in the app, with the Grand Hyatt sold out and one passenger's two offers](./images/dashboard-passenger-hotel-options.png)
+![Hotel options and Passenger recovery in the app, with the Grand Hyatt sold out and one passenger's two offers](./images/flight-disruptions/dashboard-passenger-hotel-options.png)
 
 2. Watch the Grand Hyatt count down in **Hotel options**.
 
@@ -555,7 +555,7 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
     WHERE passenger_id LIKE 'P-____-417-%' AND status IN ('BOOKED', 'CLOSED');
     ```
 
-    ![Query results with one RA417 passenger's offers: one BOOKED, the other CLOSED](./images/passenger-hotel-booking.png)
+    ![Query results with one RA417 passenger's offers: one BOOKED, the other CLOSED](./images/flight-disruptions/passenger-hotel-booking.png)
 
 > [!NOTE]
 >

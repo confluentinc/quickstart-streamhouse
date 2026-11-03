@@ -1,8 +1,8 @@
 # Demo script: what's on screen
 
-![River Air flight recovery architecture](./architecture.png)
+![River Air flight recovery architecture](./images/flight-disruptions/architecture.png)
 
-Source: [`docs/architecture.excalidraw`](./architecture.excalidraw). Re-export the PNG after editing it.
+Source: [`docs/images/flight-disruptions/architecture.excalidraw`](./images/flight-disruptions/architecture.excalidraw). Re-export the PNG after editing it.
 
 This is the full demo script. Each row marked **▶ On screen** follows the script row that mentions it. It names the thing to show and the exact query or click path that shows it. The [data model](./data-model.md) defines the fields, and the [walkthrough](./walkthrough.md) covers deploy and run.
 

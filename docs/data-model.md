@@ -149,7 +149,7 @@ erDiagram
     }
 ```
 
-`recommended_flight_id` points back to `flight_status`; the ERD leaves out that arrow to stay readable. The [architecture diagram](./architecture.excalidraw) ([PNG](./architecture.png)) shows the same design at system level.
+`recommended_flight_id` points back to `flight_status`; the ERD leaves out that arrow to stay readable. The [architecture diagram](./images/flight-disruptions/architecture.excalidraw) ([PNG](./images/flight-disruptions/architecture.png)) shows the same design at system level.
 
 ## Generator
 

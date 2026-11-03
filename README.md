@@ -9,11 +9,11 @@ Two hands-on labs on Confluent Cloud:
 </tr>
 <tr>
 <td><a href="./docs/walkthrough.md"><strong>Flight Disruptions</strong></a></td>
-<td>Rebook passengers in real time when a delay breaks their connections.<br><br><img src="./docs/architecture.png" alt="Flight Disruptions architecture diagram"></td>
+<td>Rebook passengers in real time when a delay breaks their connections.<br><br><img src="./docs/images/flight-disruptions/architecture.png" alt="Flight Disruptions architecture diagram"></td>
 </tr>
 <tr>
 <td><a href="./docs/agentic-pit-decisions/walkthrough.md"><strong>Agentic Pit Decisions</strong></a></td>
-<td>Call every F1 pit stop with anomaly detection and a streaming agent.<br><br><img src="./docs/agentic-pit-decisions/images/architecture.png" alt="Agentic Pit Decisions architecture diagram"></td>
+<td>Call every F1 pit stop with anomaly detection and a streaming agent.<br><br><img src="./docs/images/agentic-pit-decisions/architecture.png" alt="Agentic Pit Decisions architecture diagram"></td>
 </tr>
 </table>
 
