@@ -5,7 +5,7 @@
 # recovery agent runs.
 
 variable "enable_analytics" {
-  description = "Enable Tableflow with customer-owned S3 storage + an AWS Glue Data Catalog integration, for the Demo 3 Athena/Amazon Quick analytics scene. This toggle alone isn't enough — it also needs core's aws_tableflow_access_key/secret_key set (optional, like aws_bedrock_access_key; auto-skipped when empty, see local.analytics_enabled). This creates a real S3 bucket and a cross-account IAM role with S3/IAM/Glue permissions."
+  description = "Enable Tableflow with customer-owned S3 storage + an AWS Glue Data Catalog integration, for the Demo 3 Athena/Amazon Quick analytics scene. This toggle alone isn't enough — it also needs core's aws_tableflow_access_key/secret_key set (optional; auto-skipped when empty, see local.analytics_enabled). This creates a real S3 bucket and a cross-account IAM role with S3/IAM/Glue permissions."
   type        = bool
   default     = true
 }

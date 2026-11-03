@@ -10,7 +10,7 @@ Confluent, then the Global API key, the lab's credential card, and the driver_ra
 
 Flight Disruptions runs, in order:
   1. terraform/core        — environment, cluster, Flink pool, service accounts,
-                             API keys, RTCE reader, (optional) Bedrock connection.
+                             API keys, RTCE reader.
   2. terraform/airline-demo — the River Air Flink pipeline (source tables,
                              passenger_state, flight_impact) and, with AWS
                              creds, Tableflow to Iceberg in S3 with AWS Glue.
@@ -449,9 +449,7 @@ def main():
 def _prompt_aws_credentials(creds_file, creds: dict) -> None:
     """Ask for the optional AWS credentials and save them to credentials.env.
 
-    AWS credentials power core's Bedrock connection and the Tableflow S3/Glue
-    analytics path (Demo 3) — both OPTIONAL, and both use the same identity
-    in a demo, so one credential covers both.
+    AWS credentials power the Tableflow S3/Glue analytics path (Demo 3) and are OPTIONAL.
     Try the ambient AWS credential chain first: pasting a long temporary
     session token into a plain terminal prompt can freeze some terminals,
     and most people running this already have valid AWS creds in their
@@ -473,12 +471,12 @@ def _prompt_aws_credentials(creds_file, creds: dict) -> None:
     if not access_key:
         access_key = prompt_with_default(
             "AWS Access Key (optional)",
-            creds.get("TF_VAR_aws_bedrock_access_key", ""),
+            creds.get("TF_VAR_aws_tableflow_access_key", ""),
             required=False,
         )
         if access_key:
             secret_key = prompt_with_default(
-                "AWS Secret Key", creds.get("TF_VAR_aws_bedrock_secret_key", ""), secret=True
+                "AWS Secret Key", creds.get("TF_VAR_aws_tableflow_secret_key", ""), secret=True
             )
             if access_key.startswith("ASIA"):
                 print(
@@ -489,17 +487,14 @@ def _prompt_aws_credentials(creds_file, creds: dict) -> None:
                     "\nauto-detect it instead of needing it pasted here."
                 )
                 token = prompt_with_default(
-                    "AWS Session Token (temp creds)", creds.get("TF_VAR_aws_session_token", ""), secret=True
+                    "AWS Session Token (temp creds)", creds.get("TF_VAR_aws_tableflow_session_token", ""), secret=True
                 )
 
     if access_key and secret_key:
-        for name in ("aws_bedrock_access_key", "aws_tableflow_access_key"):
-            _save_env_safe(creds_file, f"TF_VAR_{name}", access_key)
-        for name in ("aws_bedrock_secret_key", "aws_tableflow_secret_key"):
-            _save_env_safe(creds_file, f"TF_VAR_{name}", secret_key)
+        _save_env_safe(creds_file, "TF_VAR_aws_tableflow_access_key", access_key)
+        _save_env_safe(creds_file, "TF_VAR_aws_tableflow_secret_key", secret_key)
         if token:
-            for name in ("aws_session_token", "aws_tableflow_session_token"):
-                _save_env_safe(creds_file, f"TF_VAR_{name}", token)
+            _save_env_safe(creds_file, "TF_VAR_aws_tableflow_session_token", token)
 
 
 def _finish(root, client: str, video_2: bool = False, speed: float = 1.0) -> None:

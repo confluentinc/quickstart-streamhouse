@@ -12,9 +12,9 @@ Together these make a **Streamhouse**: an architecture that continuously capture
 
 | Part | Minutes | What you do |
 |---|---|---|
-| [Prerequisites](#0-prerequisites) | 5 | Install the tools and get the code (skip it on a workstation the host provides) |
+| [Prerequisites](#0-prerequisites) | 5 | Install the tools (skip it on a workstation the host provides) |
 | [Set up Confluent Cloud](#set-up-confluent-cloud) | 5 | Create your account and add a payment method |
-| [Deploy the workshop](#deploy-the-workshop) | 10 | Deploy your environment and start the data |
+| [Deploy to Confluent Cloud](#deploy-to-confluent-cloud) | 10 | Clone the repo, deploy your environment, and start the data |
 | [Lab 1](#lab-1--explore-the-live-feeds) | 5 | Explore the live feeds |
 | [Lab 2](#lab-2--compute-connection-risk-with-flink) | 10 | Compute every passenger's connection risk with Flink |
 | [Lab 3](#lab-3--serve-the-live-view-with-lightning-tables-and-rtce) | 10 | Turn on Lightning Tables and RTCE, then open the operations app |
@@ -30,9 +30,7 @@ Together these make a **Streamhouse**: an architecture that continuously capture
 > **Provided a workstation by the workshop host?** Skip this section — it's already set up for you. Continue to [Set up Confluent Cloud](#set-up-confluent-cloud).
 
 <details>
-<summary>Install the tools and get the code</summary>
-
-### Install the tools
+<summary><strong>Prerequisites for your own machine</strong> (click to expand)</summary>
 
 <details>
 <summary>for Mac</summary>
@@ -74,73 +72,84 @@ terraform -version
 confluent version
 ```
 
-### Get the code
-
-```bash
-git clone https://github.com/confluentinc/quickstart-streamhouse.git
-cd quickstart-streamhouse
-uv sync
-```
-
 </details>
 
 ## Set up Confluent Cloud
 
-### 1. Create your Confluent Cloud account
+#### Step 1 — Create your Confluent Cloud account
 
-1. [Sign up for Confluent Cloud](https://cnfl.io/learnwithcflt), or log in if you already have an account.
+1. Go to the **[Confluent Cloud sign-up page](https://cnfl.io/learnwithcflt)**.
+2. Enter your **name**, **work email**, **company**, and a **password**, then accept the terms
+   and click **Start Free**.
+3. On first sign-in, an **onboarding wizard** asks a few questions, then offers to create your
+   first cluster.
 
-2. Add a payment method. **Terraform can't create your cluster without one.**
+> [!WARNING]
+> **Do NOT create a cluster.** Skip the **Add cluster** / **Create cluster** step — Terraform
+> creates its own environment *and* cluster for you. Click the Confluent logo (top-left) to
+> exit the wizard.
 
-    1. Go to **[Billing & payment](https://confluent.cloud/settings/billing/payment)**.
-    2. Open the **Payment details and contacts** tab.
-    3. Click **Add credit card / bank account**, enter your card details, and click **Save**.
+#### Step 2 — Add a payment method (credit card)
 
-### 2. Sign in to the Confluent CLI (SSO users only)
+A payment method is required for Terraform to create a **Standard** cluster. Free
+credit is used first, so you typically won't be charged during the workshop.
 
 > [!TIP]
->
-> **Signed up with an email and password?** Skip this step. Deploy logs you in to the CLI with them.
+> All new sign-ups get **$400 in free credit** to use within the first 30 days — deploying this
+> workshop will not get you charged.
 
-Deploy can't log in with single sign-on (SSO), so SSO users sign in to the Confluent CLI first. Enter your email when it asks, then finish signing in in the browser window it opens:
+1. Go directly to **[Billing & payment](https://confluent.cloud/settings/billing/payment)**.
+2. Open the **Payment details and contacts** tab.
+3. Click **Add credit card / bank account**, enter your **card details**, then **Save**.
 
-```bash
-confluent login
-```
+   <img src="../images/add-payment-method.png" alt="Payment details and contacts — Add credit card / bank account" width="500">
 
-## Deploy the workshop
+## Deploy to Confluent Cloud
 
-### 1. Deploy your environment
+1. Clone the repo and go into it:
 
-```bash
-uv run deploy
-```
+    ```bash
+    git clone https://github.com/confluentinc/quickstart-streamhouse.git
+    cd quickstart-streamhouse
+    ```
 
-Deploy asks for the following, in this order:
+2. **Only if you signed up to Confluent Cloud with SSO:** sign in to the Confluent CLI first. Skip this if you signed up with email and password.
 
-| Prompt | Answer |
-|---|---|
-| `Which lab do you want to deploy?` | Enter `1` for **Flight Disruptions**. Deploy builds the workshop's starting point, and you build the rest in the labs. |
-| `Email (Enter to skip)` and `Password` | The email and password you use for Confluent Cloud. **Signed in with SSO in [Set up Confluent Cloud](#set-up-confluent-cloud)?** Press **Enter** to skip. |
-| `Generate new Confluent Cloud API keys? (y/N)` | Enter `y`. Deploy creates the key and uses it, so it doesn't ask for a key or secret. |
-| `Ready to deploy? (y/n)` | Enter `y`. |
+    ```bash
+    confluent login
+    ```
 
-**Deploy takes about 10 minutes to create all of the workshop infrastructure and source topics.** When finished, you'll see your environment and cluster names, which you need in Lab 2:
+3. Deploy your environment:
 
-```text
-Environment name: streamhouse-1a2b3c4d-env
-Cluster name: streamhouse-1a2b3c4d-cluster
-```
+    ```bash
+    uv run deploy
+    ```
 
-### 2. Start the datagen
+    Deploy asks for the following, in this order:
 
-Open a **second terminal** in the `quickstart-streamhouse` folder and start the generator:
+    | Prompt | Answer |
+    |---|---|
+    | `Which lab do you want to deploy?` | Enter `1` for **Flight Disruptions**. Deploy builds the workshop's starting point, and you build the rest in the labs. |
+    | `Email (Enter to skip)` and `Password` | The **email and password you used to sign up**. Deploy checks them with a real login and saves them to `credentials.env`, so later commands log in automatically. **Signed in with SSO in step 2?** Press **Enter** to skip. |
+    | `Generate new Confluent Cloud API keys? (y/N)` | Enter `y`. Deploy creates the key and uses it, so it doesn't ask for a key or secret. |
+    | `Ready to deploy? (y/n)` | Enter `y`. |
 
-```bash
-uv run airport-datagen --skip-history
-```
+    **Deploy takes about 10 minutes to create all of the workshop infrastructure and source topics.** When finished, you'll see your environment and cluster names, which you need in Lab 2:
 
-It publishes today's 180 flights, about 13,000 passenger itineraries, tomorrow's schedule, and three hotels, then streams live updates for 90 minutes.
+    ```text
+    Environment name: streamhouse-1a2b3c4d-env
+    Cluster name: streamhouse-1a2b3c4d-cluster
+    ```
+
+4. Start the datagen:
+
+    Open a **second terminal** in the `quickstart-streamhouse` folder and start the generator:
+
+    ```bash
+    uv run airport-datagen --skip-history
+    ```
+
+    It publishes today's 180 flights, about 13,000 passenger itineraries, tomorrow's schedule, and three hotels, then streams live updates for 90 minutes.
 
 > [!WARNING]
 >
@@ -154,21 +163,31 @@ River Air's data comes from different systems: itineraries from ticketing, fligh
 
 2. Select **Topics**. You see the four topics deploy created, each tagged with the kind of data it holds: `flight_status`, `passenger_itineraries`, `hotel_inventory`, and `passenger_recommendations`.
 
-![The cluster's Topics list with the four demo topics: flight_status, hotel_inventory, passenger_itineraries, and passenger_recommendations](../images/flight-disruptions/topics-view.png)
+<img src="../images/flight-disruptions/topics-view.png" alt="The cluster&#x27;s Topics list with the four demo topics: flight_status, hotel_inventory, passenger_itineraries, and passenger_recommendations" width="600">
+
+**[1] Screenshot needs updating** (`topics-view.png`): shows `flight-recovery-…` names; attendees see `streamhouse-…`.
 
 3. Explore the topics by clicking a topic name, then selecting **Messages** to view some of the incoming messages, their keys, and values. 
 
-![The flight_status topic's Messages tab, with one message open in Message details](../images/flight-disruptions/topic-exploration.png)
+<img src="../images/flight-disruptions/topic-exploration.png" alt="The flight_status topic&#x27;s Messages tab, with one message open in Message details" width="600">
 
 ## Lab 2 — Compute connection risk with Flink
 
-Now we'll use Flink to join every itinerary to the live status of both of its flights and keep the result current as flights change. This is what makes a Streamhouse **always current**: connection risk updates the moment a flight's delay changes, not on the next batch refresh.
+Now we'll use Flink to join every itinerary to the live status of both of its flights and keep the result current as flights change. Connection risk updates the moment a flight's delay changes, not on the next batch refresh.
 
-1. In your Confluent Cloud environment, open **Flink** from the left menu, go to the **Compute pools** tab, select  **SQL Workspace** on the `streamhouse-…-compute-pool` pool, then click **Open SQL workspace**. Above the editor, set the **catalog** to your environment and the **database** to your cluster.
+1. Open the Flink SQL workspace:
 
-![The Compute pools tab under Flink, with the running streamhouse compute pool and its SQL Workspace button](../images/flight-disruptions/compute-pool-view.png)
+    1. Go to the [Flink UI](https://confluent.cloud/go/flink) and select the **environment** deploy created (`streamhouse-…-env`).
 
-![A new SQL workspace with the catalog set to the environment and the Use database menu open on the cluster](../images/flight-disruptions/database-selection.png)
+        <img src="../images/select-flink-environment.png" alt="The Navigate to your Flink compute pools dialog with the streamhouse environment selected" width="450">
+
+    2. Open a **SQL workspace**.
+
+        <img src="../images/open-sql-workspace.png" alt="The streamhouse compute pool card with its SQL Workspace button" width="400">
+
+    3. Set the **Catalog** to your environment and the **Database** to your cluster: the names printed at the end of `uv run deploy` (`streamhouse-…-env` and `streamhouse-…-cluster`).
+
+        <img src="../images/set-catalog-database.png" alt="The SQL workspace with Use catalog set to the streamhouse environment and Use database set to its cluster" width="600">
 
 2. Check the source tables:
 
@@ -183,7 +202,9 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
     | `hotel_inventory` | One row per hotel: rooms left and nightly rate |
     | `passenger_recommendations` | The rebooking offers. The generator writes every other flight's, and we'll create the agent for flight RA417's recommendations in Lab 4 |
 
-    ![SHOW TABLES results: flight_status, hotel_inventory, passenger_itineraries, and passenger_recommendations](../images/flight-disruptions/show-tables.png)
+    <img src="../images/flight-disruptions/show-tables.png" alt="SHOW TABLES results: flight_status, hotel_inventory, passenger_itineraries, and passenger_recommendations" width="600">
+
+    **[4] Screenshot needs updating** (`show-tables.png`): shows `flight-recovery-…` names; attendees see `streamhouse-…`.
 
 3. Create `passenger_state`. Paste this whole statement into one cell and run it:
 
@@ -226,7 +247,13 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
 
     This is a **materialized table**: one object that owns both the table and the continuous query that keeps it current. It joins each itinerary to its inbound flight and, when there is one, its connecting flight.
 
-![The passenger_state statement in the SQL workspace, with Successfully created materialized table passenger_state](../images/flight-disruptions/passenger-state-creation.png)
+<img src="../images/flight-disruptions/passenger-state-creation.png" alt="The passenger_state statement in the SQL workspace, with Successfully created materialized table passenger_state" width="600">
+
+**[5] Screenshot needs updating** (`passenger-state-creation.png`): shows `flight-recovery-…` names; attendees see `streamhouse-…`.
+
+> [!NOTE]
+>
+> This is a continuous statement — keep this cell **RUNNING** for the whole workshop.
 
 4. In a new cell, create `flight_impact`, which keeps each flight's delay and counts its HIGH-risk passengers:
 
@@ -264,11 +291,13 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
     ) impact ON f.`key` = impact.inbound_flight_id;
     ```
 
-![The flight_impact statement in the SQL workspace, with Successfully created materialized table flight_impact](../images/flight-disruptions/flight-impact-creation.png)
+<img src="../images/flight-disruptions/flight-impact-creation.png" alt="The flight_impact statement in the SQL workspace, with Successfully created materialized table flight_impact" width="600">
 
-> [!WARNING]
+**[6] Screenshot needs updating** (`flight-impact-creation.png`): shows `flight-recovery-…` names; attendees see `streamhouse-…`.
+
+> [!NOTE]
 >
-> Both tables keep running in the background for the rest of the workshop. Don't stop or delete their statements.
+> This is a continuous statement — keep this cell **RUNNING** for the whole workshop.
 
 5. Watch RA417's passengers in a new cell:
 
@@ -280,7 +309,7 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
 
     As the flight is further delayed, you'll continue to see passengers delay risk change from "OK" to "HIGH".
 
-    ![Query results from passenger_state: RA417's passengers with their seat, final destination, connection minutes, and risk](../images/flight-disruptions/passenger-state-query.png)
+    <img src="../images/flight-disruptions/passenger-state-query.png" alt="Query results from passenger_state: RA417&#x27;s passengers with their seat, final destination, connection minutes, and risk" width="600">
 
 6. Check the flight itself:
 
@@ -292,7 +321,7 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
 
     As today's flight RA417 becomes further delayed, the number of impacted passengers increases. 
 
-    ![Query results from flight_impact: today's RA417 delayed with affected passengers, and tomorrow's RA417 on time](../images/flight-disruptions/flight-impact-query.png)
+    <img src="../images/flight-disruptions/flight-impact-query.png" alt="Query results from flight_impact: today&#x27;s RA417 delayed with affected passengers, and tomorrow&#x27;s RA417 on time" width="600">
 
 > [!NOTE]
 >
@@ -300,17 +329,17 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
 
 ## Lab 3 — Serve the live view with Lightning Tables and RTCE
 
-Enabling Lightning Tables for a topic does two things. Confluent keeps a low-latency table of the topic's latest rows, which apps query as **Lightning Tables**, and it exposes the topic to AI agents over MCP. That's the **decentralized** part of a Streamhouse: the app and the agent read the same state you computed in Lab 2, each in the form it needs, without another copy or pipeline.
+Enabling Lightning Tables for a topic does two things. Confluent keeps a low-latency table of the topic's latest rows, which apps query as **Lightning Tables**, and it exposes the topic to AI agents over MCP. The app and the agent read the same state you computed in Lab 2, each in the form it needs, without another copy or pipeline.
 
 1. Back in the Console, open your cluster's **Topics**. `passenger_state` and `flight_impact` are there now; we created them with Flink in Lab 2.
 
 2. Find the **Lightning Table** column (scroll right if you need to) and click **+ Enable** for `flight_status`.
 
-![The cluster's Topics list, with + Enable in the Lightning Tables column](../images/flight-disruptions/enable-lightning-tables.png)
+<img src="../images/flight-disruptions/enable-lightning-tables.png" alt="The cluster&#x27;s Topics list, with + Enable in the Lightning Tables column" width="600">
 
 3. In the **Enable Lightning Table** panel, click **Enable**. It may take a minute for the query engine and infrastructure to be finalized, but you can go ahead and **close the panel and enable the next topics**.
 
-![The Enable a Lightning Table for flight_status? panel](../images/flight-disruptions/lightning-tables-panel.png)
+<img src="../images/flight-disruptions/lightning-tables-panel.png" alt="The Enable a Lightning Table for flight_status? panel" width="600">
 
 4. Repeat for `passenger_itineraries`, `passenger_state`, `flight_impact`, `passenger_recommendations`, and `hotel_inventory`.
 
@@ -318,7 +347,7 @@ Enabling Lightning Tables for a topic does two things. Confluent keeps a low-lat
 >
 > Each topic shows **Provisioning** while Confluent loads its rows, then **Active**. Wait until all six show **Active** before you continue.
 
-![The Topics list with all six Lightning Tables Active](../images/flight-disruptions/lightning-tables-active.png)
+<img src="../images/flight-disruptions/lightning-tables-active.png" alt="The Topics list with all six Lightning Tables Active" width="600">
 
 5. Run your first Lightning Query. **In a terminal window, run**:
 
@@ -328,7 +357,7 @@ Enabling Lightning Tables for a topic does two things. Confluent keeps a low-lat
 
     It prints the three hotels' current rows and the round-trip time. Wait one minute, then run the command again and you'll see that the Grand Hyatt has fewer rooms.
 
-    ![Output of uv run setup-rtce --lightning hotel_inventory --run: the three hotels' rows and the round-trip time](../images/flight-disruptions/lightning-query-test.png)
+    <img src="../images/flight-disruptions/lightning-query-test.png" alt="Output of uv run setup-rtce --lightning hotel_inventory --run: the three hotels&#x27; rows and the round-trip time" width="600">
 
 6. Open a **new terminal window** in the `quickstart-streamhouse` folder and start the dashboard app:
 
@@ -336,11 +365,11 @@ Enabling Lightning Tables for a topic does two things. Confluent keeps a low-lat
     uv run airport-app
     ```
 
-    ![Output of uv run airport-app, with Uvicorn running on http://127.0.0.1:8000](../images/flight-disruptions/uv-run-airport-app.png)
+    <img src="../images/flight-disruptions/uv-run-airport-app.png" alt="Output of uv run airport-app, with Uvicorn running on http://127.0.0.1:8000" width="600">
 
     Open [http://127.0.0.1:8000](http://127.0.0.1:8000). **Leave this terminal running too.**
 
-    ![The River Air app: the live flight map, Operations, and Biggest delays, with RA417 tagged Biggest impact](../images/flight-disruptions/dashboard-view.png)
+    <img src="../images/flight-disruptions/dashboard-view.png" alt="The River Air app: the live flight map, Operations, and Biggest delays, with RA417 tagged Biggest impact" width="600">
 
 7. Explore the operations view:
 
@@ -349,8 +378,11 @@ Enabling Lightning Tables for a topic does two things. Confluent keeps a low-lat
     - **Biggest delays** lists the ten latest flights. RA417 (ORD → SFO, up to 115 minutes late) is the one tagged **Biggest impact**.
     - Click **RA417-…**. The seat map colors every seat red (at risk), green (not at risk), or grey (open). Hover a seat to see that passenger's itinerary. The table below lists RA417's passengers, `HIGH` first.
 
-    ![The live flight map with RA417 selected, showing its ORD to SFO route and late estimated arrival](../images/flight-disruptions/dashboard-flight-selection.png)
-    ![RA417's seat map, with at-risk seats in red and a passenger's itinerary shown on hover](../images/flight-disruptions/dashboard-seating-chart.png)
+    <img src="../images/flight-disruptions/dashboard-flight-selection.png" alt="The live flight map with RA417 selected, showing its ORD to SFO route and late estimated arrival" width="600">
+
+    Scroll down to RA417's seat map and hover a seat to see that passenger's itinerary:
+
+    <img src="../images/flight-disruptions/dashboard-seating-chart.png" alt="RA417&#x27;s seat map, with at-risk seats in red and a passenger&#x27;s itinerary shown on hover" width="600">
 
 
 ## Lab 4 — Build the recovery agent
@@ -365,7 +397,7 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
 
     It creates a Flink connection named `rtce-connection` that points at your cluster's RTCE endpoint and signs in with the API key in `credentials.env`, so no secret appears in your SQL.
 
-    ![Output of uv run setup-rtce --agent-connection, confirming that the Flink connection rtce-connection points at the RTCE endpoint](../images/flight-disruptions/setup-rtce-agent-connection.png)
+    <img src="../images/flight-disruptions/setup-rtce-agent-connection.png" alt="Output of uv run setup-rtce --agent-connection, confirming that the Flink connection rtce-connection points at the RTCE endpoint" width="600">
 
 2. Give the agent a feed of impacted passengers. `AI_RUN_AGENT` reads only append-only input, and `passenger_state` is an upsert table, so two staging tables turn its changes into new rows. 
 
@@ -396,7 +428,9 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
       op_mapping => MAP['INSERT, UPDATE_AFTER', 'UPSERT']
     );
     ```
-    ![The passenger_state_changes statement, with Successfully created materialized table passenger_state_changes](../images/flight-disruptions/passenger-state-changes-creation.png)
+    <img src="../images/flight-disruptions/passenger-state-changes-creation.png" alt="The passenger_state_changes statement, with Successfully created materialized table passenger_state_changes" width="600">
+
+    **[7] Screenshot needs updating** (`passenger-state-changes-creation.png`): shows `flight-recovery-…` names; attendees see `streamhouse-…`.
 
     ```sql
     SET 'sql.local-time-zone' = 'UTC';
@@ -431,7 +465,13 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
       op_mapping => MAP['INSERT', 'FIRST_HIGH']
     );
     ```
-    ![The impacted_passengers statement, with Successfully created materialized table impacted_passengers](../images/flight-disruptions/impacted-passengers-creation.png)
+    <img src="../images/flight-disruptions/impacted-passengers-creation.png" alt="The impacted_passengers statement, with Successfully created materialized table impacted_passengers" width="600">
+
+    **[8] Screenshot needs updating** (`impacted-passengers-creation.png`): shows `flight-recovery-…` names; attendees see `streamhouse-…`.
+
+> [!NOTE]
+>
+> These are continuous statements — keep both cells **RUNNING** for the whole workshop.
 
 
 3. Create the model, Claude Sonnet hosted in Confluent Cloud. There's no connection or key to manage, and your data stays in Confluent:
@@ -448,7 +488,9 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
       'confluent.params.max_tokens' = '1024'
     );
     ```
-    ![The CREATE MODEL statement, with Model 'passenger_recovery_model' with version '1' created](../images/flight-disruptions/passenger-recovery-model-creation.png)
+    <img src="../images/flight-disruptions/passenger-recovery-model-creation.png" alt="The CREATE MODEL statement, with Model &#x27;passenger_recovery_model&#x27; with version &#x27;1&#x27; created" width="600">
+
+    **[9] Screenshot needs updating** (`passenger-recovery-model-creation.png`): shows `flight-recovery-…` names; attendees see `streamhouse-…`.
 
 4. Create the tool that gives the agent live context. It exposes RTCE's `getMetadata` and `queryData` tools through `rtce-connection`:
 
@@ -461,7 +503,9 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
       'request_timeout' = '30'
     );
     ```
-    ![The CREATE TOOL statement for hotel_inventory_live_context, Completed](../images/flight-disruptions/hotel-inventory-tool-creation.png)
+    <img src="../images/flight-disruptions/hotel-inventory-tool-creation.png" alt="The CREATE TOOL statement for hotel_inventory_live_context, Completed" width="600">
+
+    **[10] Screenshot needs updating** (`hotel-inventory-tool-creation.png`): shows `flight-recovery-…` names; attendees see `streamhouse-…`.
 
 5. Create the agent:
 
@@ -490,7 +534,9 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
       'handle_exception' = 'continue'
     );
     ```
-    ![The CREATE AGENT statement for passenger_recovery_agent, Completed](../images/flight-disruptions/create-agent.png)
+    <img src="../images/flight-disruptions/create-agent.png" alt="The CREATE AGENT statement for passenger_recovery_agent, Completed" width="600">
+
+    **[11] Screenshot needs updating** (`create-agent.png`): shows `flight-recovery-…` names; attendees see `streamhouse-…`.
 
     Its prompt has three rules: 1. Offer the first two departures to the passenger's destination at least 45 minutes after they land 2. Add a hotel when the flight leaves six or more hours later, and 3. Take hotels in order of preference, skipping any with no rooms left.
 
@@ -499,7 +545,7 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
     ```sql
     SHOW AGENTS;
     ```
-    ![SHOW AGENTS results listing passenger_recovery_agent](../images/flight-disruptions/show-agents.png)
+    <img src="../images/flight-disruptions/show-agents.png" alt="SHOW AGENTS results listing passenger_recovery_agent" width="600">
 
 7. Start the agent:
 
@@ -566,8 +612,15 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
     WHERE recommended_flight_id IS NOT NULL;
     ```
 
-    ![The first half of the INSERT INTO passenger_recommendations statement that runs the agent](../images/flight-disruptions/start-agent-1.png)
-    ![The second half of the statement, now Running](../images/flight-disruptions/start-agent-2.png)
+    <img src="../images/flight-disruptions/start-agent-1.png" alt="The first half of the INSERT INTO passenger_recommendations statement that runs the agent" width="600">
+
+    **[12] Screenshot needs updating** (`start-agent-1.png`): shows `flight-recovery-…` names; attendees see `streamhouse-…`.
+
+    Scroll down in the cell to see the rest of the statement, now **Running**:
+
+    <img src="../images/flight-disruptions/start-agent-2.png" alt="The second half of the statement, now Running" width="600">
+
+    **[13] Screenshot needs updating** (`start-agent-2.png`): shows `flight-recovery-…` names; attendees see `streamhouse-…`.
 
 > [!WARNING]
 >
@@ -583,15 +636,15 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
 
     Within a few minutes, each of RA417's 150 at-risk passengers has two offers for tomorrow morning: the first with the Grand Hyatt at SFO ($329), the second with the SFO Airport Marriott Waterfront ($229). If the Grand Hyatt had already sold out when your agent ran, it offers the Marriott and the Hilton instead.
 
-    ![Query results from passenger_recommendations: RA417 passengers' offers with the Grand Hyatt at SFO and the SFO Airport Marriott Waterfront](../images/flight-disruptions/passenger-recommendations-query.png)
+    <img src="../images/flight-disruptions/passenger-recommendations-query.png" alt="Query results from passenger_recommendations: RA417 passengers&#x27; offers with the Grand Hyatt at SFO and the SFO Airport Marriott Waterfront" width="600">
 
 ## Lab 5 — Recover a passenger
 
-This is where current context matters. An agent or app working from data even a few minutes old would offer a hotel room that has already sold out.
+An agent or app working from data even a few minutes old would offer a hotel room that has already sold out.
 
 1. In the dashboard app, click **RA417-…**, then click a delayed passenger's seat. **Scroll to Passenger recovery**, which shows their two offers.
 
-![Hotel options and Passenger recovery in the app, with the Grand Hyatt sold out and one passenger's two offers](../images/flight-disruptions/dashboard-passenger-hotel-options.png)
+<img src="../images/flight-disruptions/dashboard-passenger-hotel-options.png" alt="Hotel options and Passenger recovery in the app, with the Grand Hyatt sold out and one passenger&#x27;s two offers" width="600">
 
 2. Watch the Grand Hyatt count down in **Hotel options**.
 
@@ -609,7 +662,7 @@ This is where current context matters. An agent or app working from data even a 
     WHERE passenger_id LIKE 'P-____-417-%' AND status IN ('BOOKED', 'CLOSED');
     ```
 
-    ![Query results with one RA417 passenger's offers: one BOOKED, the other CLOSED](../images/flight-disruptions/passenger-hotel-booking.png)
+    <img src="../images/flight-disruptions/passenger-hotel-booking.png" alt="Query results with one RA417 passenger&#x27;s offers: one BOOKED, the other CLOSED" width="600">
 
 > [!NOTE]
 >
@@ -644,7 +697,7 @@ winget install --id Anthropic.ClaudeCode -e
 
     Choose Claude Code or Codex. It reuses your API key, connects every demo topic (and turns on any you skipped in Lab 3), and checks the connection. Restart your coding agent afterward.
 
-    ![Output of uv run setup-rtce: Claude Code chosen, RTCE turned on for passenger_state and flight_impact, and the MCP connection test passed](../images/flight-disruptions/setup-rtce.png)
+    <img src="../images/flight-disruptions/setup-rtce.png" alt="Output of uv run setup-rtce: Claude Code chosen, RTCE turned on for passenger_state and flight_impact, and the MCP connection test passed" width="600">
 
 > [!NOTE]
 >
@@ -655,17 +708,17 @@ winget install --id Anthropic.ClaudeCode -e
     ```text
     What topics do I have access to in the Real-Time Context Engine?
     ```
-    ![Claude Code listing the six topics in the Real-Time Context Engine](../images/flight-disruptions/rtce-question-1.png)
+    <img src="../images/flight-disruptions/rtce-question-1.png" alt="Claude Code listing the six topics in the Real-Time Context Engine" width="600">
 
     ```text
     Which flight today puts the most passengers at risk of missing a connection, and where are they headed?
     ```
-    ![Claude Code naming RA417 (ORD to SFO) as the flight with the most passengers at risk, with their connecting flights and destinations](../images/flight-disruptions/rtce-question-2.png)
+    <img src="../images/flight-disruptions/rtce-question-2.png" alt="Claude Code naming RA417 (ORD to SFO) as the flight with the most passengers at risk, with their connecting flights and destinations" width="600">
 
     ```text
     How many rooms does each SFO hotel have left right now?
     ```
-    ![Claude Code listing each SFO hotel's rooms left and nightly rate, with the Grand Hyatt sold out](../images/flight-disruptions/rtce-question-3.png)
+    <img src="../images/flight-disruptions/rtce-question-3.png" alt="Claude Code listing each SFO hotel&#x27;s rooms left and nightly rate, with the Grand Hyatt sold out" width="600">
 
 
 RTCE gives your agent three tools, `listTopics`, `getMetadata`, and `queryData`, and exposes only topics whose context engine is on. Watch the tool calls: the answers come from your live data, not from the model's memory.
@@ -683,6 +736,17 @@ Congratulations! You built a Streamhouse. It turns raw flight and itinerary feed
     ```
 
     It deletes your environment and everything in it: the cluster, the topics, the tables and agent you created, and the Flink connection.
+
+    <details>
+    <summary>Remove only this lab</summary>
+
+    This keeps the shared environment, cluster, and Flink pool, and Agentic Pit Decisions if you deployed it:
+
+    ```bash
+    uv run destroy --lab flight-disruptions
+    ```
+
+    </details>
 
 3. Delete the setup service account. In Confluent Cloud, open the **Administration** menu (top right), select **Accounts & access**, open **Service accounts**, and delete each `streamhouse-setup-sa-…` (one for every time you answered `y` to new keys).
 

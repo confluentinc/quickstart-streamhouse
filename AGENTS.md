@@ -41,7 +41,7 @@ The repo holds two labs that share `terraform/core`. `uv run deploy` asks which 
 ## Repository layout
 
 * [`scripts/`](./scripts/) — a Python package (`scripts/pit_decisions/` holds the second lab): deploy/destroy, credential and Terraform helpers, RTCE setup, the generator (`airport_datagen.py`), and the app (`airport_app.py`, `static/`).
-* [`terraform/core/`](./terraform/core/) — Confluent Cloud environment, cluster, Flink pool, service accounts, keys, optional Bedrock connection.
+* [`terraform/core/`](./terraform/core/) — Confluent Cloud environment, cluster, Flink pool, service accounts, and keys.
 * [`terraform/airline-demo/`](./terraform/airline-demo/) — the Flight Disruptions pipeline (Flink SQL in `sql/`) and Tableflow to S3/Glue. Separate root because its provider reads core's outputs.
 * [`terraform/agentic-pit-decisions/`](./terraform/agentic-pit-decisions/) — the Agentic Pit Decisions source tables and hosted model; also reads core's outputs.
 * [`tests/`](./tests/) — pytest suites.

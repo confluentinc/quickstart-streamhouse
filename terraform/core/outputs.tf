@@ -83,16 +83,6 @@ output "cloud_provider" {
   description = "The cloud provider used for deployment (always aws for this demo)"
 }
 
-output "llm_connection_name" {
-  value       = try(confluent_flink_connection.bedrock_connection[0].display_name, "")
-  description = "Name of the managed Bedrock connection used by the recovery streaming agent (empty when no Bedrock creds were supplied)"
-}
-
-output "bedrock_enabled" {
-  value       = length(confluent_flink_connection.bedrock_connection) > 0
-  description = "True when a Bedrock connection was created (Bedrock creds present) — gates the recovery streaming agent in airline-demo"
-}
-
 output "confluent_environment_display_name" {
   value       = confluent_environment.staging.display_name
   description = "The display name of the Confluent environment (Flink catalog name)"
@@ -130,7 +120,7 @@ output "aws_tableflow_session_token" {
 
 output "aws_tableflow_credentials_present" {
   value       = var.aws_tableflow_access_key != ""
-  description = "True when AWS credentials for the Tableflow S3/Glue path were supplied — gates enable_analytics in airline-demo, mirroring bedrock_enabled"
+  description = "True when AWS credentials for the Tableflow S3/Glue path were supplied — gates enable_analytics in airline-demo"
   # Not actually sensitive (it's a boolean), but Terraform propagates the
   # sensitive marking from var.aws_tableflow_access_key since the value
   # is derived from it.
