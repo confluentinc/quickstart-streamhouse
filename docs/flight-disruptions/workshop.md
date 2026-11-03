@@ -17,7 +17,7 @@ By the end, you'll know how the Streamhouse on Confluent Cloud keeps one live vi
 | [Lab 2](#lab-2--compute-connection-risk-with-flink) | 10 | Compute every passenger's connection risk with Flink |
 | [Lab 3](#lab-3--serve-the-live-view-with-lightning-tables-and-rtce) | 10 | Turn on Lightning Tables and RTCE, then open the operations app |
 | [Lab 4](#lab-4--build-the-recovery-agent) | 10 | Build the recovery agent |
-| [Lab 5](#lab-5--recover-a-passenger) | 5 | Rebook a passenger when their hotel sells out |
+| [Lab 5](#lab-5--recover-a-passenger) | 5 | Watch hotel rooms change live, then rebook a passenger |
 | [Bonus](#bonus--ask-your-coding-agent-about-the-live-operation) | optional | Ask Claude Code or Codex about the live operation over MCP |
 | [Clean up](#clean-up) | 5 | Tear everything down |
 
@@ -547,15 +547,13 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
 
 ![Hotel options and Passenger recovery in the app, with the Grand Hyatt sold out and one passenger's two offers](../images/flight-disruptions/dashboard-passenger-hotel-options.png)
 
-2. Watch the Grand Hyatt count down in **Hotel options**.
+2. Watch the Grand Hyatt in **Hotel options** for a minute or so. Its rooms drop as guests book, live from the `hotel_inventory` topic. You don't need to wait for it to sell out.
 
-3. After the sellout, click **Select** on the Grand Hyatt offer. The app checks the hotel's rooms first, so the status bar at the bottom reads **Grand Hyatt at SFO is sold out. Now offering Hilton SFO Airport Bayfront.** That offer now has the Hilton ($249), and the passenger chooses between the Marriott and the Hilton.
+3. Click **Select** on either offer, then **Book**. 
 
-4. Click **Select** on either offer, then **Book**. 
+    The app checks the hotel's rooms at each click, books the offer, and closes the other one. Your booking joins the count in **Booked**, which also climbs as other flights' passengers book. If the Grand Hyatt has already sold out when you select it, the app swaps in the Hilton ($249) and the status bar at the bottom reads **Grand Hyatt at SFO is sold out. Now offering Hilton SFO Airport Bayfront.** The passenger then chooses between the Marriott and the Hilton.
 
-    The app re-checks the rooms, books the offer, and closes the other one. Your booking joins the count in **Booked**, which also climbs as other flights' passengers book.
-
-5. Back in your SQL workspace, see what changed:
+4. Back in your SQL workspace, see what changed:
 
     ```sql
     SELECT `key`, recommended_flight_id, hotel_name, status
@@ -564,10 +562,6 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
     ```
 
     ![Query results with one RA417 passenger's offers: one BOOKED, the other CLOSED](../images/flight-disruptions/passenger-hotel-booking.png)
-
-> [!NOTE]
->
-> - **Ahead of the sellout?** Book another passenger in the meantime, or watch the Grand Hyatt's rooms run out in **Hotel options**.
 
 ## 🧩 Challenge — Ask your coding agent about the live operation
 
