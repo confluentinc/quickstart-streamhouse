@@ -379,7 +379,6 @@ One click per topic does it. Enabling a topic's **Lightning Table** keeps a low-
     - Click **RA417-…**. The seat map colors every seat red (at risk), green (not at risk), or grey (open). Hover a seat to see that passenger's itinerary. The table below lists RA417's passengers, `HIGH` first.
     - The flight's box on the map also shows **Live telemetry** that updates every second: altitude, speed, heading, position, and time to arrival.
 
-    <img src="../images/flight-disruptions/dashboard-flight-selection.png" alt="The live flight map with RA417 selected, showing its ORD to SFO route and late estimated arrival" width="750">
     <img src="../images/flight-disruptions/dashboard-live-telemetry.png" alt="RA417&#x27;s box on the live flight map with Live telemetry: altitude, ground speed, vertical speed, heading, position, miles to go, and time to arrival" width="750">
 
     RA417's seat map is in the top-right corner. Hover a seat to see that passenger's itinerary:
