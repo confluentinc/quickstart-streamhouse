@@ -436,7 +436,7 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
     ```
     <img src="../images/flight-disruptions/passenger-state-changes-creation.png" alt="The passenger_state_changes statement, with Successfully created materialized table passenger_state_changes" width="750">
 
-    `impacted_passengers` keeps one row per passenger on RA417, RA183, and RA185, from the moment they first turn `HIGH` while their inbound flight is still due to land. This is the agent's to-do list (the generator writes offers for every other flight):
+    `impacted_passengers` keeps one row per passenger on RA417, RA183, and RA185, from the moment they first turn `HIGH` while their inbound flight is still due to land. This is the agent's to-do list:
 
     ```sql
     SET 'sql.local-time-zone' = 'UTC';
@@ -473,6 +473,10 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
     );
     ```
     <img src="../images/flight-disruptions/impacted-passengers-creation.png" alt="The impacted_passengers statement, with Successfully created materialized table impacted_passengers" width="750">
+
+    > [!NOTE]
+    >
+    > For this workshop only, the filter keeps the agent to three flights to reduce LLM requests. In production, you would open it up to all flights.
 
 3. Create the tool that gives the agent live context. It exposes RTCE's `getMetadata` and `queryData` tools through `rtce-connection`:
 
@@ -527,8 +531,6 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
 > [!NOTE]
 >
 > You could set up this agent for passengers connecting in any city. This workshop sets it up for SFO, River Air's hub, to keep the scope small.
->
-> For the same reason, the agent handles only three of today's delayed flights: RA417, RA183, and RA185, picked by the flight-number filter in `impacted_passengers` from step 2. It could handle every flight, but then RA417's offers would wait behind the rest of the day's delayed passengers. The data generator writes the other flights' offers.
 
 6. Start the agent:
 
