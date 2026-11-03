@@ -19,7 +19,7 @@ provider "confluent" {
   cloud_api_secret = data.terraform_remote_state.core.outputs.confluent_cloud_api_secret
 }
 
-# Optional, same pattern as core's Bedrock connection: aws_tableflow_* creds are
+# Optional: aws_tableflow_* creds are
 # passed explicitly (never a tracked file) rather than relying on an ambient AWS
 # CLI session. When they're empty, analytics.tf's resources are all
 # count = 0 (see local.analytics_enabled in main.tf) and the skip_*

@@ -49,6 +49,8 @@ def test_workshop_is_flight_disruptions_only(tmp_path, monkeypatch):
     assert _select(tmp_path, monkeypatch, workshop=True, saved="agentic-pit-decisions")[0] == ["flight-disruptions"]
     with pytest.raises(SystemExit):
         _select(tmp_path, monkeypatch, requested="agentic-pit-decisions", workshop=True)
+    both = ["flight-disruptions", "agentic-pit-decisions"]
+    assert _select(tmp_path, monkeypatch, workshop=True, saved=",".join(both))[0] == both
 
 
 def test_targets_always_start_with_core():
