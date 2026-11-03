@@ -352,7 +352,7 @@ def save_aws_credentials_file(
 
 ## AWS Access Keys
 
-Use these credentials when running `uv run deploy`. The same key powers both
+Use these credentials when running `uv run deploy --with-labs`. The same key powers both
 the recovery streaming agent (Bedrock) and the Tableflow S3/Glue
 analytics path (Demo 3) — both optional, both skipped if you leave this blank.
 
@@ -373,7 +373,7 @@ AWS Secret Access Key: {secret_access_key}
 
 2. Run deployment:
    ```bash
-   uv run deploy
+   uv run deploy --with-labs
    ```
 
 3. When prompted, enter the credentials above:

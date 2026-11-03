@@ -106,7 +106,7 @@ def prompt_and_save_login(creds_file, creds: dict) -> bool:
         print(
             f"  Login failed. {remaining} attempt(s) left."
             if remaining
-            else "  Login failed. Skipping (use `confluent login --sso` if you use SSO)."
+            else "  Login failed. Skipping (SSO accounts: run `confluent login`, then press Enter at the email prompt)."
         )
     return False
 
@@ -132,5 +132,5 @@ def ensure_confluent_login(creds: dict | None = None, creds_file=None, interacti
     print("\nError: Not logged into Confluent Cloud.")
     print("Please run: confluent login --save")
     print("  (or rerun `uv run deploy` to save credentials for auto-login)")
-    print("  (SSO accounts: run `confluent login --sso`)")
+    print("  (SSO accounts: run `confluent login` and finish signing in in the browser)")
     sys.exit(1)

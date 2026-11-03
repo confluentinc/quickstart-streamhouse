@@ -62,14 +62,19 @@ def test_statements_that_read_the_clock_run_in_utc():
         assert ("CURRENT_TIMESTAMP" in block) == block.startswith(UTC), block[:80]
 
 
-def test_workshop_mode_sticks_to_the_checkout(monkeypatch, tmp_path):
+def test_workshop_is_the_default_and_sticks_to_the_checkout(monkeypatch, tmp_path):
     saved = {}
     monkeypatch.setattr(deploy, "_save_env_safe", lambda _file, key, value: saved.update({key: value}))
+    creds_file = tmp_path / "credentials.env"
+    assert not deploy._workshop_mode(False, True, creds_file, {})  # --with-labs
+    assert not deploy._workshop_mode(False, False, creds_file, {}, default=False)  # bots
+    assert saved == {}
     creds = {}
-    assert not deploy._workshop_mode(False, tmp_path / "credentials.env", creds)
-    assert deploy._workshop_mode(True, tmp_path / "credentials.env", creds)
+    assert deploy._workshop_mode(False, False, creds_file, creds)
     assert saved == {deploy.WORKSHOP: "true"} == {k: v for k, v in creds.items() if k == deploy.WORKSHOP}
-    assert deploy._workshop_mode(False, tmp_path / "credentials.env", creds)  # a later run without the flag
+    assert deploy._workshop_mode(False, False, creds_file, creds, default=False)  # a later bot run
+    with pytest.raises(SystemExit, match="has the workshop"):
+        deploy._workshop_mode(False, True, creds_file, creds)  # a later --with-labs
 
 
 def test_workshop_deploy_stops_where_the_guide_starts(monkeypatch, tmp_path):
@@ -144,8 +149,9 @@ def test_workshop_mode_refuses_a_checkout_with_a_full_deployment(tmp_path):
     state.parent.mkdir(parents=True)
     state.write_text("{}")
     with pytest.raises(SystemExit):
-        deploy._workshop_mode(True, tmp_path / "credentials.env", {})
-    assert deploy._workshop_mode(False, tmp_path / "credentials.env", {deploy.WORKSHOP: "true"})
+        deploy._workshop_mode(True, False, tmp_path / "credentials.env", {})
+    assert not deploy._workshop_mode(False, False, tmp_path / "credentials.env", {})  # a plain rerun stays full
+    assert deploy._workshop_mode(False, False, tmp_path / "credentials.env", {deploy.WORKSHOP: "true"})
 
 
 def test_stream_names_a_passenger_who_misses_their_connection():

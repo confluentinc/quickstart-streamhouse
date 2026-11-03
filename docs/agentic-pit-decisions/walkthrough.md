@@ -4,22 +4,18 @@
 
 In this ~45-minute lab, River Racing's car #88 streams live telemetry from Silverstone. Flink uses `ML_DETECT_ANOMALIES` to flag a front-left tire anomaly, and a streaming agent running on Confluent-hosted Claude recommends `STAY OUT`, `PIT SOON`, or `PIT NOW` on every lap. You'll provision your own Confluent Cloud environment with `uv run deploy` and run the race simulator locally.
 
-## 0. Clone, install, and provision
+Along the way, you build a small **Streamhouse**: an architecture that continuously captures, processes, and serves the current state of the business. Here the business is a race, and the agent's every call is only as good as how current its view of the car is.
 
-You need a Confluent Cloud account ([Sign up for Confluent Cloud](https://www.confluent.io/confluent-cloud/tryfree/)).
+## 0. Prerequisites
 
-> [!WARNING]
-> ⚠️ You may be asked to create a cluster during sign-up. **Skip it** — Terraform creates your cluster later.
+> [!TIP]
+>
+> **Provided a workstation by the workshop host?** Skip this section — it's already set up for you. Continue to [Set up Confluent Cloud](#set-up-confluent-cloud).
 
-1. Add a payment method (credit card) in Confluent Cloud.
+<details>
+<summary>Install the tools and clone the repo</summary>
 
-    A payment method is required for Terraform to create your cluster. Free credit is used first, so you typically won't be charged during the lab.
-
-    1. Go directly to **[Billing & payment](https://confluent.cloud/settings/billing/payment)**.
-    2. Open the **Payment details and contacts** tab.
-    3. Click **Add credit card / bank account**, enter your **card details**, then **Save**.
-
-2. Install the prerequisites:
+1. Install the prerequisites:
 
     <details>
     <summary>for Mac</summary>
@@ -46,14 +42,45 @@ You need a Confluent Cloud account ([Sign up for Confluent Cloud](https://www.co
 
     </details>
 
-3. Clone the repo:
+2. Clone the repo:
 
     ```bash
     git clone https://github.com/confluentinc/quickstart-streamhouse.git
     cd quickstart-streamhouse
     ```
 
-4. Provision the environment:
+</details>
+
+## Set up Confluent Cloud
+
+You need a Confluent Cloud account ([Sign up for Confluent Cloud](https://cnfl.io/learnwithcflt)).
+
+> [!WARNING]
+> ⚠️ You may be asked to create a cluster during sign-up. **Skip it** — Terraform creates your cluster later.
+
+1. Add a payment method (credit card) in Confluent Cloud.
+
+    A payment method is required for Terraform to create your cluster. Free credit is used first, so you typically won't be charged during the lab.
+
+    1. Go directly to **[Billing & payment](https://confluent.cloud/settings/billing/payment)**.
+    2. Open the **Payment details and contacts** tab.
+    3. Click **Add credit card / bank account**, enter your **card details**, then **Save**.
+
+2. Sign in to the Confluent CLI (SSO users only).
+
+    > [!TIP]
+    >
+    > **Signed up with an email and password?** Skip this step. Deploy logs you in to the CLI with them.
+
+    Deploy can't log in with single sign-on (SSO), so SSO users sign in to the Confluent CLI first. Enter your email when it asks, then finish signing in in the browser window it opens:
+
+    ```bash
+    confluent login
+    ```
+
+## Deploy the lab
+
+1. Provision the environment:
 
     ```bash
     uv run deploy
@@ -61,20 +88,20 @@ You need a Confluent Cloud account ([Sign up for Confluent Cloud](https://www.co
 
     <img src="../images/agentic-pit-decisions/selfservice-up.png" alt="uv run deploy: API key generation, configuration prompts, and the ready prompt" width="600">
 
-    The command prompts for the following:
+    Deploy asks for the following, in this order:
 
-    | Prompt | Where to get it |
+    | Prompt | Answer |
     |---|---|
-    | Confluent Cloud Email / Password | The **email and password you used to sign up**. They are verified with a real login, then saved to `credentials.env` so later commands log in automatically. (**Single sign-on?** Press **Enter** at the email prompt. If you are not already logged in, it offers to run the SSO login for you.) |
-    | Generate new Confluent Cloud API keys? | Answer `y` — `uv` creates the API key and secret for you |
-    | Confluent Cloud API Key / Secret | Press **Enter** to confirm the key and secret `uv` just created |
-    | Which lab do you want to deploy? | Choose **Agentic Pit Decisions** (or **Both** to add the Flight Disruptions lab) |
+    | `Which lab do you want to deploy?` | Enter `2` for **Agentic Pit Decisions**. Deploy builds the lab's starting point, and you build the rest in this walkthrough. |
+    | `Email (Enter to skip)` and `Password` | The **email and password you used to sign up**. Deploy checks them with a real login and saves them to `credentials.env`, so later commands log in automatically. **Signed in with SSO in [Set up Confluent Cloud](#set-up-confluent-cloud)?** Press **Enter** to skip. |
+    | `Generate new Confluent Cloud API keys? (y/N)` | Enter `y`. Deploy creates the key and uses it, so it doesn't ask for a key or secret. |
+    | `Ready to deploy? (y/n)` | Enter `y`. |
 
     `uv run deploy` provisions the shared core (environment, cluster, and Flink compute pool) along with this lab's source tables and model. It then seeds the race history, writes your credential card to `tmp/agentic-pit-decisions-card.env`, and prints your **catalog** and **database** names. To skip the lab selection prompt, run `uv run deploy --lab agentic-pit-decisions`.
 
 ## 1. Enhance the data with built-in ML functions and start the race
 
-The provisioning step sets up source tables for car telemetry, live race standings, and historical race results. Next, we will create a `car_state` table that joins telemetry with race standings over 20-second tumbling windows and uses Confluent's built-in `ML_DETECT_ANOMALIES` function to flag abnormal front-left tire temperatures.
+The provisioning step sets up source tables for car telemetry, live race standings, and historical race results. Next, we will create a `car_state` table that joins telemetry with race standings over 20-second tumbling windows and uses Confluent's built-in `ML_DETECT_ANOMALIES` function to flag abnormal front-left tire temperatures. Flink keeps `car_state` **always current**: each window is processed as the telemetry arrives, not after the race in a batch job.
 
 1. Open the [SQL workspace](https://confluent.cloud/workspaces/) in the Confluent Cloud Console. Select the **catalog** (your environment) and **database** (your cluster) that `uv run deploy` printed.
 
@@ -310,13 +337,15 @@ Next we create the `pit_decisions` table, which invokes `pit_strategy_agent` on 
 >
 > `PIT SOON` can start anywhere from about lap 19 to 23. The exact laps vary by run.
 >
+> The `PIT NOW` call lands on lap 24, the same lap the anomaly appears. That's the point of current context: an agent reading data even a few laps old would call the stop too late.
+>
 > As `car_state` and `pit_decisions` produce rows, the Pit Wall dashboard unlocks its **Anomaly Detection** and **AI Pit Strategist** panels:
 
 ![Pit Wall dashboard with both Anomaly Detection and AI Pit Strategist panels unlocked, showing the PIT NOW call at lap 24](../images/agentic-pit-decisions/pitwall-pit-now.png)
 
 ## (Optional) Expose `car_telemetry` to AI agents with Real-Time Context Engine
 
-Real-Time Context Engine (RTCE) exposes a Kafka topic as an MCP tool, so any MCP-compatible AI agent can query the live stream. `uv run deploy` created a Global RTCE API key and saved it to your credential card. You enable RTCE **per topic in the Console** for `car_telemetry` (and optionally `car_state` or `pit_decisions`).
+Real-Time Context Engine (RTCE) exposes a Kafka topic as an MCP tool, so any MCP-compatible AI agent can query the live stream. This is the **decentralized** side of a Streamhouse: other agents get the same live data the pit strategy agent uses, without another copy or pipeline. `uv run deploy` created a Global RTCE API key and saved it to your credential card. You enable RTCE **per topic in the Console** for `car_telemetry` (and optionally `car_state` or `pit_decisions`).
 
 1. Under your environment's cluster, open **[Topics](https://confluent.cloud/go/topics) → `car_telemetry`**, open the **Real-Time Context Engine** panel, and click **Enable** (or **Turn on**). Once enabled, the **Topics** list shows Real-Time Context Engine **On**:
 

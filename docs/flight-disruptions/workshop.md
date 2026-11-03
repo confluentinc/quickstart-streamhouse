@@ -4,7 +4,7 @@
 
 In this workshop, you run operations for River Air, an airline with 180 flights a day through its SFO hub. Flight RA417 from Chicago is about to run almost two hours late, and 150 of its passengers will miss their connections. Starting from three raw feeds (flight status, passenger itineraries, and hotel rooms), you'll compute every passenger's connection risk with Flink, serve the live state to an operations app through Lightning Tables, and build a streaming agent that reads live flights and hotel rooms through the Real-Time Context Engine (RTCE) to offer each stranded passenger a new flight and a hotel. 
 
-By the end, you'll know how the Streamhouse on Confluent Cloud keeps one live view of the business for apps, analytics, and AI agents alike.
+Together these make a **Streamhouse**: an architecture that continuously captures, processes, governs, and serves the current state of the business, so the operations app and the agent work from the same fresh, trusted source of truth. By the end, you'll have built one on Confluent Cloud.
 
 > [!NOTE]
 >
@@ -12,28 +12,27 @@ By the end, you'll know how the Streamhouse on Confluent Cloud keeps one live vi
 
 | Part | Minutes | What you do |
 |---|---|---|
-| [Setup](#setup) | 15 | Create your account, install the tools, deploy, and start the data |
+| [Prerequisites](#0-prerequisites) | 5 | Install the tools and get the code (skip it on a workstation the host provides) |
+| [Set up Confluent Cloud](#set-up-confluent-cloud) | 5 | Create your account and add a payment method |
+| [Deploy the workshop](#deploy-the-workshop) | 10 | Deploy your environment and start the data |
 | [Lab 1](#lab-1--explore-the-live-feeds) | 5 | Explore the live feeds |
 | [Lab 2](#lab-2--compute-connection-risk-with-flink) | 10 | Compute every passenger's connection risk with Flink |
 | [Lab 3](#lab-3--serve-the-live-view-with-lightning-tables-and-rtce) | 10 | Turn on Lightning Tables and RTCE, then open the operations app |
 | [Lab 4](#lab-4--build-the-recovery-agent) | 10 | Build the recovery agent |
 | [Lab 5](#lab-5--recover-a-passenger) | 5 | Rebook a passenger when their hotel sells out |
-| [Bonus](#bonus--ask-your-coding-agent-about-the-live-operation) | optional | Ask Claude Code or Codex about the live operation over MCP |
+| [Challenge](#-challenge--ask-your-coding-agent-about-the-live-operation) | optional | Ask Claude Code or Codex about the live operation over MCP |
 | [Clean up](#clean-up) | 5 | Tear everything down |
 
-## Setup
+## 0. Prerequisites
 
-### 1. Create your Confluent Cloud account
+> [!TIP]
+>
+> **Provided a workstation by the workshop host?** Skip this section — it's already set up for you. Continue to [Set up Confluent Cloud](#set-up-confluent-cloud).
 
-1. [Sign up for Confluent Cloud](https://www.confluent.io/confluent-cloud/tryfree/), or log in if you already have an account.
+<details>
+<summary>Install the tools and get the code</summary>
 
-2. Add a payment method. **Terraform can't create your cluster without one.**
-
-    1. Go to **[Billing & payment](https://confluent.cloud/settings/billing/payment)**.
-    2. Open the **Payment details and contacts** tab.
-    3. Click **Add credit card / bank account**, enter your card details, and click **Save**.
-
-### 2. Install the tools
+### Install the tools
 
 <details>
 <summary>for Mac</summary>
@@ -75,7 +74,7 @@ terraform -version
 confluent version
 ```
 
-### 3. Get the code
+### Get the code
 
 ```bash
 git clone https://github.com/confluentinc/quickstart-streamhouse.git
@@ -83,20 +82,48 @@ cd quickstart-streamhouse
 uv sync
 ```
 
-### 4. Deploy your environment
+</details>
+
+## Set up Confluent Cloud
+
+### 1. Create your Confluent Cloud account
+
+1. [Sign up for Confluent Cloud](https://cnfl.io/learnwithcflt), or log in if you already have an account.
+
+2. Add a payment method. **Terraform can't create your cluster without one.**
+
+    1. Go to **[Billing & payment](https://confluent.cloud/settings/billing/payment)**.
+    2. Open the **Payment details and contacts** tab.
+    3. Click **Add credit card / bank account**, enter your card details, and click **Save**.
+
+### 2. Sign in to the Confluent CLI (SSO users only)
+
+> [!TIP]
+>
+> **Signed up with an email and password?** Skip this step. Deploy logs you in to the CLI with them.
+
+Deploy can't log in with single sign-on (SSO), so SSO users sign in to the Confluent CLI first. Enter your email when it asks, then finish signing in in the browser window it opens:
 
 ```bash
-uv run deploy --workshop
+confluent login
 ```
 
-Deploy asks for the following:
+## Deploy the workshop
+
+### 1. Deploy your environment
+
+```bash
+uv run deploy
+```
+
+Deploy asks for the following, in this order:
 
 | Prompt | Answer |
 |---|---|
-| `Email (Enter to skip)` and `Password` | The email and password you use for Confluent Cloud. **Single sign-on?** Press **Ctrl-C**, run `confluent login --sso`, then run deploy again and press **Enter** at the email prompt. |
-| `Generate new Confluent Cloud API keys? (y/n)` | Enter `y` the first time running the workshop. |
-| `Confluent Cloud API Key` and `Confluent Cloud API Secret` | Press **Enter** twice to keep the key that deploy just created. |
-| `Ready to deploy? (y/n)` | Enter `y` |
+| `Which lab do you want to deploy?` | Enter `1` for **Flight Disruptions**. Deploy builds the workshop's starting point, and you build the rest in the labs. |
+| `Email (Enter to skip)` and `Password` | The email and password you use for Confluent Cloud. **Signed in with SSO in [Set up Confluent Cloud](#set-up-confluent-cloud)?** Press **Enter** to skip. |
+| `Generate new Confluent Cloud API keys? (y/N)` | Enter `y`. Deploy creates the key and uses it, so it doesn't ask for a key or secret. |
+| `Ready to deploy? (y/n)` | Enter `y`. |
 
 **Deploy takes about 10 minutes to create all of the workshop infrastructure and source topics.** When finished, you'll see your environment and cluster names, which you need in Lab 2:
 
@@ -105,7 +132,7 @@ Environment name: streamhouse-1a2b3c4d-env
 Cluster name: streamhouse-1a2b3c4d-cluster
 ```
 
-### 5. Start the datagen
+### 2. Start the datagen
 
 Open a **second terminal** in the `quickstart-streamhouse` folder and start the generator:
 
@@ -133,7 +160,7 @@ River Air's data comes from different systems: itineraries from ticketing, fligh
 
 ## Lab 2 — Compute connection risk with Flink
 
-Now we'll use Flink to join every itinerary to the live status of both of its flights and keep the result current as flights change.
+Now we'll use Flink to join every itinerary to the live status of both of its flights and keep the result current as flights change. This is what makes a Streamhouse **always current**: connection risk updates the moment a flight's delay changes, not on the next batch refresh.
 
 1. In your Confluent Cloud environment, open **Flink** from the left menu, go to the **Compute pools** tab, select  **SQL Workspace** on the `streamhouse-…-compute-pool` pool, then click **Open SQL workspace**. Above the editor, set the **catalog** to your environment and the **database** to your cluster.
 
@@ -263,7 +290,7 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
 
 ## Lab 3 — Serve the live view with Lightning Tables and RTCE
 
-Enabling Lightning Tables for a topic does two things. Confluent keeps a low-latency table of the topic's latest rows, which apps query as **Lightning Tables**, and it exposes the topic to AI agents over MCP.
+Enabling Lightning Tables for a topic does two things. Confluent keeps a low-latency table of the topic's latest rows, which apps query as **Lightning Tables**, and it exposes the topic to AI agents over MCP. That's the **decentralized** part of a Streamhouse: the app and the agent read the same state you computed in Lab 2, each in the form it needs, without another copy or pipeline.
 
 1. Back in the Console, open your cluster's **Topics**. `passenger_state` and `flight_impact` are there now; we created them with Flink in Lab 2.
 
@@ -535,6 +562,8 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
 
 ## Lab 5 — Recover a passenger
 
+This is where current context matters. An agent or app working from data even a few minutes old would offer a hotel room that has already sold out.
+
 1. In the dashboard app, click **RA417-…**, then click a delayed passenger's seat. **Scroll to Passenger recovery**, which shows their two offers.
 
 ![Hotel options and Passenger recovery in the app, with the Grand Hyatt sold out and one passenger's two offers](../images/flight-disruptions/dashboard-passenger-hotel-options.png)
@@ -616,7 +645,7 @@ RTCE gives your agent three tools, `listTopics`, `getMetadata`, and `queryData`,
 
 ## Clean up
 
-Congratulations! You built a pipeline that turns raw flight and itinerary feeds into live connection risk with Flink, served it to an app through Lightning Tables, and gave a streaming agent live context through RTCE so it could rebook stranded passengers on its own.
+Congratulations! You built a Streamhouse. It turns raw flight and itinerary feeds into live connection risk with Flink, serves that state to an app through Lightning Tables, and gives a streaming agent the same live context through RTCE so it can rebook stranded passengers on its own. Every consumer works from one current view of the operation.
 
 1. Stop the app and the generator: press **Ctrl-C** in their terminal windows.
 

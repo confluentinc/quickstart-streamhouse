@@ -20,11 +20,14 @@ Flight Disruptions runs, in order:
      the coding agent chosen up front (same as `uv run setup-rtce`).
   5. Topic tag colors through the Catalog API, after the recovery agent setup.
 
-With --workshop, steps 1 and 2 build only the three source feeds and
-passenger_recommendations, and deploy stops after the Global API key and tag colors:
-attendees publish the data, build passenger_state, flight_impact, and the recovery
-agent, and turn on Lightning Tables and RTCE themselves (docs/flight-disruptions/workshop.md). The
-choice is saved to credentials.env, so later runs stay in workshop mode.
+Both labs deploy their attendee starting point by default and prebuild the rest with
+--with-labs. Flight Disruptions' starting point is the workshop: steps 1 and 2 build only
+the three source feeds and passenger_recommendations, and deploy stops after the Global
+API key and tag colors. Attendees publish the data, build passenger_state, flight_impact,
+and the recovery agent, and turn on Lightning Tables and RTCE themselves
+(docs/flight-disruptions/workshop.md). Steps 1 to 5 above are the full demo, which
+--with-labs, --video-2, and the bots deploy. The choice is saved to credentials.env, so
+later runs stay in workshop mode, and a checkout that already has the full demo keeps it.
 
 AWS-only by design (RTCE + Flink Native Inference are AWS-only), so there is no
 cloud or region choice. Resource names use TF_VAR_resource_prefix from
@@ -36,7 +39,8 @@ RIVER-AIR-PROD-ENV and RIVER-AIR-PROD-CLUSTER.
 Usage:
   uv run deploy               # interactive; the only command a person needs
   uv run deploy --lab agentic-pit-decisions   # skip the lab question
-  uv run deploy --workshop    # interactive; the self-service workshop's starting point
+  uv run deploy --with-labs   # presenters: prebuild what attendees write (the full Flight Disruptions demo)
+  uv run deploy --workshop    # the Flight Disruptions workshop without the lab question
   uv run deploy --automated   # bots: non-interactive from credentials.env, registers Claude Code
   uv run deploy --testing     # bots: non-interactive from credentials.env, no MCP registration
 """
@@ -180,24 +184,37 @@ def _deploy(root, targets, video_2: bool = False) -> None:
     print("\n✓ All deployments completed successfully!")
 
 
-def _workshop_mode(requested: bool, creds_file, creds: dict) -> bool:
-    """True for a workshop deploy, asked for now or earlier in this checkout; saved so later runs stay in it.
+def _workshop_mode(requested: bool, full: bool, creds_file, creds: dict, default: bool = True) -> bool:
+    """True for a Flight Disruptions workshop deploy; saved so later runs stay in it.
 
-    A checkout with a full deployment can't switch, because a workshop apply destroys what the full one
-    built; `uv run destroy` clears the choice.
+    The workshop is the default (bots pass default=False), --workshop asks for it, and full (--with-labs or
+    --video-2) asks for the full demo. A checkout can't switch either way: a workshop apply destroys what the
+    full one built, and a full apply collides with the tables attendees created. `uv run destroy` clears it.
     """
     if creds.get(WORKSHOP) == "true":
+        if full:
+            sys.exit(
+                "This checkout has the workshop, where attendees build the pipeline themselves. "
+                "Run `uv run destroy` first, or deploy the full demo from another clone."
+            )
         return True
-    if not requested:
-        return False
     if (creds_file.parent / "terraform" / "airline-demo" / "terraform.tfstate").exists():
-        sys.exit(
-            "This checkout already has a full deployment, which --workshop would partly destroy. "
-            "Run `uv run destroy` first, or deploy the workshop from another clone."
-        )
+        if requested:
+            sys.exit(
+                "This checkout already has a full deployment, which --workshop would partly destroy. "
+                "Run `uv run destroy` first, or deploy the workshop from another clone."
+            )
+        return False
+    if full or not (requested or default):
+        return False
     _save_env_safe(creds_file, WORKSHOP, "true")
     creds[WORKSHOP] = "true"
     return True
+
+
+def _workshop_saved(args, creds: dict) -> bool:
+    """--workshop, now or on an earlier run: deploy only Flight Disruptions without asking which lab."""
+    return args.workshop or creds.get(WORKSHOP) == "true"
 
 
 def _targets(labs: list[str]) -> list[str]:
@@ -207,20 +224,22 @@ def _targets(labs: list[str]) -> list[str]:
 def _select_labs(requested: str | None, creds_file, creds: dict, workshop: bool, interactive: bool) -> list[str]:
     """The labs to deploy: --lab, else asked (interactive), else the saved choice. Saved for the next run.
 
-    The workshop is Flight Disruptions', so it never asks. Bots with nothing saved get Flight Disruptions,
+    The workshop is Flight Disruptions', so it never asks; it keeps Pit Decisions when the last run picked
+    both. Bots with nothing saved get Flight Disruptions,
     as before this repo had a second lab.
     """
     saved = [lab for lab in (creds.get(DEPLOY_LABS) or "").split(",") if lab in LABS]
     if requested:
         labs = list(LABS) if requested == "both" else [requested]
     elif workshop:
-        labs = [FLIGHT_DISRUPTIONS]
+        labs = saved if FLIGHT_DISRUPTIONS in saved else [FLIGHT_DISRUPTIONS]
     elif not interactive:
         labs = saved or [FLIGHT_DISRUPTIONS]
     else:
         options = [*(name for name, _ in LABS.values()), "Both"]
         default = options[-1] if not saved or len(saved) == len(LABS) else LABS[saved[0]][0]
-        choice = prompt_choice(f"Which lab do you want to deploy? (last time: {default})", options)
+        last_time = f" (last time: {default})" if saved else ""
+        choice = prompt_choice(f"Which lab do you want to deploy?{last_time}", options)
         labs = list(LABS) if choice == "Both" else [lab for lab, (name, _) in LABS.items() if name == choice]
     if workshop and FLIGHT_DISRUPTIONS not in labs:
         sys.exit("--workshop deploys the Flight Disruptions lab; drop --lab or pick flight-disruptions.")
@@ -239,12 +258,13 @@ def main():
     parser.add_argument(
         "--with-labs",
         action="store_true",
-        help="Agentic Pit Decisions: also build Steps 1 and 3 (car_state, the agent, pit_decisions) for a demo",
+        help="Prebuild what attendees write, for a demo: Flight Disruptions' full pipeline, stream, agent, and RTCE; "
+        "Agentic Pit Decisions' Steps 1 and 3 (car_state, the agent, pit_decisions)",
     )
     parser.add_argument(
         "--workshop",
         action="store_true",
-        help="Deploy the self-service workshop's starting point (docs/flight-disruptions/workshop.md)",
+        help="Deploy only the Flight Disruptions workshop, skipping the lab question",
     )
     parser.add_argument(
         "--automated",
@@ -262,8 +282,8 @@ def main():
     args = parser.parse_args()
     if args.automated and args.testing:
         parser.error("--automated and --testing are mutually exclusive")
-    if args.workshop and args.video_2:
-        parser.error("--workshop and --video-2 are mutually exclusive")
+    if args.workshop and (args.video_2 or args.with_labs):
+        parser.error("--workshop deploys the starting point; drop --with-labs and --video-2")
     if args.speed <= 0:
         parser.error("--speed must be greater than 0")
 
@@ -295,8 +315,10 @@ def main():
 
         region = creds.get("TF_VAR_cloud_region", DEFAULT_REGION) or DEFAULT_REGION
         prefix = creds.get("TF_VAR_resource_prefix", "") or ""
-        workshop = _workshop_mode(args.workshop, creds_file, creds)
-        labs = _select_labs(args.lab, creds_file, creds, workshop, interactive=False)
+        labs = _select_labs(args.lab, creds_file, creds, _workshop_saved(args, creds), interactive=False)
+        workshop = FLIGHT_DISRUPTIONS in labs and _workshop_mode(
+            args.workshop, args.with_labs or args.video_2, creds_file, creds, default=False
+        )
         _flush_pending_writes(creds_file)
         ensure_confluent_login(creds)
         print(
@@ -318,11 +340,13 @@ def main():
 
     # ---- Interactive -----------------------------------------------------
     creds_file, creds = load_or_create_credentials_file(root)
-    workshop = _workshop_mode(args.workshop, creds_file, creds)
-    labs = _select_labs(args.lab, creds_file, creds, workshop, interactive=True)
+    labs = _select_labs(args.lab, creds_file, creds, _workshop_saved(args, creds), interactive=True)
     flights = FLIGHT_DISRUPTIONS in labs
+    workshop = flights and _workshop_mode(args.workshop, args.with_labs or args.video_2, creds_file, creds)
     if workshop:
         print("\nWorkshop mode: deploys the source feeds only; docs/flight-disruptions/workshop.md builds the rest.")
+    elif flights:
+        print("\nFull demo: deploys the whole Flight Disruptions pipeline, stream, and recovery agent.")
 
     # Confluent Cloud login (saved for auto-login). A saved login that stopped working is asked for again.
     prompted = False
@@ -510,11 +534,11 @@ def _finish_workshop(root) -> None:
     print("\n=== Creating the Lightning and RTCE API key ===")
     creds_file = root / "credentials.env"
     if not setup_rtce.ensure_global_key(creds_file, dotenv_values(str(creds_file))):
-        print("⚠ No Global API key yet. Rerun `uv run deploy --workshop` to try again.")
+        print("⚠ No Global API key yet. Rerun `uv run deploy` to try again.")
     print("\n=== Applying topic tag colors ===")
     apply_tag_colors(root)
     _print_env_name(root)
-    print('\n✓ Your workshop environment is ready. Next: "Start the data" in docs/flight-disruptions/workshop.md.')
+    print('\n✓ Your workshop environment is ready. Next: "Start the datagen" in docs/flight-disruptions/workshop.md.')
 
 
 def _finish_pit_decisions(root, with_labs: bool = False) -> bool:

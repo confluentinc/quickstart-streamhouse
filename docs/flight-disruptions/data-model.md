@@ -153,7 +153,7 @@ erDiagram
 
 ## Generator
 
-[`airport_datagen.py`](../../scripts/airport_datagen.py) runs behind `uv run airport-datagen`. `uv run deploy` publishes the same data and then starts the live stream in the background.
+[`airport_datagen.py`](../../scripts/airport_datagen.py) runs behind `uv run airport-datagen`. `uv run deploy --with-labs` publishes the same data and then starts the live stream in the background.
 
 ```bash
 uv run airport-datagen                 # 30 days of history + today, then stream live updates for 90 minutes
