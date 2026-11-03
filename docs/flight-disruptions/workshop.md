@@ -607,13 +607,15 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
 
 ## Lab 5 — Recover a passenger
 
-An agent or app working from data even a few minutes old would offer a hotel room that has already sold out.
+Now you see the recovery from the passenger's side. Some of the agent's offers include a room at the Grand Hyatt, which is selling out fast. An app working from stale data would book a room that's already gone.
 
-1. In the dashboard app, click **RA417-…**, then click a delayed passenger's seat. **Scroll to Passenger recovery**, which shows their two offers.
+With a Streamhouse architecture, that's not an issue: River Air's app always has the current state of hotel availability. It checks the rooms left with a Lightning Query when a passenger selects an offer, swaps in another hotel if the room is gone, and checks again at booking.
+
+1. In the dashboard app, click the **RA417-…** flight, then click a delayed passenger's seat. **Scroll to Passenger recovery**, which shows their two offers. **These offers come from the agent you built!**
 
 <img src="../images/flight-disruptions/dashboard-passenger-hotel-options.png" alt="Hotel options and Passenger recovery in the app, with the Grand Hyatt sold out and one passenger&#x27;s two offers" width="750">
 
-2. Watch the Grand Hyatt count down in **Hotel options**.
+2. Watch the Grand Hyatt count down in **Hotel options**. The hotel partner's feed updates each hotel's rooms left every 15 seconds, and the dashboard shows them in real time using **Lightning Queries** on `hotel_inventory`.
 
 3. Wait until **Hotel options** shows the Grand Hyatt sold out. Then click **Select** on the passenger's Grand Hyatt offer.
 
