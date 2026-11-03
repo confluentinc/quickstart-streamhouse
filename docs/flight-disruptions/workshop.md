@@ -307,8 +307,10 @@ Enabling Lightning Tables for a topic does two things. Confluent keeps a low-lat
     - **Operations** lists today's flights. Status and delay come straight from `flight_status`, so they change within seconds; **At risk** comes from Flink's `flight_impact`.
     - **Biggest delays** lists the ten latest flights. RA417 (ORD → SFO, up to 115 minutes late) is the one tagged **Biggest impact**, with **At risk 150**: other flights are later, but none strands as many passengers.
     - Click **RA417-…**. The seat map colors every seat red (at risk), green (not at risk), or grey (open). Hover a seat to see that passenger's itinerary. The table below lists RA417's passengers, `HIGH` first.
+    - The flight's box on the map also shows **Live telemetry** that updates every second: altitude, speed, heading, position, and time to arrival.
 
     ![The live flight map with RA417 selected, showing its ORD to SFO route and late estimated arrival](../images/flight-disruptions/dashboard-flight-selection.png)
+    ![RA417's box on the live flight map with Live telemetry: altitude, ground speed, vertical speed, heading, position, miles to go, and time to arrival](../images/flight-disruptions/dashboard-live-telemetry.png)
     ![RA417's seat map, with at-risk seats in red and a passenger's itinerary shown on hover](../images/flight-disruptions/dashboard-seating-chart.png)
 
 
