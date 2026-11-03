@@ -316,6 +316,10 @@ Enabling Lightning Tables for a topic does two things. Confluent keeps a low-lat
 
 Every HIGH-risk passenger gets two offers: the next two flights to their final destination, with a hotel when the wait is overnight. The agent runs on Claude, hosted in Confluent Cloud, and reads live flights and hotel rooms through RTCE.
 
+> [!NOTE]
+>
+> You could set up this agent for passengers connecting in any city. This workshop sets it up for SFO, River Air's hub, to keep the scope small.
+
 1. Connect Flink to RTCE. **In your terminal window in the `quickstart-streamhouse` folder**, run:
 
     ```bash
