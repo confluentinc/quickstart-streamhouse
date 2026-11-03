@@ -205,9 +205,7 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
 
     <img src="../images/flight-disruptions/show-tables.png" alt="SHOW TABLES results: flight_status, hotel_inventory, passenger_itineraries, and passenger_recommendations" width="750">
 
-    **[4] Screenshot needs updating** (`show-tables.png`): shows `flight-recovery-…` names; attendees see `streamhouse-…`.
-
-3. Create `passenger_state`. Paste this whole statement into one cell and run it:
+3. Create `passenger_state`, which keeps every passenger's connection current and flags it `HIGH` risk when a delay leaves less than 45 minutes to make it. Paste this whole statement into one cell and run it:
 
     ```sql
     CREATE OR ALTER MATERIALIZED TABLE passenger_state (
@@ -587,8 +585,6 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
 
     <img src="../images/flight-disruptions/start-agent-1.png" alt="The first half of the INSERT INTO passenger_recommendations statement that runs the agent" width="750">
 
-    **[12] Screenshot needs updating** (`start-agent-1.png`): shows `flight-recovery-…` names; attendees see `streamhouse-…`.
-
     Scroll down in the cell to see the rest of the statement, now **Running**:
 
     <img src="../images/flight-disruptions/start-agent-2.png" alt="The second half of the statement, now Running" width="750">
@@ -619,11 +615,18 @@ An agent or app working from data even a few minutes old would offer a hotel roo
 
 2. Watch the Grand Hyatt count down in **Hotel options**.
 
-3. After the sellout, click **Select** on the Grand Hyatt offer. The app checks the hotel's rooms first, so the status bar at the bottom reads **Grand Hyatt at SFO is sold out. Now offering Hilton SFO Airport Bayfront.** That offer now has the Hilton ($249), and the passenger chooses between the Marriott and the Hilton.
+3. Wait until **Hotel options** shows the Grand Hyatt sold out. Then click **Select** on the passenger's Grand Hyatt offer.
 
-4. Click **Select** on either offer, then **Book**. 
+    Before selecting anything, the app checks the hotel's live room count. The Grand Hyatt has no rooms left, so the app swaps in another hotel:
 
-    The app re-checks the rooms, books the offer, and closes the other one. Your booking joins the count in **Booked**, which also climbs as other flights' passengers book.
+    - The status bar at the bottom reads **Grand Hyatt at SFO is sold out. Now offering Hilton SFO Airport Bayfront.**
+    - The offer now shows the Hilton at $249.
+
+    The passenger's two choices are now the Marriott and the Hilton.
+
+4. Pick one: click **Select** on the Marriott or the Hilton offer, then click **Book**.
+
+    The app checks the rooms one more time, books that offer, and closes the other one. **Booked** goes up by one. It also climbs on its own as passengers on other flights book.
 
 5. Back in your SQL workspace, see what changed:
 
@@ -693,9 +696,11 @@ winget install --id Anthropic.ClaudeCode -e
 
 RTCE gives your agent three tools, `listTopics`, `getMetadata`, and `queryData`, and exposes only topics whose context engine is on. Watch the tool calls: the answers come from your live data, not from the model's memory.
 
-## Clean up
+## Conclusion
 
 Congratulations! You built a Streamhouse. It turns raw flight and itinerary feeds into live connection risk with Flink, serves that state to an app through Lightning Tables, and gives a streaming agent the same live context through RTCE so it can rebook stranded passengers on its own. Every consumer works from one current view of the operation.
+
+## Clean up
 
 1. Stop the app and the generator: press **Ctrl-C** in their terminal windows.
 
@@ -717,16 +722,6 @@ Congratulations! You built a Streamhouse. It turns raw flight and itinerary feed
     ```
 
     </details>
-
-3. Delete the setup service account. In Confluent Cloud, open the **Administration** menu (top right), select **Accounts & access**, open **Service accounts**, and delete each `streamhouse-setup-sa-…` (one for every time you answered `y` to new keys).
-
-4. Delete `credentials.env`, which holds your password:
-
-    ```bash
-    rm credentials.env
-    ```
-
-    On Windows PowerShell, run `Remove-Item credentials.env` instead.
 
 ---
 
