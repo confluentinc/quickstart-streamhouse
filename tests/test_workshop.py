@@ -59,7 +59,8 @@ def test_guide_model_is_the_hosted_one_the_agent_uses():
 
 def test_statements_that_read_the_clock_run_in_utc():
     for block in _pipeline_blocks():
-        assert ("CURRENT_TIMESTAMP" in block) == block.startswith(UTC), block[:80]
+        reads_clock = "CURRENT_TIMESTAMP" in block or "$rowtime" in block
+        assert reads_clock == block.startswith(UTC), block[:80]
 
 
 def test_workshop_is_the_default_and_sticks_to_the_checkout(monkeypatch, tmp_path):

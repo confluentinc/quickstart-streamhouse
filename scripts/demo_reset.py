@@ -6,9 +6,9 @@ The reset
   1. stops the data stream and every statement that creates or runs a Demo 2 object,
   2. drops the agent's model, the RTCE tool, the agent, and the two staging tables,
   3. rebuilds the staging tables off screen (the agent's INSERT reads them),
-  4. deletes RA417's offers for today,
+  4. deletes today's offers for the agent's flights (RA417, RA183, and RA185),
   5. sends 200 hotel updates through the hotel-partner-webhook connector (when deployed), and
-  6. restarts the stream, so RA417's delay and the Grand Hyatt sellout play out again.
+  6. restarts the stream, so their delays and the Grand Hyatt sellout play out again.
 
 Then CREATE MODEL, CREATE TOOL, CREATE AGENT, and the AI_RUN_AGENT INSERT run live on screen
 (see the SQL for each in docs/flight-disruptions/demo-script-screens.md). Running the reset again is safe.
@@ -147,10 +147,12 @@ def demo_2_statements(statements: list[dict]) -> list[str]:
     return [s["name"] for s in found]
 
 
-def ra417_offer_keys(plan: airport_datagen.Plan) -> list[str]:
-    """Every offer key the agent can write for today's RA417."""
-    hero = plan.live.hero
-    return sorted(f"{p.key}-O{n}" for p in plan.live.passengers if p.inbound is hero and p.connecting for n in (1, 2))
+def agent_offer_keys(plan: airport_datagen.Plan) -> list[str]:
+    """Every offer key the agent can write for today's agent flights."""
+    agent = {f.key for f in plan.live.agent_flights}
+    return sorted(
+        f"{p.key}-O{n}" for p in plan.live.passengers if p.inbound.key in agent and p.connecting for n in (1, 2)
+    )
 
 
 def _forget_in_terraform(demo, keep_staging: bool = False) -> None:
@@ -194,12 +196,12 @@ def reset(root, flink: Flink, speed: float = 1.0) -> None:
 
     start = airport_datagen._clock(None)
     plan = airport_datagen.build_plan(start, history=False)
-    keys = ra417_offer_keys(plan)
+    keys = agent_offer_keys(plan)
     publisher = airport_datagen.Publisher(airport_datagen.extract_kafka_credentials("aws", root), dry_run=False)
     for key in keys:
         publisher.publish(airport_datagen.OFFERS, key, None)
     publisher.flush()
-    print(f"Deleted {len(keys)} RA417 offer keys for today")
+    print(f"Deleted {len(keys)} offer keys for today's agent flights")
 
     if publisher.webhook:
         print("Sending the morning's hotel updates through the hotel-partner-webhook connector...")
@@ -281,7 +283,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         print(
             f"This drops Demo 2's agent, tool, model, and staging tables in "
-            f"{core['confluent_environment_display_name']}, deletes RA417's offers, and restarts the stream."
+            f"{core['confluent_environment_display_name']}, deletes the agent flights' offers, and restarts the stream."
         )
     if not args.yes and input("Continue? (y/n): ").strip().lower() != "y":
         sys.exit("Cancelled.")

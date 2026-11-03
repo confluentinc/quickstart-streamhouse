@@ -98,3 +98,7 @@ ignore = [
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.uv]
+# cryptography 49+ ships no Intel macOS wheel, so Intel Macs would compile it from source and fail.
+constraint-dependencies = ["cryptography<49"]

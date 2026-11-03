@@ -24,7 +24,7 @@ In this workshop, you deploy a **Streamhouse** architecture on Confluent Cloud t
 | [Lab 2](#lab-2--compute-connection-risk-with-flink) | 10 | Compute every passenger's connection risk with Flink |
 | [Lab 3](#lab-3--power-a-live-operations-dashboard-with-lightning-tables) | 10 | Turn on Lightning Tables, then open the operations dashboard |
 | [Lab 4](#lab-4--build-the-recovery-agent) | 10 | Build the recovery agent |
-| [Lab 5](#lab-5--recover-a-passenger) | 5 | Rebook a passenger when their hotel sells out |
+| [Lab 5](#lab-5--recover-a-passenger) | 5 | Watch hotel rooms change live, then rebook a passenger |
 | [Challenge](#-optional-challenge--ask-your-coding-agent-about-the-live-operation) | optional | Ask Claude Code or Codex about the live operation over MCP |
 | [Clean up](#clean-up) | 5 | Tear everything down |
 
@@ -201,7 +201,7 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
     | `flight_status` | One row per flight: route, scheduled and estimated time, status |
     | `passenger_itineraries` | One row per passenger: inbound flight and seat, connecting flight and seat (null when the trip ends at SFO) |
     | `hotel_inventory` | One row per hotel: rooms left and nightly rate |
-    | `passenger_recommendations` | The rebooking offers. The generator writes every other flight's, and we'll create the agent for flight RA417's recommendations in Lab 4 |
+    | `passenger_recommendations` | The rebooking offers. The generator writes most flights', and in Lab 4 we'll create the agent that writes them for RA417 and two later delayed flights, RA183 and RA185 |
 
     <img src="../images/flight-disruptions/show-tables.png" alt="SHOW TABLES results: flight_status, hotel_inventory, passenger_itineraries, and passenger_recommendations" width="750">
 
@@ -217,6 +217,7 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
       final_destination STRING,
       connection_minutes INT,
       risk STRING,
+      inbound_estimated_time TIMESTAMP(3),
       PRIMARY KEY (`key`) NOT ENFORCED
     ) DISTRIBUTED BY (`key`) INTO 1 BUCKETS
     WITH (
@@ -238,7 +239,8 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
         WHEN p.connecting_flight_id IS NULL THEN 'NO_CONNECTION'
         WHEN TIMESTAMPDIFF(MINUTE, inbound.estimated_time, onward.estimated_time) < 45 THEN 'HIGH'
         ELSE 'OK'
-      END AS risk
+      END AS risk,
+      inbound.estimated_time AS inbound_estimated_time
     FROM passenger_itineraries p
     JOIN flight_status inbound ON p.inbound_flight_id = inbound.`key`
     LEFT JOIN flight_status onward ON p.connecting_flight_id = onward.`key`;
@@ -375,8 +377,10 @@ One click per topic does it. Enabling a topic's **Lightning Table** keeps a low-
     - **Operations** lists today's flights. Status and delay come straight from `flight_status`, so they change within seconds; **At risk** comes from Flink's `flight_impact`.
     - **Biggest delays** lists the ten latest flights. RA417 (ORD → SFO, up to 115 minutes late) is the one tagged **Biggest impact**.
     - Click **RA417-…**. The seat map colors every seat red (at risk), green (not at risk), or grey (open). Hover a seat to see that passenger's itinerary. The table below lists RA417's passengers, `HIGH` first.
+    - The flight's box on the map also shows **Live telemetry** that updates every second: altitude, speed, heading, position, and time to arrival.
 
     <img src="../images/flight-disruptions/dashboard-flight-selection.png" alt="The live flight map with RA417 selected, showing its ORD to SFO route and late estimated arrival" width="750">
+    <img src="../images/flight-disruptions/dashboard-live-telemetry.png" alt="RA417&#x27;s box on the live flight map with Live telemetry: altitude, ground speed, vertical speed, heading, position, miles to go, and time to arrival" width="750">
 
     RA417's seat map is in the top-right corner. Hover a seat to see that passenger's itinerary:
 
@@ -387,6 +391,12 @@ One click per topic does it. Enabling a topic's **Lightning Table** keeps a low-
 Now for River Air's second challenge. RA417 is running almost two hours late, 150 passengers are about to miss their connections, and the Grand Hyatt's rooms are going fast. A team working through them one call at a time won't rebook everyone before the hotels sell out. **An agent can!**
 
 In this lab, you build a streaming agent that runs inside Flink, on Claude hosted in Confluent Cloud. The moment a passenger turns HIGH risk, it checks live flights and hotel rooms through the Real-Time Context Engine (RTCE) and writes two rebooking offers: the next two flights to their final destination, with a hotel when the wait is overnight. No batch job, no polling, and no model keys to manage: the agent itself is a few SQL statements.
+
+> [!NOTE]
+>
+> You could set up this agent for passengers connecting in any city. This workshop sets it up for SFO, River Air's hub, to keep the scope small.
+>
+> For the same reason, the agent handles only three of today's delayed flights: RA417, RA183, and RA185, picked by the flight-number filter in `impacted_passengers` in step 2. It could handle every flight, but then RA417's offers would wait behind the rest of the day's delayed passengers. The data generator writes the other flights' offers.
 
 1. Connect Flink to RTCE. **In your terminal window in the `quickstart-streamhouse` folder**, run:
 
@@ -410,7 +420,8 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
       inbound_flight_id STRING,
       connecting_flight_id STRING,
       final_destination STRING,
-      risk STRING
+      risk STRING,
+      inbound_estimated_time TIMESTAMP(3)
     ) DISTRIBUTED BY (`key`) INTO 4 BUCKETS
     WITH (
       'changelog.mode' = 'append',
@@ -423,7 +434,8 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
       inbound_flight_id,
       connecting_flight_id,
       final_destination,
-      risk
+      risk,
+      inbound_estimated_time
     FROM TO_CHANGELOG(
       input      => TABLE passenger_state PARTITION BY `key`,
       op_mapping => MAP['INSERT, UPDATE_AFTER', 'UPSERT']
@@ -431,7 +443,7 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
     ```
     <img src="../images/flight-disruptions/passenger-state-changes-creation.png" alt="The passenger_state_changes statement, with Successfully created materialized table passenger_state_changes" width="750">
 
-    `impacted_passengers` keeps one row per RA417 passenger, from the moment they first turn `HIGH`. This is the agent's to-do list (the generator writes offers for every other flight):
+    `impacted_passengers` keeps one row per passenger on RA417, RA183, and RA185, from the moment they first turn `HIGH` while their inbound flight is still due to land. This is the agent's to-do list (the generator writes offers for every other flight):
 
     ```sql
     SET 'sql.local-time-zone' = 'UTC';
@@ -457,7 +469,8 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
         CAST(MIN($rowtime) AS TIMESTAMP(3)) AS impacted_at
       FROM passenger_state_changes
       WHERE risk = 'HIGH'
-        AND inbound_flight_id = CONCAT('RA417-', DATE_FORMAT(CURRENT_TIMESTAMP, 'yyyyMMdd'))
+        AND SPLIT_INDEX(inbound_flight_id, '-', 0) IN ('RA417', 'RA183', 'RA185')
+        AND CAST($rowtime AS TIMESTAMP(3)) < inbound_estimated_time
       GROUP BY `key`, inbound_flight_id, connecting_flight_id, final_destination
     )
     SELECT `key`, inbound_flight_id, connecting_flight_id, final_destination, impacted_at
@@ -601,7 +614,7 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
     WHERE passenger_id LIKE 'P-____-417-%';
     ```
 
-    Within a few minutes, each of RA417's 150 at-risk passengers has two offers for tomorrow morning: the first with the Grand Hyatt at SFO ($329), the second with the SFO Airport Marriott Waterfront ($229). If the Grand Hyatt had already sold out when your agent ran, it offers the Marriott and the Hilton instead.
+    Within a few minutes, each of RA417's 150 at-risk passengers has two offers for tomorrow morning: the first with the Grand Hyatt at SFO ($329), the second with the SFO Airport Marriott Waterfront ($229). If the Grand Hyatt had already sold out when your agent ran, it offers the Marriott and the Hilton instead. The agent also writes offers for RA183 from Boston (40 passengers, who turn HIGH 26 to 32 minutes into the stream) and RA185 from Las Vegas (30 passengers, 52 to 55 minutes in, after the Grand Hyatt sells out, so they get the Marriott and the Hilton). To see them, change `417` in the query to `183` or `185`.
 
     <img src="../images/flight-disruptions/passenger-recommendations-query.png" alt="Query results from passenger_recommendations: RA417 passengers&#x27; offers with the Grand Hyatt at SFO and the SFO Airport Marriott Waterfront" width="750">
 
@@ -615,22 +628,20 @@ With a Streamhouse architecture, that's not an issue: River Air's app always has
 
 <img src="../images/flight-disruptions/dashboard-passenger-hotel-options.png" alt="Hotel options and Passenger recovery in the app, with the Grand Hyatt sold out and one passenger&#x27;s two offers" width="750">
 
-2. Watch the Grand Hyatt count down in **Hotel options**. The hotel partner's feed updates each hotel's rooms left every 15 seconds, and the dashboard shows them in real time using **Lightning Queries** on `hotel_inventory`.
+2. Watch the Grand Hyatt in **Hotel options** for a minute or so. The hotel partner's feed updates each hotel's rooms left every 15 seconds, and the dashboard shows them in real time using **Lightning Queries** on `hotel_inventory`. You don't need to wait for it to sell out.
 
-3. Wait until **Hotel options** shows the Grand Hyatt sold out. Then click **Select** on the passenger's Grand Hyatt offer.
+3. Click **Select** on either offer, then click **Book**.
 
-    Before selecting anything, the app checks the hotel's live room count. The Grand Hyatt has no rooms left, so the app swaps in another hotel:
+    The app checks the hotel's live room count at each click, books that offer, and closes the other one. **Booked** goes up by one. It also climbs on its own as passengers on other flights book.
+
+    If the Grand Hyatt has already sold out when you select it, the app swaps in another hotel:
 
     - The status bar at the bottom reads **Grand Hyatt at SFO is sold out. Now offering Hilton SFO Airport Bayfront.**
     - The offer now shows the Hilton at $249.
 
-    The passenger's two choices are now the Marriott and the Hilton.
+    The passenger's two choices are then the Marriott and the Hilton.
 
-4. Pick one: click **Select** on the Marriott or the Hilton offer, then click **Book**.
-
-    The app checks the rooms one more time, books that offer, and closes the other one. **Booked** goes up by one. It also climbs on its own as passengers on other flights book.
-
-5. Back in your SQL workspace, see what changed:
+4. Back in your SQL workspace, see what changed:
 
     ```sql
     SELECT `key`, recommended_flight_id, hotel_name, status
@@ -639,10 +650,6 @@ With a Streamhouse architecture, that's not an issue: River Air's app always has
     ```
 
     <img src="../images/flight-disruptions/passenger-hotel-booking.png" alt="Query results with one RA417 passenger&#x27;s offers: one BOOKED, the other CLOSED" width="750">
-
-> [!NOTE]
->
-> The Grand Hyatt sells out about 40 minutes after the stream starts. If it still has rooms when you reach step 3, book another passenger in the meantime, or watch its rooms count down in **Hotel options**.
 
 ## 🧩 (Optional) Challenge — Ask your coding agent about the live operation
 

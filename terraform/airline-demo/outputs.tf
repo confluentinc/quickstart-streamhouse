@@ -10,7 +10,7 @@ output "served_topics" {
 
 output "recovery_agent_enabled" {
   value       = local.agent_enabled || var.workshop
-  description = "True when the recovery agent writes RA417's live offers, whether Terraform runs it or workshop attendees create it; the generator writes all the others"
+  description = "True when the recovery agent writes the live offers for RA417, RA183, and RA185, whether Terraform runs it or workshop attendees create it; the generator writes all the others"
 }
 
 output "tableflow_topics" {

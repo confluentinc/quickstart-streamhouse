@@ -8,6 +8,7 @@ CREATE OR ALTER MATERIALIZED TABLE passenger_state (
   final_destination STRING,
   connection_minutes INT,
   risk STRING,
+  inbound_estimated_time TIMESTAMP(3),
   PRIMARY KEY (`key`) NOT ENFORCED
 ) DISTRIBUTED BY (`key`) INTO 1 BUCKETS
 WITH (
@@ -29,7 +30,8 @@ AS SELECT
     WHEN p.connecting_flight_id IS NULL THEN 'NO_CONNECTION'
     WHEN TIMESTAMPDIFF(MINUTE, inbound.estimated_time, onward.estimated_time) < 45 THEN 'HIGH'
     ELSE 'OK'
-  END AS risk
+  END AS risk,
+  inbound.estimated_time AS inbound_estimated_time
 FROM passenger_itineraries p
 JOIN flight_status inbound ON p.inbound_flight_id = inbound.`key`
 LEFT JOIN flight_status onward ON p.connecting_flight_id = onward.`key`;
