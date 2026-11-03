@@ -642,7 +642,7 @@ With a Streamhouse architecture, that's not an issue: River Air's app always has
 
 > [!NOTE]
 >
-> - **Ahead of the sellout?** Book another passenger in the meantime, or watch the Grand Hyatt's rooms run out in **Hotel options**.
+> The Grand Hyatt sells out about 40 minutes after the stream starts. If it still has rooms when you reach step 3, book another passenger in the meantime, or watch its rooms count down in **Hotel options**.
 
 ## 🧩 (Optional) Challenge — Ask your coding agent about the live operation
 
