@@ -123,9 +123,11 @@ It publishes today's 180 flights, about 13,000 passenger itineraries, tomorrow's
 
 River Air's data comes from different systems: itineraries from ticketing, flight status from the airports' operational databases, and hotel rooms from a partner. Let's look at them as they arrive.
 
-1. Open [Confluent Cloud](https://confluent.cloud). Select **Environments**, then your environment (`streamhouse-…-env`), then **Clusters** and your cluster.
+1. Open [Confluent Cloud](https://confluent.cloud). Select **Environments**, then your environment (`flight-recovery-…-env`), then **Clusters** and your cluster.
 
 2. Select **Topics**. You see the four topics deploy created, each tagged with the kind of data it holds: `flight_status`, `passenger_itineraries`, `hotel_inventory`, and `passenger_recommendations`.
+
+![The cluster's Topics list with the four demo topics: flight_status, hotel_inventory, passenger_itineraries, and passenger_recommendations](../images/flight-disruptions/topics-view.png)
 
 3. Explore the topics by clicking a topic name, then selecting **Messages** to view some of the incoming messages, their keys, and values. 
 
@@ -139,6 +141,8 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
 
 ![The Compute pools tab under Flink, with the running streamhouse compute pool and its SQL Workspace button](../images/flight-disruptions/compute-pool-view.png)
 
+![A new SQL workspace with the catalog set to the environment and the Use database menu open on the cluster](../images/flight-disruptions/database-selection.png)
+
 2. Check the source tables:
 
     ```sql
@@ -151,6 +155,8 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
     | `passenger_itineraries` | One row per passenger: inbound flight and seat, connecting flight and seat (null when the trip ends at SFO) |
     | `hotel_inventory` | One row per hotel: rooms left and nightly rate |
     | `passenger_recommendations` | The rebooking offers. The generator writes every other flight's, and we'll create the agent for flight RA417's recommendations in Lab 4 |
+
+    ![SHOW TABLES results: flight_status, hotel_inventory, passenger_itineraries, and passenger_recommendations](../images/flight-disruptions/show-tables.png)
 
 3. Create `passenger_state`. Paste this whole statement into one cell and run it:
 
@@ -193,6 +199,8 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
 
     This is a **materialized table**: one object that owns both the table and the continuous query that keeps it current. It joins each itinerary to its inbound flight and, when there is one, its connecting flight.
 
+![The passenger_state statement in the SQL workspace, with Successfully created materialized table passenger_state](../images/flight-disruptions/passenger-state-creation.png)
+
 4. In a new cell, create `flight_impact`, which keeps each flight's delay and counts its HIGH-risk passengers:
 
     ```sql
@@ -228,6 +236,8 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
       GROUP BY inbound_flight_id
     ) impact ON f.`key` = impact.inbound_flight_id;
     ```
+
+![The flight_impact statement in the SQL workspace, with Successfully created materialized table flight_impact](../images/flight-disruptions/flight-impact-creation.png)
 
 > [!WARNING]
 >
@@ -291,11 +301,15 @@ Enabling Lightning Tables for a topic does two things. Confluent keeps a low-lat
 
     It prints the three hotels' current rows and the round-trip time. Wait one minute, then run the command again and you'll see that the Grand Hyatt has fewer rooms.
 
+    ![Output of uv run setup-rtce --lightning hotel_inventory --run: the three hotels' rows and the round-trip time](../images/flight-disruptions/lightning-query-test.png)
+
 6. Open a **new terminal window** in the `quickstart-streamhouse` folder and start the dashboard app:
 
     ```bash
     uv run airport-app
     ```
+
+    ![Output of uv run airport-app, with Uvicorn running on http://127.0.0.1:8000](../images/flight-disruptions/uv-run-airport-app.png)
 
     Open [http://127.0.0.1:8000](http://127.0.0.1:8000). **Leave this terminal running too.**
 
@@ -305,7 +319,7 @@ Enabling Lightning Tables for a topic does two things. Confluent keeps a low-lat
 
     - **The counts bar** answers "what's our on-time performance today?" with **Flights today**, **Delayed**, **Passengers at risk**, and **Booked**.
     - **Operations** lists today's flights. Status and delay come straight from `flight_status`, so they change within seconds; **At risk** comes from Flink's `flight_impact`.
-    - **Biggest delays** lists the ten latest flights. RA417 (ORD → SFO, up to 115 minutes late) is the one tagged **Biggest impact**, with **At risk 150**: other flights are later, but none strands as many passengers.
+    - **Biggest delays** lists the ten latest flights. RA417 (ORD → SFO, up to 115 minutes late) is the one tagged **Biggest impact**.
     - Click **RA417-…**. The seat map colors every seat red (at risk), green (not at risk), or grey (open). Hover a seat to see that passenger's itinerary. The table below lists RA417's passengers, `HIGH` first.
 
     ![The live flight map with RA417 selected, showing its ORD to SFO route and late estimated arrival](../images/flight-disruptions/dashboard-flight-selection.png)
@@ -323,6 +337,8 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
     ```
 
     It creates a Flink connection named `rtce-connection` that points at your cluster's RTCE endpoint and signs in with the API key in `credentials.env`, so no secret appears in your SQL.
+
+    ![Output of uv run setup-rtce --agent-connection, confirming that the Flink connection rtce-connection points at the RTCE endpoint](../images/flight-disruptions/setup-rtce-agent-connection.png)
 
 2. Give the agent a feed of impacted passengers. `AI_RUN_AGENT` reads only append-only input, and `passenger_state` is an upsert table, so two staging tables turn its changes into new rows. 
 
@@ -353,6 +369,7 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
       op_mapping => MAP['INSERT, UPDATE_AFTER', 'UPSERT']
     );
     ```
+    ![The passenger_state_changes statement, with Successfully created materialized table passenger_state_changes](../images/flight-disruptions/passenger-state-changes-creation.png)
 
     ```sql
     SET 'sql.local-time-zone' = 'UTC';
@@ -387,6 +404,7 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
       op_mapping => MAP['INSERT', 'FIRST_HIGH']
     );
     ```
+    ![The impacted_passengers statement, with Successfully created materialized table impacted_passengers](../images/flight-disruptions/impacted-passengers-creation.png)
 
 
 3. Create the model, Claude Sonnet hosted in Confluent Cloud. There's no connection or key to manage, and your data stays in Confluent:
@@ -403,6 +421,7 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
       'confluent.params.max_tokens' = '1024'
     );
     ```
+    ![The CREATE MODEL statement, with Model 'passenger_recovery_model' with version '1' created](../images/flight-disruptions/passenger-recovery-model-creation.png)
 
 4. Create the tool that gives the agent live context. It exposes RTCE's `getMetadata` and `queryData` tools through `rtce-connection`:
 
@@ -415,6 +434,7 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
       'request_timeout' = '30'
     );
     ```
+    ![The CREATE TOOL statement for hotel_inventory_live_context, Completed](../images/flight-disruptions/hotel-inventory-tool-creation.png)
 
 5. Create the agent:
 
@@ -443,6 +463,7 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
       'handle_exception' = 'continue'
     );
     ```
+    ![The CREATE AGENT statement for passenger_recovery_agent, Completed](../images/flight-disruptions/create-agent.png)
 
     Its prompt has three rules: 1. Offer the first two departures to the passenger's destination at least 45 minutes after they land 2. Add a hotel when the flight leaves six or more hours later, and 3. Take hotels in order of preference, skipping any with no rooms left.
 
@@ -451,6 +472,7 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
     ```sql
     SHOW AGENTS;
     ```
+    ![SHOW AGENTS results listing passenger_recovery_agent](../images/flight-disruptions/show-agents.png)
 
 7. Start the agent:
 
@@ -516,6 +538,9 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
     FROM offers
     WHERE recommended_flight_id IS NOT NULL;
     ```
+
+    ![The first half of the INSERT INTO passenger_recommendations statement that runs the agent](../images/flight-disruptions/start-agent-1.png)
+    ![The second half of the statement, now Running](../images/flight-disruptions/start-agent-2.png)
 
 > [!WARNING]
 >
@@ -590,6 +615,8 @@ winget install --id Anthropic.ClaudeCode -e
 
     Choose Claude Code or Codex. It reuses your API key, connects every demo topic (and turns on any you skipped in Lab 3), and checks the connection. Restart your coding agent afterward.
 
+    ![Output of uv run setup-rtce: Claude Code chosen, RTCE turned on for passenger_state and flight_impact, and the MCP connection test passed](../images/flight-disruptions/setup-rtce.png)
+
 > [!NOTE]
 >
 > The connection can take a minute or two. In Claude Code, run `/mcp` and check that `confluent-streamhouse-rtce` shows as connected.
@@ -599,18 +626,18 @@ winget install --id Anthropic.ClaudeCode -e
     ```text
     What topics do I have access to in the Real-Time Context Engine?
     ```
+    ![Claude Code listing the six topics in the Real-Time Context Engine](../images/flight-disruptions/rtce-question-1.png)
 
     ```text
     Which flight today puts the most passengers at risk of missing a connection, and where are they headed?
     ```
+    ![Claude Code naming RA417 (ORD to SFO) as the flight with the most passengers at risk, with their connecting flights and destinations](../images/flight-disruptions/rtce-question-2.png)
 
     ```text
     How many rooms does each SFO hotel have left right now?
     ```
+    ![Claude Code listing each SFO hotel's rooms left and nightly rate, with the Grand Hyatt sold out](../images/flight-disruptions/rtce-question-3.png)
 
-    ```text
-    Which RA417 passengers have booked a hotel, and which hotel did they pick?
-    ```
 
 RTCE gives your agent three tools, `listTopics`, `getMetadata`, and `queryData`, and exposes only topics whose context engine is on. Watch the tool calls: the answers come from your live data, not from the model's memory.
 
