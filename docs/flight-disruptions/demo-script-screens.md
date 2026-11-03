@@ -98,7 +98,7 @@ Start the stream at least 40 minutes before scene 2.4.
 
 **Known limits**
 
-1. The agent handles only today's RA417, RA183, and RA185, the date taken from UTC when a passenger turns HIGH. The last of them, RA185, is finished by about +55, so start the stream before 23:00 UTC.
+1. The agent handles only RA417, RA183, and RA185, and only passengers who turn HIGH while their inbound flight is still due to land (`$rowtime` before `inbound_estimated_time`). That keeps out history days and earlier streams at any time of day, but `impacted_passengers` built after one of the three flights has landed skips its passengers; RA183 lands at about +136, RA185 at +144, and RA417 at +165.
 2. `impacted_at` is when a passenger's first HIGH row landed in `passenger_state_changes`. If that table or `impacted_passengers` is rebuilt, the rebuild time replaces it, and recovery times for the live day come out long. History days aren't affected.
 3. The agent runs about 40 s per flight and destination, one after another. That is fine for its three flights, whose 11, 6, and 3 destinations turn HIGH at different times. Every flight would add about 50 runs at the stream start, for passengers already HIGH from earlier in the day, and RA417's offers would wait behind them.
 4. Flink commits its results to Kafka about once a minute (exactly-once), and Lightning only sees committed data. So the **At risk** counts and seat-map colors trail the stream by up to a minute (about 20–25 s in rehearsal), while flight status, delays, hotel rooms, and the generator's bookings show within seconds. Restarting the stream republishes every itinerary, so Flink needs a few minutes to recompute every passenger before the seat maps settle.
@@ -203,7 +203,8 @@ CREATE OR ALTER MATERIALIZED TABLE passenger_state_changes (
   inbound_flight_id STRING,
   connecting_flight_id STRING,
   final_destination STRING,
-  risk STRING
+  risk STRING,
+  inbound_estimated_time TIMESTAMP(3)
 ) DISTRIBUTED BY (`key`) INTO 4 BUCKETS
 WITH (
   'changelog.mode' = 'append',
@@ -216,7 +217,8 @@ AS SELECT
   inbound_flight_id,
   connecting_flight_id,
   final_destination,
-  risk
+  risk,
+  inbound_estimated_time
 FROM TO_CHANGELOG(
   input      => TABLE passenger_state PARTITION BY `key`,
   op_mapping => MAP['INSERT, UPDATE_AFTER', 'UPSERT']
@@ -248,11 +250,8 @@ AS WITH first_high AS (
     CAST(MIN($rowtime) AS TIMESTAMP(3)) AS impacted_at
   FROM passenger_state_changes
   WHERE risk = 'HIGH'
-    AND inbound_flight_id IN (
-      CONCAT('RA417-', DATE_FORMAT(CURRENT_TIMESTAMP, 'yyyyMMdd')),
-      CONCAT('RA183-', DATE_FORMAT(CURRENT_TIMESTAMP, 'yyyyMMdd')),
-      CONCAT('RA185-', DATE_FORMAT(CURRENT_TIMESTAMP, 'yyyyMMdd'))
-    )
+    AND SPLIT_INDEX(inbound_flight_id, '-', 0) IN ('RA417', 'RA183', 'RA185')
+    AND CAST($rowtime AS TIMESTAMP(3)) < inbound_estimated_time
   GROUP BY `key`, inbound_flight_id, connecting_flight_id, final_destination
 )
 SELECT `key`, inbound_flight_id, connecting_flight_id, final_destination, impacted_at

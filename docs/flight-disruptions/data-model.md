@@ -78,13 +78,13 @@ No names, contact details, or preferences: the join and the risk rule don't need
 
 | Topic | Key | Columns | Producer and use |
 | --- | --- | --- | --- |
-| `passenger_state` | `passenger_id` | `inbound_flight_id`, `inbound_seat`, `connecting_flight_id`, `connecting_seat`, `final_destination`, `connection_minutes`, `risk` | Flink joins each itinerary to its inbound flight and (left join) its connecting flight, and keeps the itinerary's seats. `risk` is `HIGH` when the estimated connection is under 45 minutes, `OK` otherwise, and `NO_CONNECTION` when the trip ends at SFO. The app's passenger drill-down and the agent trigger read it. |
+| `passenger_state` | `passenger_id` | `inbound_flight_id`, `inbound_seat`, `connecting_flight_id`, `connecting_seat`, `final_destination`, `connection_minutes`, `risk`, `inbound_estimated_time` | Flink joins each itinerary to its inbound flight and (left join) its connecting flight, and keeps the itinerary's seats. `risk` is `HIGH` when the estimated connection is under 45 minutes, `OK` otherwise, and `NO_CONNECTION` when the trip ends at SFO. The app's passenger drill-down and the agent trigger read it. |
 | `flight_impact` | `flight_id` | `origin`, `destination`, `scheduled_time`, `status`, `delay_minutes`, `affected_passengers` | Flink computes the delay and counts `HIGH` passengers per inbound flight. The operations dashboard takes its at-risk counts from it, and each flight's status and delay from `flight_status`, which reaches Lightning within seconds rather than at Flink's once-a-minute commit. It is also the Iceberg table for question 1. |
 | `passenger_recommendations` | `offer_id` | `passenger_id`, `recommended_flight_id`, `hotel_name`, `status`, `hotel_cost`, `impacted_at`, `recommended_at` | Two offers (`{passenger_id}-O1`, `-O2`) per HIGH-risk passenger. `hotel_name` and `hotel_cost` are null for a same-day rebooking and set when the wait is six hours or more. Status moves `OFFERED` → `SELECTED` → `BOOKED`; the other offer becomes `CLOSED`. Offers nobody picks are `CLOSED` after 90 minutes. |
 
 Flink performs every join and aggregation. Lightning Tables only serves current rows, and RTCE/MCP gives a connected agent the same rows.
 
-**Internal staging table.** `passenger_state_changes` (key `passenger_id`; columns `inbound_flight_id`, `connecting_flight_id`, `final_destination`, `risk`) is an append-only copy of every `passenger_state` change, because `AI_RUN_AGENT` can't read an upsert table. `impacted_passengers` (same key; `inbound_flight_id`, `connecting_flight_id`, `final_destination`, `impacted_at`) keeps one row per RA417 passenger, the first time they turn HIGH; that change row's `$rowtime` is `impacted_at`. The agent runs once per final destination and gives every passenger in the group the same two offers. Neither table is a data product or on the architecture diagram.
+**Internal staging table.** `passenger_state_changes` (key `passenger_id`; columns `inbound_flight_id`, `connecting_flight_id`, `final_destination`, `risk`, `inbound_estimated_time`) is an append-only copy of every `passenger_state` change, because `AI_RUN_AGENT` can't read an upsert table. `impacted_passengers` (same key; `inbound_flight_id`, `connecting_flight_id`, `final_destination`, `impacted_at`) keeps one row per passenger on RA417, RA183, and RA185, the first time they turn HIGH while their inbound flight is still due to land (`$rowtime` before `inbound_estimated_time`), so history days never reach the agent; that change row's `$rowtime` is `impacted_at`. The agent runs once per final destination and gives every passenger in the group the same two offers. Neither table is a data product or on the architecture diagram.
 
 ## ERD
 
@@ -127,6 +127,7 @@ erDiagram
         string final_destination
         int connection_minutes
         string risk
+        timestamp inbound_estimated_time
     }
     flight_impact {
         string flight_id PK
