@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-Deploy the Streamhouse airline flight-recovery demo to Confluent Cloud.
+Deploy the Streamhouse labs to Confluent Cloud: Flight Disruptions, Agentic Pit Decisions, or both.
 
-Always runs, in order:
+Both labs share one environment, cluster, and Flink pool (terraform/core) and add their own
+Terraform root on top. The choice is asked once and saved to credentials.env (DEPLOY_LABS).
+
+Agentic Pit Decisions (terraform/agentic-pit-decisions): the race tables and Claude hosted in
+Confluent, then the Global API key, the lab's credential card, and the driver_race_history seed.
+
+Flight Disruptions runs, in order:
   1. terraform/core        — environment, cluster, Flink pool, service accounts,
                              API keys, RTCE reader, (optional) Bedrock connection.
   2. terraform/airline-demo — the River Air Flink pipeline (source tables,
@@ -17,7 +23,7 @@ Always runs, in order:
 With --workshop, steps 1 and 2 build only the three source feeds and
 passenger_recommendations, and deploy stops after the Global API key and tag colors:
 attendees publish the data, build passenger_state, flight_impact, and the recovery
-agent, and turn on Lightning Tables and RTCE themselves (docs/workshop.md). The
+agent, and turn on Lightning Tables and RTCE themselves (docs/flight-disruptions/workshop.md). The
 choice is saved to credentials.env, so later runs stay in workshop mode.
 
 AWS-only by design (RTCE + Flink Native Inference are AWS-only), so there is no
@@ -29,6 +35,7 @@ RIVER-AIR-PROD-ENV and RIVER-AIR-PROD-CLUSTER.
 
 Usage:
   uv run deploy               # interactive; the only command a person needs
+  uv run deploy --lab agentic-pit-decisions   # skip the lab question
   uv run deploy --workshop    # interactive; the self-service workshop's starting point
   uv run deploy --automated   # bots: non-interactive from credentials.env, registers Claude Code
   uv run deploy --testing     # bots: non-interactive from credentials.env, no MCP registration
@@ -53,11 +60,17 @@ from scripts.terraform import get_project_root, run_terraform_output
 from scripts.terraform_runner import run_terraform
 from scripts.tfvars import write_tfvars_for_deployment
 from scripts.topic_tags import apply_tag_colors
-from scripts.ui import prompt_with_default, prompt_yes_no
+from scripts.ui import prompt_choice, prompt_with_default, prompt_yes_no
 
 DEFAULT_REGION = "us-east-1"  # RTCE-supported; Confluent-hosted Claude available here
-DEFAULT_PREFIX = "flight-recovery"
-DEPLOY_TARGETS = ["core", "airline-demo"]
+DEFAULT_PREFIX = "streamhouse"
+# Lab id -> (display name, Terraform root). Both build on terraform/core.
+LABS = {
+    "flight-disruptions": ("Flight Disruptions", "airline-demo"),
+    "agentic-pit-decisions": ("Agentic Pit Decisions", "agentic-pit-decisions"),
+}
+FLIGHT_DISRUPTIONS, PIT_DECISIONS = LABS
+DEPLOY_LABS = "DEPLOY_LABS"  # credentials.env: the labs the last deploy chose, comma-separated
 WORKSHOP = "TF_VAR_workshop"  # credentials.env flag that keeps a checkout in workshop mode
 # The recovery agent's statements in terraform/airline-demo, applied once RTCE is up.
 AGENT_TARGETS = (
@@ -153,7 +166,7 @@ def _deploy(root, targets, video_2: bool = False) -> None:
     print("\n=== Starting Deployment ===")
     # A redeploy keeps the recovery agent when its RTCE connection already exists.
     # --video-2 never does: Demo 2 creates the agent on screen.
-    infra = setup_rtce.core_infra(root / "credentials.env")
+    infra = setup_rtce.core_infra(root / "credentials.env") if "airline-demo" in targets else None
     if not video_2 and infra and setup_rtce.agent_connection_exists(infra):
         os.environ["TF_VAR_enable_recovery_agent"] = "true"
     for env in targets:
@@ -178,19 +191,60 @@ def _workshop_mode(requested: bool, creds_file, creds: dict) -> bool:
     if not requested:
         return False
     if (creds_file.parent / "terraform" / "airline-demo" / "terraform.tfstate").exists():
-        sys.exit("This checkout already has a full deployment, which --workshop would partly destroy. "
-                 "Run `uv run destroy` first, or deploy the workshop from another clone.")
+        sys.exit(
+            "This checkout already has a full deployment, which --workshop would partly destroy. "
+            "Run `uv run destroy` first, or deploy the workshop from another clone."
+        )
     _save_env_safe(creds_file, WORKSHOP, "true")
     creds[WORKSHOP] = "true"
     return True
 
 
+def _targets(labs: list[str]) -> list[str]:
+    return ["core", *(LABS[lab][1] for lab in labs)]
+
+
+def _select_labs(requested: str | None, creds_file, creds: dict, workshop: bool, interactive: bool) -> list[str]:
+    """The labs to deploy: --lab, else asked (interactive), else the saved choice. Saved for the next run.
+
+    The workshop is Flight Disruptions', so it never asks. Bots with nothing saved get Flight Disruptions,
+    as before this repo had a second lab.
+    """
+    saved = [lab for lab in (creds.get(DEPLOY_LABS) or "").split(",") if lab in LABS]
+    if requested:
+        labs = list(LABS) if requested == "both" else [requested]
+    elif workshop:
+        labs = [FLIGHT_DISRUPTIONS]
+    elif not interactive:
+        labs = saved or [FLIGHT_DISRUPTIONS]
+    else:
+        options = [*(name for name, _ in LABS.values()), "Both"]
+        default = options[-1] if not saved or len(saved) == len(LABS) else LABS[saved[0]][0]
+        choice = prompt_choice(f"Which lab do you want to deploy? (last time: {default})", options)
+        labs = list(LABS) if choice == "Both" else [lab for lab, (name, _) in LABS.items() if name == choice]
+    if workshop and FLIGHT_DISRUPTIONS not in labs:
+        sys.exit("--workshop deploys the Flight Disruptions lab; drop --lab or pick flight-disruptions.")
+    _save_env_safe(creds_file, DEPLOY_LABS, ",".join(labs))
+    creds[DEPLOY_LABS] = ",".join(labs)
+    return labs
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Deploy the Streamhouse airline demo")
+    parser = argparse.ArgumentParser(description="Deploy the Streamhouse labs")
+    parser.add_argument(
+        "--lab",
+        choices=(*LABS, "both"),
+        help="Which lab to deploy (default: ask, then remember the answer in credentials.env)",
+    )
+    parser.add_argument(
+        "--with-labs",
+        action="store_true",
+        help="Agentic Pit Decisions: also build Steps 1 and 3 (car_state, the agent, pit_decisions) for a demo",
+    )
     parser.add_argument(
         "--workshop",
         action="store_true",
-        help="Deploy the self-service workshop's starting point (docs/workshop.md): the source feeds only",
+        help="Deploy the self-service workshop's starting point (docs/flight-disruptions/workshop.md)",
     )
     parser.add_argument(
         "--automated",
@@ -213,7 +267,7 @@ def main():
     if args.speed <= 0:
         parser.error("--speed must be greater than 0")
 
-    print("=== Streamhouse Airline Demo — Deploy ===\n")
+    print("=== Streamhouse Labs — Deploy ===\n")
     root = get_project_root()
     print(f"Project root: {root}")
 
@@ -242,25 +296,33 @@ def main():
         region = creds.get("TF_VAR_cloud_region", DEFAULT_REGION) or DEFAULT_REGION
         prefix = creds.get("TF_VAR_resource_prefix", "") or ""
         workshop = _workshop_mode(args.workshop, creds_file, creds)
+        labs = _select_labs(args.lab, creds_file, creds, workshop, interactive=False)
+        _flush_pending_writes(creds_file)
         ensure_confluent_login(creds)
-        print(f"✓ Credentials loaded. Region: {region}. Deploying: {', '.join(DEPLOY_TARGETS)}"
-              f"{' (workshop)' if workshop else ''}\n")
+        print(
+            f"✓ Credentials loaded. Region: {region}. Deploying: {', '.join(_targets(labs))}"
+            f"{' (workshop)' if workshop else ''}\n"
+        )
         write_tfvars_for_deployment(root, region, creds, resource_prefix=prefix)
         for key, value in creds.items():
             if value:
                 os.environ[key] = value
-        _deploy(root, DEPLOY_TARGETS, args.video_2)
+        _deploy(root, _targets(labs), args.video_2)
+        if PIT_DECISIONS in labs:
+            _finish_pit_decisions(root, args.with_labs)
         if workshop:
             _finish_workshop(root)
-        else:
+        elif FLIGHT_DISRUPTIONS in labs:
             _finish(root, "claude" if args.automated else "none", args.video_2, args.speed)
         return
 
     # ---- Interactive -----------------------------------------------------
     creds_file, creds = load_or_create_credentials_file(root)
     workshop = _workshop_mode(args.workshop, creds_file, creds)
+    labs = _select_labs(args.lab, creds_file, creds, workshop, interactive=True)
+    flights = FLIGHT_DISRUPTIONS in labs
     if workshop:
-        print("\nWorkshop mode: deploys the source feeds only; the labs in docs/workshop.md build the rest.")
+        print("\nWorkshop mode: deploys the source feeds only; docs/flight-disruptions/workshop.md builds the rest.")
 
     # Confluent Cloud login (saved for auto-login). A saved login that stopped working is asked for again.
     prompted = False
@@ -295,17 +357,15 @@ def main():
     if api_key and api_secret:
         print(f"Using the new Confluent Cloud API key {api_key}")
     else:
-        api_key = prompt_with_default(
-            "Confluent Cloud API Key", creds.get("TF_VAR_confluent_cloud_api_key", "")
-        )
+        api_key = prompt_with_default("Confluent Cloud API Key", creds.get("TF_VAR_confluent_cloud_api_key", ""))
         api_secret = prompt_with_default(
             "Confluent Cloud API Secret", creds.get("TF_VAR_confluent_cloud_api_secret", ""), secret=True
         )
     _save_env_safe(creds_file, "TF_VAR_confluent_cloud_api_key", api_key)
     _save_env_safe(creds_file, "TF_VAR_confluent_cloud_api_secret", api_secret)
 
-    # The workshop's agent runs on a Confluent-hosted model, and it has no Tableflow scene.
-    if not workshop:
+    # Both labs' agents run on a Confluent-hosted model; only Flight Disruptions has a Tableflow scene.
+    if flights and not workshop:
         _prompt_aws_credentials(creds_file, creds)
 
     _flush_pending_writes(creds_file)
@@ -317,18 +377,23 @@ def main():
     api_key_state = "set" if final_creds.get("TF_VAR_confluent_cloud_api_key") else "MISSING"
     print(f"Confluent Cloud API key: {api_key_state}")
     print(f"Confluent CLI auto-login: {'saved' if final_creds.get('CONFLUENT_EMAIL') else 'not saved'}")
-    if workshop:
+    print(f"Labs: {', '.join(LABS[lab][0] for lab in labs)}")
+    if PIT_DECISIONS in labs:
+        print("Pit strategy agent: Claude hosted in Confluent (no AWS credentials needed)")
+    if not flights:
+        print(f"Deploying: {', '.join(_targets(labs))}, then the lab's credential card and race history")
+    elif workshop:
         print("Workshop: source feeds only; you build the Flink tables and the agent, and turn on RTCE")
-        print(f"Deploying: {', '.join(DEPLOY_TARGETS)}")
+        print(f"Deploying: {', '.join(_targets(labs))}")
     else:
         print("Recovery agent: Claude hosted in Confluent (no AWS credentials needed)")
         analytics_state = (
             "ENABLED" if final_creds.get("TF_VAR_aws_tableflow_access_key") else "skipped (no Tableflow AWS creds)"
         )
         print(f"Tableflow S3/Glue analytics (Demo 3): {analytics_state}")
-        print(f"Deploying: {', '.join(DEPLOY_TARGETS)}, then demo data and RTCE")
+        print(f"Deploying: {', '.join(_targets(labs))}, then demo data and RTCE")
 
-    client = "none" if workshop else setup_rtce._pick_client()
+    client = "none" if workshop or not flights else setup_rtce._pick_client()
 
     print()
     if not prompt_yes_no("Ready to deploy?"):
@@ -339,9 +404,13 @@ def main():
     for key, value in final_creds.items():
         if value:
             os.environ[key] = value
-    _deploy(root, DEPLOY_TARGETS, args.video_2)
+    _deploy(root, _targets(labs), args.video_2)
+    if PIT_DECISIONS in labs:
+        _finish_pit_decisions(root, args.with_labs)
     if workshop:
         _finish_workshop(root)
+        return
+    if not flights:
         return
     _finish(root, client, args.video_2, args.speed)
     print()
@@ -433,7 +502,7 @@ def _finish(root, client: str, video_2: bool = False, speed: float = 1.0) -> Non
 
 
 def _finish_workshop(root) -> None:
-    """Stop where docs/workshop.md begins, adding only the Global API key the app reads Lightning with.
+    """Stop where docs/flight-disruptions/workshop.md begins, adding only the Global API key for Lightning reads.
 
     Attendees publish the data, build passenger_state, flight_impact, and the recovery agent, and turn on
     Lightning Tables and RTCE in the labs.
@@ -445,7 +514,48 @@ def _finish_workshop(root) -> None:
     print("\n=== Applying topic tag colors ===")
     apply_tag_colors(root)
     _print_env_name(root)
-    print("\n✓ Your workshop environment is ready. Next: \"Start the data\" in docs/workshop.md.")
+    print('\n✓ Your workshop environment is ready. Next: "Start the data" in docs/flight-disruptions/workshop.md.')
+
+
+def _finish_pit_decisions(root, with_labs: bool = False) -> bool:
+    """Write the Agentic Pit Decisions credential card and seed driver_race_history.
+
+    The card carries core's keys plus the Global API key RTCE queries need, so `uv run f1-race`,
+    `f1-pitwall`, and `f1-sql` need no flags.
+    """
+    from scripts.pit_decisions import card
+    from scripts.pit_decisions.labs import create_lab_objects
+    from scripts.pit_decisions.seed import ensure_driver_race_history
+
+    print("\n=== Agentic Pit Decisions: credential card and race history ===")
+    creds_file = root / "credentials.env"
+    creds = dotenv_values(str(creds_file))
+    if not setup_rtce.ensure_global_key(creds_file, creds):
+        print("⚠ No Global API key yet, so RTCE queries won't work. Rerun `uv run deploy` to try again.")
+    creds = dotenv_values(str(creds_file))
+    previous = card.card_path(root)
+    seconds = dotenv_values(previous).get("F1_SECONDS_PER_LAP") if previous.exists() else None
+    fields = card.card_fields(
+        run_terraform_output(root / "terraform" / "core" / "terraform.tfstate"),
+        creds.get("CONFLUENT_RTCE_API_KEY") or "",
+        creds.get("CONFLUENT_RTCE_API_SECRET") or "",
+        int(seconds or card.DEFAULT_SECONDS_PER_LAP),
+    )
+    path = card.write_card(root, fields)
+    print(f"✓ Wrote the credential card {path.relative_to(root)}")
+    lab_card = {f"F1_{key.upper()}": value for key, value in fields.items()}
+    ok = ensure_driver_race_history(lab_card, root)
+    if ok and with_labs:
+        print("\n=== Building Steps 1 and 3 ===")
+        ok = create_lab_objects(lab_card, root)
+    print(f"""
+✓ Agentic Pit Decisions is ready{"" if ok else " (see the warnings above)"}.
+  In the SQL workspace, use catalog {fields["catalog"]} and database {fields["database"]}.
+  In two terminals:
+     uv run f1-race       # {fields["seconds_per_lap"]}s/lap race feed
+     uv run f1-pitwall    # dashboard at http://localhost:8001
+  Then follow docs/agentic-pit-decisions/walkthrough.md.""")
+    return ok
 
 
 def print_video_2_clock(clock, speed: float) -> None:
@@ -471,8 +581,10 @@ def _start_agent(root, targets=AGENT_TARGETS) -> bool:
         os.environ["TF_VAR_enable_recovery_agent"] = "true"
         started = run_terraform(root / "terraform" / "airline-demo", targets=targets)
     if not started:
-        print("⚠ The recovery agent did not start, so RA417 has no offers yet. "
-              "Run `uv run airport-datagen --offers generator` to have the generator write them.")
+        print(
+            "⚠ The recovery agent did not start, so RA417 has no offers yet. "
+            "Run `uv run airport-datagen --offers generator` to have the generator write them."
+        )
     return started
 
 
@@ -488,12 +600,20 @@ def _run_datagen(root, agent: bool, history: bool = True, speed: float = 1.0, st
     from .terraform import extract_kafka_credentials
 
     credentials = extract_kafka_credentials("aws", root)
-    registry = SchemaRegistryClient({
-        "url": credentials["schema_registry_url"],
-        "basic.auth.user.info": (
-            f"{credentials['schema_registry_api_key']}:{credentials['schema_registry_api_secret']}")})
-    subjects = ("flight_status-value", "passenger_itineraries-value",
-                "hotel_inventory-value", "passenger_recommendations-value")
+    registry = SchemaRegistryClient(
+        {
+            "url": credentials["schema_registry_url"],
+            "basic.auth.user.info": (
+                f"{credentials['schema_registry_api_key']}:{credentials['schema_registry_api_secret']}"
+            ),
+        }
+    )
+    subjects = (
+        "flight_status-value",
+        "passenger_itineraries-value",
+        "hotel_inventory-value",
+        "passenger_recommendations-value",
+    )
     for attempt in range(30):
         try:
             for subject in subjects:
@@ -512,12 +632,29 @@ def _run_datagen(root, agent: bool, history: bool = True, speed: float = 1.0, st
     log.parent.mkdir(exist_ok=True)
     with open(log, "a", encoding="utf-8") as out:
         subprocess.Popen(
-            ["uv", "run", "airport-datagen", "--now", start.isoformat(), "--stream-only", "--offers", offers,
-             "--speed", str(speed)],
-            cwd=root, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
-    print(f"✓ Streaming live flight updates for {STREAM_MINUTES} minutes"
-          f"{f' at {speed:g}x' if speed != 1 else ''} in the background "
-          f"(log: {log.relative_to(root)}; restart with `uv run airport-datagen`)")
+            [
+                "uv",
+                "run",
+                "airport-datagen",
+                "--now",
+                start.isoformat(),
+                "--stream-only",
+                "--offers",
+                offers,
+                "--speed",
+                str(speed),
+            ],
+            cwd=root,
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    print(
+        f"✓ Streaming live flight updates for {STREAM_MINUTES} minutes"
+        f"{f' at {speed:g}x' if speed != 1 else ''} in the background "
+        f"(log: {log.relative_to(root)}; restart with `uv run airport-datagen`)"
+    )
     return start
 
 

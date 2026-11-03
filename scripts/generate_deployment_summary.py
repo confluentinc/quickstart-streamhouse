@@ -21,9 +21,7 @@ from typing import Any
 from dotenv import dotenv_values
 
 
-def generate_credentials_markdown(
-    cloud_provider: str, tf_outputs: dict[str, Any], output_path: Path
-) -> None:
+def generate_credentials_markdown(cloud_provider: str, tf_outputs: dict[str, Any], output_path: Path) -> None:
     """
     Generate DEPLOYED_RESOURCES.md file from Terraform outputs.
 
@@ -86,9 +84,7 @@ def _build_header() -> str:
 ---"""
 
 
-def _build_account_section(
-    tf_outputs: dict[str, Any], get_output: callable, owner_email: str = "Not provided"
-) -> str:
+def _build_account_section(tf_outputs: dict[str, Any], get_output: callable, owner_email: str = "Not provided") -> str:
     """Build the Account Information section."""
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     region = get_output("cloud_region")
@@ -106,9 +102,7 @@ def _build_account_section(
 ---"""
 
 
-def _build_cloud_details_section(
-    cloud_provider: str, tf_outputs: dict[str, Any], get_output: callable
-) -> str:
+def _build_cloud_details_section(cloud_provider: str, tf_outputs: dict[str, Any], get_output: callable) -> str:
     """Build the Cloud Details section."""
     region = get_output("cloud_region")
 
@@ -215,9 +209,7 @@ def _build_credentials_section(tf_outputs: dict[str, Any], get_output: callable)
 ---"""
 
 
-def _build_resource_inventory_section(
-    tf_outputs: dict[str, Any], get_output: callable
-) -> str:
+def _build_resource_inventory_section(tf_outputs: dict[str, Any], get_output: callable) -> str:
     """Build the Resource Inventory section."""
     env_id = get_output("confluent_environment_id")
     env_name = get_output("confluent_environment_display_name")
@@ -246,9 +238,7 @@ def _build_resource_inventory_section(
 ---"""
 
 
-def _build_llm_configuration_section(
-    cloud_provider: str, tf_outputs: dict[str, Any], get_output: callable
-) -> str:
+def _build_llm_configuration_section(cloud_provider: str, tf_outputs: dict[str, Any], get_output: callable) -> str:
     """Build the LLM Configuration section."""
     textgen_connection = get_output("llm_connection_name")
     embedding_connection = get_output("llm_embedding_connection_name")
@@ -346,9 +336,7 @@ def main():
         sys.exit(1)
 
     if not (terraform_dir / "main.tf").exists():
-        print(
-            f"Error: Not a valid terraform directory (no main.tf found): {terraform_dir}"
-        )
+        print(f"Error: Not a valid terraform directory (no main.tf found): {terraform_dir}")
         sys.exit(1)
 
     # Detect cloud provider from terraform state file
@@ -450,7 +438,9 @@ This file contains the Flink SQL commands used in {lab_name.replace("-", " ").ti
         # Add core resources section first if applicable
         if core_resources:
             content += "## Shared Resources from Core Infrastructure\n\n"
-            content += "The following LLM connections and models were created in Core Terraform and are used by the demo:\n\n"
+            content += (
+                "The following LLM connections and models were created in Core Terraform and are used by the demo:\n\n"
+            )
 
             for idx, cmd in enumerate(core_resources, 1):
                 content += f"### {idx}. {cmd['title']}\n\n"

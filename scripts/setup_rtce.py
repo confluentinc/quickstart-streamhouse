@@ -203,7 +203,9 @@ def _key_owned_by(sa_id: str, api_key: str) -> bool:
     account and its keys, but credentials.env keeps the old key."""
     result = subprocess.run(
         ["confluent", "api-key", "list", "--resource", "global", "--service-account", sa_id, "-o", "json"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if result.returncode != 0:
         return True  # can't tell (an expired login, say); keep the stored key
@@ -249,9 +251,7 @@ def _get_credentials(creds_file: Path, creds: dict) -> tuple[str, str]:
         return api_key, api_secret
 
     print("\nNo RTCE Global API key found in credentials.env.")
-    print(
-        "For standalone use: create a key in the Confluent Cloud UI → hamburger → API keys → Global scope."
-    )
+    print("For standalone use: create a key in the Confluent Cloud UI → hamburger → API keys → Global scope.")
     print()
     api_key = _ask("Global API key:    ")
     api_secret = _ask("Global API secret: ")
@@ -291,7 +291,9 @@ def _flink_scope(infra: dict[str, str]) -> list[str]:
 def agent_connection_exists(infra: dict[str, str]) -> bool:
     result = subprocess.run(
         ["confluent", "flink", "connection", "describe", AGENT_CONNECTION, *_flink_scope(infra)],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     return result.returncode == 0
 
@@ -304,18 +306,49 @@ def create_agent_connection(infra: dict[str, str], api_key: str, api_secret: str
     """
     if agent_connection_exists(infra):
         result = subprocess.run(
-            ["confluent", "flink", "connection", "update", AGENT_CONNECTION, *_flink_scope(infra),
-             "--username", api_key, "--password", api_secret, "--transport-type", "STREAMABLE_HTTP"],
-            capture_output=True, text=True, timeout=120,
+            [
+                "confluent",
+                "flink",
+                "connection",
+                "update",
+                AGENT_CONNECTION,
+                *_flink_scope(infra),
+                "--username",
+                api_key,
+                "--password",
+                api_secret,
+                "--transport-type",
+                "STREAMABLE_HTTP",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if result.returncode != 0 and result.stderr:
             print(f"  CLI error: {result.stderr.strip()[:300]}")
         return result.returncode == 0
     result = subprocess.run(
-        ["confluent", "flink", "connection", "create", AGENT_CONNECTION, *_flink_scope(infra),
-         "--type", "mcp_server", "--endpoint", _mcp_url(infra),
-         "--username", api_key, "--password", api_secret, "--transport-type", "STREAMABLE_HTTP"],
-        capture_output=True, text=True, timeout=120,
+        [
+            "confluent",
+            "flink",
+            "connection",
+            "create",
+            AGENT_CONNECTION,
+            *_flink_scope(infra),
+            "--type",
+            "mcp_server",
+            "--endpoint",
+            _mcp_url(infra),
+            "--username",
+            api_key,
+            "--password",
+            api_secret,
+            "--transport-type",
+            "STREAMABLE_HTTP",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     if result.returncode != 0 and result.stderr:
         print(f"  CLI error: {result.stderr.strip()[:300]}")
@@ -401,9 +434,7 @@ def _validate_rtce_support(infra: dict[str, str]) -> None:
     if region not in _RTCE_SUPPORTED_AWS_REGIONS:
         print()
         print("!" * 70)
-        print(
-            f"WARNING: '{region}' is not in the known list of RTCE-supported AWS regions."
-        )
+        print(f"WARNING: '{region}' is not in the known list of RTCE-supported AWS regions.")
         print()
         print("Known supported regions:")
         for r in sorted(_RTCE_SUPPORTED_AWS_REGIONS):
@@ -419,9 +450,7 @@ def _validate_rtce_support(infra: dict[str, str]) -> None:
             sys.exit(0)
 
 
-def _list_rtce_topics(
-    api_key: str, api_secret: str, infra: dict[str, str]
-) -> list[str]:
+def _list_rtce_topics(api_key: str, api_secret: str, infra: dict[str, str]) -> list[str]:
     """Return RTCE-enabled topic names. Tries Confluent CLI first, then REST API.
 
     The CLI uses the logged-in user session (always has correct permissions).
@@ -458,10 +487,7 @@ def _list_rtce_topics(
         pass
 
     # REST API fallback (requires CloudClusterAdmin on the Global API key).
-    url = (
-        f"https://api.confluent.cloud/rtce/v1/rtce-topics"
-        f"?environment={env_id}&spec.kafka_cluster={cluster_id}"
-    )
+    url = f"https://api.confluent.cloud/rtce/v1/rtce-topics?environment={env_id}&spec.kafka_cluster={cluster_id}"
     token = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
     req = urllib.request.Request(url, headers={"Authorization": f"Basic {token}"})
     try:
@@ -572,9 +598,7 @@ def _pick_client() -> str:
     return {"2": "codex", "3": "gemini", "4": "none"}.get(raw, "claude")
 
 
-def _claude_argv_rtce(
-    server_name: str, url: str, token: str
-) -> tuple[list[str], list[str]]:
+def _claude_argv_rtce(server_name: str, url: str, token: str) -> tuple[list[str], list[str]]:
     """(remove, add) argv for Claude Code.
 
     `remove` uses `-s local`; `add` lets the scope default to local (no `--scope`).
@@ -582,15 +606,20 @@ def _claude_argv_rtce(
     return (
         ["claude", "mcp", "remove", server_name, "-s", "local"],
         [
-            "claude", "mcp", "add", "--transport", "http", server_name, url,
-            "--header", f"Authorization: Basic {token}",
+            "claude",
+            "mcp",
+            "add",
+            "--transport",
+            "http",
+            server_name,
+            url,
+            "--header",
+            f"Authorization: Basic {token}",
         ],
     )
 
 
-def _register_with_claude_code(
-    server_name: str, url: str, token: str, dry_run: bool = False
-) -> str:
+def _register_with_claude_code(server_name: str, url: str, token: str, dry_run: bool = False) -> str:
     """Register RTCE as an HTTP MCP server in Claude Code.
 
     Primary path runs `claude mcp add --transport http`. Falls back to writing
@@ -601,10 +630,7 @@ def _register_with_claude_code(
     remove_argv, add_argv = _claude_argv_rtce(server_name, url, token)
 
     if dry_run:
-        redacted = [
-            "Authorization: Basic <redacted>" if c.startswith("Authorization:") else c
-            for c in add_argv
-        ]
+        redacted = ["Authorization: Basic <redacted>" if c.startswith("Authorization:") else c for c in add_argv]
         print("[dry-run] Claude Code — would run (CLI primary):")
         print(f"    {shlex.join(remove_argv)}")
         print(f"    {shlex.join(redacted)}")
@@ -624,9 +650,7 @@ def _register_with_claude_code(
     return _register_with_claude_code_filewrite(server_name, url, token)
 
 
-def _register_with_claude_code_filewrite(
-    server_name: str, url: str, token: str
-) -> str:
+def _register_with_claude_code_filewrite(server_name: str, url: str, token: str) -> str:
     """Fallback: write the RTCE HTTP MCP entry straight into ~/.claude.json.
 
     Works whether or not the `claude` binary is allowlisted, and produces the same
@@ -653,11 +677,9 @@ def _register_with_claude_code_filewrite(
         "headers": {"Authorization": f"Basic {token}"},
     }
 
-    (
-        claude_data.setdefault("projects", {})
-        .setdefault(project_key, {})
-        .setdefault("mcpServers", {})
-    )[server_name] = entry
+    (claude_data.setdefault("projects", {}).setdefault(project_key, {}).setdefault("mcpServers", {}))[server_name] = (
+        entry
+    )
 
     claude_json_path.write_text(json.dumps(claude_data, indent=2) + "\n")
     return "Claude Code local scope (http, direct write)"
@@ -668,16 +690,12 @@ def _codex_config_paths_rtce() -> list[Path]:
     home_config_path = Path.home() / ".codex" / "config.toml"
     paths = [home_config_path]
     project_config_path = Path.cwd() / ".codex" / "config.toml"
-    if project_config_path.exists() and (
-        project_config_path.resolve() != home_config_path.resolve()
-    ):
+    if project_config_path.exists() and (project_config_path.resolve() != home_config_path.resolve()):
         paths.append(project_config_path)
     return paths
 
 
-def _write_codex_config_rtce(
-    config_path: Path, server_name: str, url: str, token: str, dry_run: bool = False
-) -> None:
+def _write_codex_config_rtce(config_path: Path, server_name: str, url: str, token: str, dry_run: bool = False) -> None:
     """Merge an `[mcp_servers.<name>]` table into one Codex config.toml file, in place.
 
     Uses tomlkit so round-tripping preserves comments/formatting of the rest of the
@@ -689,7 +707,7 @@ def _write_codex_config_rtce(
 
     if dry_run:
         print(f"[dry-run] Codex CLI — would merge into {config_path}:\n")
-        print(f'[mcp_servers.{server_name}]')
+        print(f"[mcp_servers.{server_name}]")
         print(f'url = "{url}"')
         print('http_headers = { "Authorization" = "Basic <redacted>" }')
         return
@@ -714,14 +732,12 @@ def _write_codex_config_rtce(
         config_path.write_text(tomlkit.dumps(doc))
     except Exception as exc:
         print(f"  Warning: could not auto-edit {config_path} ({exc}); add this by hand:")
-        print(f'[mcp_servers.{server_name}]')
+        print(f"[mcp_servers.{server_name}]")
         print(f'url = "{url}"')
         print(f'http_headers = {{ "Authorization" = "Basic {token}" }}')
 
 
-def _register_with_codex_rtce(
-    server_name: str, url: str, token: str, dry_run: bool = False
-) -> str:
+def _register_with_codex_rtce(server_name: str, url: str, token: str, dry_run: bool = False) -> str:
     """Write the RTCE HTTP MCP server into Codex config. Returns a scope note."""
     config_paths = _codex_config_paths_rtce()
     for codex_config_path in config_paths:
@@ -915,8 +931,7 @@ def _lightning_request(
     ]
     if missing or not api_key or not api_secret:
         raise ValueError(
-            "Missing infrastructure details for Lightning Queries: "
-            + ", ".join(missing or ["API key/secret"])
+            "Missing infrastructure details for Lightning Queries: " + ", ".join(missing or ["API key/secret"])
         )
     url = f"https://sql.{region}.{cloud}.confluent.cloud/query/v1alpha1"
     body = {
@@ -981,10 +996,7 @@ def run_lightning_query(
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="uv run setup-rtce",
-        description=(
-            "Register Confluent Cloud Real-Time Context Engine as an MCP server "
-            "with a local coding agent."
-        ),
+        description=("Register Confluent Cloud Real-Time Context Engine as an MCP server with a local coding agent."),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -1064,11 +1076,7 @@ def main(argv: list[str] | None = None):
                     print(json.dumps(row, default=str))
                 print(f"{len(rows)} row(s) in {(time.monotonic() - started) * 1000:.0f} ms, round trip")
             else:
-                print(
-                    lightning_command(
-                        infra, api_key, api_secret, args.lightning, args.key, args.limit
-                    )
-                )
+                print(lightning_command(infra, api_key, api_secret, args.lightning, args.key, args.limit))
         except ValueError as exc:
             sys.exit(str(exc))
         except urllib.error.HTTPError as exc:

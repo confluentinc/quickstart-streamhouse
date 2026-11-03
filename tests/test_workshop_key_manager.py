@@ -12,9 +12,11 @@ def _resources(policy: dict, sid: str) -> str:
 def _covers(tmp_path, creds: str, bucket: str, role: str) -> bool:
     (tmp_path / "credentials.env").write_text(creds)
     policy = wkm.get_demo_policy("123", "us-east-1", wkm.get_resource_scope(tmp_path))
-    return (fnmatchcase(f"arn:aws:s3:::{bucket}", _resources(policy, "TableflowBucket"))
-            and fnmatchcase(f"arn:aws:iam::123:role/{role}", _resources(policy, "TableflowIamRole"))
-            and fnmatchcase(f"arn:aws:iam::123:policy/{role}-s3-access", _resources(policy, "TableflowIamPolicy")))
+    return (
+        fnmatchcase(f"arn:aws:s3:::{bucket}", _resources(policy, "TableflowBucket"))
+        and fnmatchcase(f"arn:aws:iam::123:role/{role}", _resources(policy, "TableflowIamRole"))
+        and fnmatchcase(f"arn:aws:iam::123:policy/{role}-s3-access", _resources(policy, "TableflowIamPolicy"))
+    )
 
 
 def test_fixed_deployment_name_is_scoped_exactly(tmp_path):

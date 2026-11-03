@@ -9,7 +9,7 @@
 variable "resource_prefix" {
   description = "Prefix applied to every named Confluent resource (env, cluster, compute pool, service accounts). A random suffix is appended so multiple deployments can coexist in one org."
   type        = string
-  default     = "flight-recovery"
+  default     = "streamhouse"
 
   validation {
     condition     = can(regex("^[a-z0-9-]{1,32}$", var.resource_prefix))

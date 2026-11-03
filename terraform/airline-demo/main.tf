@@ -20,7 +20,7 @@
 # so Lightning/RTCE/Tableflow are unaffected). Tableflow syncs selected tables to
 # Iceberg in S3 with an AWS Glue Data Catalog for Demo 3 — see analytics.tf.
 #
-# The workshop (var.workshop, docs/workshop.md) stops at the source tables and
+# The workshop (var.workshop, docs/flight-disruptions/workshop.md) stops at the source tables and
 # passenger_recommendations: attendees create passenger_state, flight_impact, and
 # the recovery agent from the same .sql files in the SQL workspace.
 # ===========================================================================

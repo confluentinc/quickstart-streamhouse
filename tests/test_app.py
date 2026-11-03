@@ -13,50 +13,63 @@ NOW = datetime(2026, 9, 28, 12, 0, 0)
 
 # --- query builder -----------------------------------------------------------
 
+
 def test_builder_escapes_quotes_and_renders_key():
     assert _build_lightning_query("passenger_state", key="P-1'; DROP", limit=1) == (
-        "SELECT * FROM `passenger_state` WHERE \"KEY\" = 'P-1''; DROP' LIMIT 1")
+        "SELECT * FROM `passenger_state` WHERE \"KEY\" = 'P-1''; DROP' LIMIT 1"
+    )
 
 
 def test_builder_renders_timestamp_in_numbers_and_order():
     query = _build_lightning_query(
-        "flight_impact", limit=200,
-        where=[("scheduled_time", ">=", datetime(2026, 9, 1, 0, 0, 0, 999)),
-               ("delay_minutes", ">", 15), ("hotel_cost", "<=", Decimal("189.50")),
-               ("status", "IN", ["DELAYED", "BOARDING"]), ("key", "LIKE", "RA4%")],
-        order_by=("scheduled_time", "desc"))
+        "flight_impact",
+        limit=200,
+        where=[
+            ("scheduled_time", ">=", datetime(2026, 9, 1, 0, 0, 0, 999)),
+            ("delay_minutes", ">", 15),
+            ("hotel_cost", "<=", Decimal("189.50")),
+            ("status", "IN", ["DELAYED", "BOARDING"]),
+            ("key", "LIKE", "RA4%"),
+        ],
+        order_by=("scheduled_time", "desc"),
+    )
     assert query == (
         "SELECT * FROM `flight_impact` WHERE scheduled_time >= TIMESTAMP '2026-09-01 00:00:00'"
         " AND delay_minutes > 15 AND hotel_cost <= 189.50"
         " AND status IN ('DELAYED', 'BOARDING') AND \"KEY\" LIKE 'RA4%'"
-        " ORDER BY scheduled_time DESC LIMIT 200")
+        " ORDER BY scheduled_time DESC LIMIT 200"
+    )
 
 
 def test_builder_default_scan():
     assert _build_lightning_query("hotel_inventory") == "SELECT * FROM `hotel_inventory` LIMIT 10"
 
 
-@pytest.mark.parametrize("kwargs", [
-    {"topic": "flight_impact; DROP"},
-    {"topic": "Flight_Impact"},
-    {"topic": "flight_impact", "where": [("status OR 1=1", "=", "x")]},
-    {"topic": "flight_impact", "where": [("status", "!=", "x")]},
-    {"topic": "flight_impact", "where": [("status", "=", True)]},
-    {"topic": "flight_impact", "where": [("status", "=", None)]},
-    {"topic": "flight_impact", "where": [("status", "IN", "DELAYED")]},
-    {"topic": "flight_impact", "where": [("status", "IN", [])]},
-    {"topic": "flight_impact", "where": [("status", "=")]},
-    {"topic": "flight_impact", "order_by": ("key", "SIDEWAYS")},
-    {"topic": "flight_impact", "order_by": ("bad-column", "ASC")},
-    {"topic": "flight_impact", "limit": 0},
-    {"topic": "flight_impact", "limit": True},
-])
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"topic": "flight_impact; DROP"},
+        {"topic": "Flight_Impact"},
+        {"topic": "flight_impact", "where": [("status OR 1=1", "=", "x")]},
+        {"topic": "flight_impact", "where": [("status", "!=", "x")]},
+        {"topic": "flight_impact", "where": [("status", "=", True)]},
+        {"topic": "flight_impact", "where": [("status", "=", None)]},
+        {"topic": "flight_impact", "where": [("status", "IN", "DELAYED")]},
+        {"topic": "flight_impact", "where": [("status", "IN", [])]},
+        {"topic": "flight_impact", "where": [("status", "=")]},
+        {"topic": "flight_impact", "order_by": ("key", "SIDEWAYS")},
+        {"topic": "flight_impact", "order_by": ("bad-column", "ASC")},
+        {"topic": "flight_impact", "limit": 0},
+        {"topic": "flight_impact", "limit": True},
+    ],
+)
 def test_builder_rejects_invalid_input(kwargs):
     with pytest.raises(ValueError):
         _build_lightning_query(**kwargs)
 
 
 # --- fake Lightning ----------------------------------------------------------
+
 
 def _compare(row_value, op, value):
     if isinstance(value, datetime):
@@ -65,8 +78,13 @@ def _compare(row_value, op, value):
         row_value = Decimal(str(row_value))
     if row_value is None:
         return False
-    return {"=": row_value == value, ">": row_value > value, ">=": row_value >= value,
-            "<": row_value < value, "<=": row_value <= value}[op]
+    return {
+        "=": row_value == value,
+        ">": row_value > value,
+        ">=": row_value >= value,
+        "<": row_value < value,
+        "<=": row_value <= value,
+    }[op]
 
 
 class FakeLightning:
@@ -81,11 +99,14 @@ class FakeLightning:
         self.calls.append({"topic": topic, "key": key, "where": list(where), "order_by": order_by})
         conditions = [("key", "=", key)] if key is not None else []
         conditions += list(where)
-        rows = [dict(row) for row in self.tables.get(topic, [])
-                if all(_compare(row.get(c), op, v) for c, op, v in conditions)]
+        rows = [
+            dict(row)
+            for row in self.tables.get(topic, [])
+            if all(_compare(row.get(c), op, v) for c, op, v in conditions)
+        ]
         if order_by:
             rows.sort(key=lambda row: row[order_by[0]], reverse=order_by[1] == "DESC")
-        return rows[:min(limit, 200)]
+        return rows[: min(limit, 200)]
 
 
 @pytest.fixture
@@ -101,9 +122,11 @@ def fake(monkeypatch):
 
 def test_lightning_scan_pages_until_short_page(fake):
     fake.tables["passenger_state"] = [
-        {"key": f"P-0928-417-{n:03d}", "inbound_flight_id": "RA417-20260928"} for n in range(1, 451)]
+        {"key": f"P-0928-417-{n:03d}", "inbound_flight_id": "RA417-20260928"} for n in range(1, 451)
+    ]
     rows = airport_app.deployment.lightning_scan(
-        "passenger_state", where=[("inbound_flight_id", "=", "RA417-20260928")])
+        "passenger_state", where=[("inbound_flight_id", "=", "RA417-20260928")]
+    )
     assert len(rows) == 450
     assert len({row["key"] for row in rows}) == 450
     assert len(fake.calls) == 3
@@ -114,9 +137,16 @@ def test_lightning_scan_pages_until_short_page(fake):
 
 
 def _offer(key, hotel_name, cost, status="OFFERED"):
-    return {"key": key, "passenger_id": "P-0928-417-001", "recommended_flight_id": "RA88-20260929",
-            "hotel_name": hotel_name, "status": status, "hotel_cost": cost,
-            "impacted_at": "2026-09-28 10:00:00.000000", "recommended_at": "2026-09-28 10:01:00.000000"}
+    return {
+        "key": key,
+        "passenger_id": "P-0928-417-001",
+        "recommended_flight_id": "RA88-20260929",
+        "hotel_name": hotel_name,
+        "status": status,
+        "hotel_cost": cost,
+        "impacted_at": "2026-09-28 10:00:00.000000",
+        "recommended_at": "2026-09-28 10:01:00.000000",
+    }
 
 
 GRAND_HYATT = "Grand Hyatt at SFO"
@@ -157,8 +187,9 @@ def test_selecting_a_sold_out_hotel_offers_a_third_hotel_then_book_closes_other(
 
 
 def test_sold_out_hotel_falls_back_to_the_other_offers_hotel_when_nothing_else_has_rooms(fake):
-    fake.tables["hotel_inventory"] = [{**row, "available_rooms": "0" if row["key"] != MARRIOTT else "4"}
-                                      for row in HOTELS]
+    fake.tables["hotel_inventory"] = [
+        {**row, "available_rooms": "0" if row["key"] != MARRIOTT else "4"} for row in HOTELS
+    ]
     fake.tables["passenger_recommendations"] = [
         _offer("P-0928-417-001-O1", GRAND_HYATT, "329.00"),
         _offer("P-0928-417-001-O2", MARRIOTT, "229.00"),
@@ -169,8 +200,7 @@ def test_sold_out_hotel_falls_back_to_the_other_offers_hotel_when_nothing_else_h
 
 def test_book_rejects_sold_out_hotel(fake):
     fake.tables["hotel_inventory"] = HOTELS
-    fake.tables["passenger_recommendations"] = [
-        _offer("P-0928-417-001-O1", GRAND_HYATT, "329.00", status="SELECTED")]
+    fake.tables["passenger_recommendations"] = [_offer("P-0928-417-001-O1", GRAND_HYATT, "329.00", status="SELECTED")]
     with pytest.raises(airport_app.HTTPException) as error:
         airport_app.book_offer("P-0928-417-001", "P-0928-417-001-O1")
     assert error.value.status_code == 409
@@ -199,7 +229,7 @@ def test_select_and_book_offer_without_hotel(fake):
     assert chosen["status"] == "SELECTED"
     assert chosen["hotel_name"] is None and chosen["hotel_cost"] is None
     fake.tables["passenger_recommendations"][0] = chosen
-    booked =airport_app.book_offer("P-0928-417-001", "P-0928-417-001-O1")
+    booked = airport_app.book_offer("P-0928-417-001", "P-0928-417-001-O1")
     assert booked["status"] == "BOOKED"
 
 
@@ -223,8 +253,15 @@ def test_write_offer_passes_nulls_and_parses_timestamps(monkeypatch):
     assert first["hotel_name"] is None and first["hotel_cost"] is None
     assert first["impacted_at"] == datetime(2026, 9, 28, 10, 0)
     assert first["recommended_at"] == datetime(2026, 9, 28, 10, 1)
-    assert set(first) == {"passenger_id", "recommended_flight_id", "hotel_name", "status", "hotel_cost",
-                          "impacted_at", "recommended_at"}
+    assert set(first) == {
+        "passenger_id",
+        "recommended_flight_id",
+        "hotel_name",
+        "status",
+        "hotel_cost",
+        "impacted_at",
+        "recommended_at",
+    }
     assert second["hotel_cost"] == Decimal("249.00")
     assert second["recommended_at"] == datetime(2026, 9, 21, 14, 13, 20)
 
@@ -233,8 +270,10 @@ def _flight(n, scheduled, delay, affected, status="ON_TIME", origin="SFO", desti
     """The flight's flight_status row and its flight_impact row, as Lightning returns them."""
     row = {"key": f"RA{n}-20260928", "origin": origin, "destination": destination, "scheduled_time": scheduled}
     estimated = datetime.fromisoformat(scheduled) + timedelta(minutes=delay)
-    return ({**row, "estimated_time": f"{estimated:%Y-%m-%d %H:%M:%S}.000000", "status": status},
-            {**row, "status": status, "delay_minutes": str(delay), "affected_passengers": str(affected)})
+    return (
+        {**row, "estimated_time": f"{estimated:%Y-%m-%d %H:%M:%S}.000000", "status": status},
+        {**row, "status": status, "delay_minutes": str(delay), "affected_passengers": str(affected)},
+    )
 
 
 def _set_flights(fake, *flights):
@@ -250,10 +289,10 @@ def test_state_counts_and_delays(fake):
         _flight(418, "2026-09-28 13:00:00.000000", 15, 3, "DELAYED"),
         _flight(419, "2026-09-28 09:00:00.000000", 14, 0),
         _flight(420, "2026-09-28 18:00:00.000000", 5, 0),  # at now+6h, excluded
-        *(_flight(500 + n, f"2026-09-28 {n % 10:02d}:30:00.000000", 0, 1) for n in range(12)))
+        *(_flight(500 + n, f"2026-09-28 {n % 10:02d}:30:00.000000", 0, 1) for n in range(12)),
+    )
     fake.tables["passenger_recommendations"] = [
-        {"key": f"P-{n}-O1", "status": "BOOKED", "recommended_at": "2026-09-28 08:00:00.000000"}
-        for n in range(205)
+        {"key": f"P-{n}-O1", "status": "BOOKED", "recommended_at": "2026-09-28 08:00:00.000000"} for n in range(205)
     ] + [
         {"key": "P-old-O1", "status": "BOOKED", "recommended_at": "2026-09-26 08:00:00.000000"},
         {"key": "P-open-O1", "status": "OFFERED", "recommended_at": "2026-09-28 08:00:00.000000"},
@@ -275,7 +314,8 @@ def test_flights_show_live_status_and_delay_with_flinks_at_risk_count(fake):
     fake.tables["flight_impact"] = [{**impact, "status": "ON_TIME", "delay_minutes": "0"}]  # a minute behind
     body = TestClient(airport_app.app).get("/api/state").json()
     assert [(row["status"], row["delay_minutes"], row["affected_passengers"]) for row in body["flights"]] == [
-        ("DELAYED", 30, 7)]
+        ("DELAYED", 30, 7)
+    ]
     assert body["counts"]["delayed"] == 1
 
 
@@ -289,9 +329,11 @@ def test_each_flight_shows_once_with_its_live_copy_past_the_200_row_cap(fake):
     start = NOW - airport_app.WINDOW_BEFORE
     flights = [_flight(n, f"{start + timedelta(minutes=8 * n):%Y-%m-%d %H:%M:%S}.000000", 0, 0) for n in range(180)]
     # flight: (frozen copy, live copy, flight_impact's delay), as on 2026-10-29's workshop run
-    cases = {150: ((46, "DELAYED"), (115, "DELAYED"), 115),   # the delay grew
-             151: ((227, "DELAYED"), (225, "DELAYED"), 225),  # an estimate came down
-             152: ((20, "DELAYED"), (25, "LANDED"), 22)}      # Flink hasn't caught up with the landing yet
+    cases = {
+        150: ((46, "DELAYED"), (115, "DELAYED"), 115),  # the delay grew
+        151: ((227, "DELAYED"), (225, "DELAYED"), 225),  # an estimate came down
+        152: ((20, "DELAYED"), (25, "LANDED"), 22),
+    }  # Flink hasn't caught up with the landing yet
     frozen = []
     for n, ((old_delay, old_status), (delay, status), reported) in cases.items():
         live, impact = _flight(n, flights[n][0]["scheduled_time"], delay, 9, status)
@@ -310,9 +352,14 @@ def test_each_flight_shows_once_with_its_live_copy_past_the_200_row_cap(fake):
 
 
 def _passenger(n, inbound, connecting, risk):
-    return {"key": f"P-0928-{n}", "inbound_flight_id": inbound, "inbound_seat": f"{n % 30 + 1}A",
-            "connecting_flight_id": connecting, "connecting_seat": f"{n % 30 + 1}F" if connecting else None,
-            "risk": risk}
+    return {
+        "key": f"P-0928-{n}",
+        "inbound_flight_id": inbound,
+        "inbound_seat": f"{n % 30 + 1}A",
+        "connecting_flight_id": connecting,
+        "connecting_seat": f"{n % 30 + 1}F" if connecting else None,
+        "risk": risk,
+    }
 
 
 PASSENGERS = [
@@ -333,7 +380,11 @@ def test_flight_passengers_high_risk_first(fake):
     assert body["flight"]["estimated_time"] == "2026-09-28T12:35:00"
     assert body["flight"]["arrival"] is True
     assert [(row["key"], row["seat"]) for row in body["passengers"]] == [
-        ("P-0928-2", "3A"), ("P-0928-4", "5A"), ("P-0928-1", "2A"), ("P-0928-3", "4A")]
+        ("P-0928-2", "3A"),
+        ("P-0928-4", "5A"),
+        ("P-0928-1", "2A"),
+        ("P-0928-3", "4A"),
+    ]
     assert body["seats"] == list(airport_app.SEATS)
     assert client.get("/api/flight/RA999-20260928").status_code == 404
     assert client.get("/api/passenger/P-missing").status_code == 404
@@ -345,4 +396,7 @@ def test_departure_shows_passengers_connecting_onto_it(fake):
     body = TestClient(airport_app.app).get("/api/flight/RA680-20260928").json()
     assert body["flight"]["arrival"] is False
     assert [(row["key"], row["seat"]) for row in body["passengers"]] == [
-        ("P-0928-2", "3F"), ("P-0928-5", "6F"), ("P-0928-1", "2F")]
+        ("P-0928-2", "3F"),
+        ("P-0928-5", "6F"),
+        ("P-0928-1", "2F"),
+    ]

@@ -11,7 +11,7 @@ The reset
   6. restarts the stream, so RA417's delay and the Grand Hyatt sellout play out again.
 
 Then CREATE MODEL, CREATE TOOL, CREATE AGENT, and the AI_RUN_AGENT INSERT run live on screen
-(see the SQL for each in docs/demo-script-screens.md). Running the reset again is safe.
+(see the SQL for each in docs/flight-disruptions/demo-script-screens.md). Running the reset again is safe.
 
 Usage:
   uv run reset-demo-2            # reset to the start of Demo 2
@@ -45,8 +45,14 @@ DROPS = (
 )
 # A statement whose SQL names one of these creates or runs a Demo 2 object, whether Terraform
 # or an earlier take on screen created it.
-DEMO_2_NAMES = ("AI_RUN_AGENT", "passenger_recovery_agent", "hotel_inventory_live_context", "passenger_recovery_model",
-                "passenger_state_changes", "impacted_passengers")
+DEMO_2_NAMES = (
+    "AI_RUN_AGENT",
+    "passenger_recovery_agent",
+    "hotel_inventory_live_context",
+    "passenger_recovery_model",
+    "passenger_state_changes",
+    "impacted_passengers",
+)
 # Terraform's copies of the statements the reset deletes; removed from state so a later apply recreates them.
 STATE_ADDRESSES = (
     'confluent_flink_statement.agent_setup["model"]',
@@ -77,16 +83,25 @@ class Flink:
     """Runs and deletes Flink statements with the Confluent CLI, as the app-manager service account."""
 
     def __init__(self, core: dict):
-        self.scope = ["--cloud", "aws", "--region", core["cloud_region"],
-                      "--environment", core["confluent_environment_id"]]
+        self.scope = [
+            "--cloud",
+            "aws",
+            "--region",
+            core["cloud_region"],
+            "--environment",
+            core["confluent_environment_id"],
+        ]
         self.pool = core["confluent_flink_compute_pool_id"]
         self.principal = core["app_manager_service_account_id"]
-        self.properties = (f"sql.current-catalog={core['confluent_environment_display_name']},"
-                           f"sql.current-database={core['confluent_kafka_cluster_display_name']}")
+        self.properties = (
+            f"sql.current-catalog={core['confluent_environment_display_name']},"
+            f"sql.current-database={core['confluent_kafka_cluster_display_name']}"
+        )
 
     def _cli(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["confluent", "flink", "statement", *args, *self.scope],
-                              capture_output=True, text=True, timeout=300)
+        return subprocess.run(
+            ["confluent", "flink", "statement", *args, *self.scope], capture_output=True, text=True, timeout=300
+        )
 
     def statements(self) -> list[dict]:
         result = self._cli("list", "-o", "json")
@@ -103,8 +118,19 @@ class Flink:
     def run(self, sql: str) -> None:
         """Run one DDL statement to completion, then delete it so it doesn't clutter the statement list."""
         name = f"reset-demo-2-{int(time.time() * 1000)}"
-        created = self._cli("create", name, "--sql", sql, "--compute-pool", self.pool,
-                            "--service-account", self.principal, "--property", self.properties, "--wait")
+        created = self._cli(
+            "create",
+            name,
+            "--sql",
+            sql,
+            "--compute-pool",
+            self.pool,
+            "--service-account",
+            self.principal,
+            "--property",
+            self.properties,
+            "--wait",
+        )
         described = self._cli("describe", name, "-o", "json")
         details = json.loads(described.stdout or "{}") if described.returncode == 0 else {}
         status = details.get("status", "")
@@ -130,8 +156,9 @@ def ra417_offer_keys(plan: airport_datagen.Plan) -> list[str]:
 def _forget_in_terraform(demo, keep_staging: bool = False) -> None:
     listed = subprocess.run(["terraform", "state", "list"], cwd=demo, capture_output=True, text=True)
     present = set(listed.stdout.split())
-    addresses = [a for a in STATE_ADDRESSES if a in present
-                 and not (keep_staging and any(t in a for t in STAGING_TARGETS))]
+    addresses = [
+        a for a in STATE_ADDRESSES if a in present and not (keep_staging and any(t in a for t in STAGING_TARGETS))
+    ]
     if addresses:
         subprocess.run(["terraform", "state", "rm", *addresses], cwd=demo, check=True, capture_output=True)
 
@@ -214,10 +241,17 @@ def restore(root, flink: Flink) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="uv run reset-demo-2", description=__doc__.split("\n")[0])
     parser.add_argument("--restore", action="store_true", help="start the agent the way deploy does instead")
-    parser.add_argument("--full", action="store_true",
-                        help="back to a fresh deploy: republish all data, restart the stream, start the agent")
-    parser.add_argument("--speed", type=float, default=1.0,
-                        help="run the stream clock this many times faster (default 1; 4 is a 22-minute stream)")
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="back to a fresh deploy: republish all data, restart the stream, start the agent",
+    )
+    parser.add_argument(
+        "--speed",
+        type=float,
+        default=1.0,
+        help="run the stream clock this many times faster (default 1; 4 is a 22-minute stream)",
+    )
     parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     args = parser.parse_args(argv)
     if args.speed <= 0:
@@ -229,8 +263,9 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit("No deployment found. Run `uv run deploy` first.")
     creds = dotenv_values(root / "credentials.env")
     if creds.get(deploy.WORKSHOP) == "true":
-        sys.exit("This checkout is in workshop mode, where attendees build Demo 2's agent themselves. "
-                 "Nothing to reset.")
+        sys.exit(
+            "This checkout is in workshop mode, where attendees build Demo 2's agent themselves. Nothing to reset."
+        )
     core = run_terraform_output(core_state)
     ensure_confluent_login(creds, root / "credentials.env", interactive=sys.stdin.isatty())
     flink = Flink(core)
@@ -239,11 +274,15 @@ def main(argv: list[str] | None = None) -> None:
         restore(root, flink)
         return
     if args.full:
-        print(f"This deletes and republishes every demo record in {core['confluent_environment_display_name']}, "
-              f"restarts the stream, and recreates Demo 2's agent, tool, model, and staging tables.")
+        print(
+            f"This deletes and republishes every demo record in {core['confluent_environment_display_name']}, "
+            f"restarts the stream, and recreates Demo 2's agent, tool, model, and staging tables."
+        )
     else:
-        print(f"This drops Demo 2's agent, tool, model, and staging tables in "
-              f"{core['confluent_environment_display_name']}, deletes RA417's offers, and restarts the stream.")
+        print(
+            f"This drops Demo 2's agent, tool, model, and staging tables in "
+            f"{core['confluent_environment_display_name']}, deletes RA417's offers, and restarts the stream."
+        )
     if not args.yes and input("Continue? (y/n): ").strip().lower() != "y":
         sys.exit("Cancelled.")
     try:

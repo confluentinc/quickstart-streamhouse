@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Destroy the Streamhouse airline flight-recovery demo from Confluent Cloud.
+Destroy the Streamhouse labs from Confluent Cloud.
 Uses credentials from credentials.env for destruction via Terraform.
+
+    uv run destroy                             # both labs and the shared core environment
+    uv run destroy --lab agentic-pit-decisions # one lab's objects; core and the other lab stay
 """
 
 import argparse
@@ -14,7 +17,7 @@ from pathlib import Path
 from dotenv import dotenv_values, unset_key
 
 from .credentials import load_or_create_credentials_file
-from .deploy import WORKSHOP
+from .deploy import DEPLOY_LABS, LABS, WORKSHOP
 from .login_checks import ensure_confluent_login
 from .terraform import get_project_root
 from .terraform_runner import run_terraform_destroy
@@ -73,31 +76,29 @@ def cleanup_terraform_artifacts(env_path: Path) -> None:
 
 # Confluent can keep listing a Tableflow topic as a user of the provider
 # integration after Tableflow is gone, sometimes for good, so deleting it returns
-# 409 "integration is being used in some confluent resource". Deleting the
-# environment removes the integration regardless, so when it's all that's left
-# in airline-demo's state, drop it from state and let core's destroy take it.
+# 409 "integration is being used in some confluent resource". The catalog tags
+# 409 the same way while a topic still carries them. Deleting the environment
+# removes both regardless, so when only these are left in airline-demo's state,
+# drop them from state and let core's destroy take them.
 TABLEFLOW_PROVIDER_INTEGRATION = "confluent_provider_integration.tableflow[0]"
+CATALOG_TAG_PREFIX = "confluent_tag.demo["
 
 
 def release_provider_integration(env_path: Path) -> bool:
-    """Drop the provider integration from state if it's the only resource left."""
-    listed = subprocess.run(
-        ["terraform", "state", "list"], cwd=env_path, capture_output=True, text=True
-    )
+    """Drop the provider integration and catalog tags from state if nothing else is left."""
+    listed = subprocess.run(["terraform", "state", "list"], cwd=env_path, capture_output=True, text=True)
     if listed.returncode != 0:
         return False
     managed = [r for r in listed.stdout.split() if not r.startswith("data.")]
-    if managed != [TABLEFLOW_PROVIDER_INTEGRATION]:
+    if not managed or not all(r == TABLEFLOW_PROVIDER_INTEGRATION or r.startswith(CATALOG_TAG_PREFIX) for r in managed):
         return False
 
-    removed = subprocess.run(
-        ["terraform", "state", "rm", TABLEFLOW_PROVIDER_INTEGRATION], cwd=env_path
-    )
+    removed = subprocess.run(["terraform", "state", "rm", *managed], cwd=env_path)
     if removed.returncode != 0:
         return False
     print(
-        "  ⚠ Confluent still lists the Tableflow provider integration as in use; "
-        "core's destroy deletes it with the environment"
+        "  ⚠ Confluent still lists the Tableflow provider integration or catalog tags as in use; "
+        "core's destroy deletes them with the environment"
     )
     return True
 
@@ -134,11 +135,30 @@ def _cleanup_mcp(root: Path) -> None:
         print(f"⚠ MCP cleanup failed: {e}")
 
 
+def _envs_to_destroy(lab: str | None) -> list[str]:
+    """Terraform roots in reverse dependency order: every lab before core."""
+    if lab:
+        return [LABS[lab][1]]
+    return ["agentic-pit-decisions", "airline-demo", "core"]
+
+
+def _cleanup_pit_decisions(root: Path) -> None:
+    """Delete the Agentic Pit Decisions credential card and seed marker, which point at a gone environment."""
+    from .pit_decisions.card import delete_card
+    from .pit_decisions.seed import SEED_MARKER
+
+    delete_card(root)
+    (root / SEED_MARKER).unlink(missing_ok=True)
+
+
 def main():
     """Main entry point for destroy."""
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(
-        description="Destroy the Streamhouse airline demo resources"
+    parser = argparse.ArgumentParser(description="Destroy the Streamhouse lab resources")
+    parser.add_argument(
+        "--lab",
+        choices=tuple(LABS),
+        help="Destroy only this lab's Terraform root, keeping core and the other lab",
     )
     parser.add_argument(
         "--testing",
@@ -152,7 +172,7 @@ def main():
     )
     args = parser.parse_args()
 
-    print("=== Streamhouse Airline Demo — Destroy ===\n")
+    print("=== Streamhouse Labs — Destroy ===\n")
     if args.testing:
         print("Running in TESTING mode (non-interactive)\n")
 
@@ -167,8 +187,7 @@ def main():
             sys.exit(1)
 
         creds = dotenv_values(str(creds_file))
-        # Reverse dependency order: airline-demo before core.
-        envs_to_destroy = ["airline-demo", "core"]
+        envs_to_destroy = _envs_to_destroy(args.lab)
 
         for key, value in creds.items():
             if value:
@@ -185,8 +204,7 @@ def main():
         ensure_confluent_login(env_creds, root / "credentials.env", interactive=True)
         print("✓ Confluent CLI logged in")
 
-        # Reverse dependency order: airline-demo before core.
-        envs_to_destroy = ["airline-demo", "core"]
+        envs_to_destroy = _envs_to_destroy(args.lab)
         print(f"✓ Will destroy: {', '.join(envs_to_destroy)}")
 
         # Load credentials file
@@ -200,9 +218,7 @@ def main():
         # Step 4: Show summary and confirm
         print("\n--- Destroy Summary ---")
         print(f"Destroying: {', '.join(envs_to_destroy)}")
-        print(
-            "\n⚠️  WARNING: This will permanently destroy all airline demo resources (core + airline-demo)!"
-        )
+        print(f"\n⚠️  WARNING: This will permanently destroy {', '.join(envs_to_destroy)}!")
 
         confirm = input("\nAre you sure you want to proceed? (y/n): ").strip().lower()
         if confirm != "y":
@@ -225,6 +241,8 @@ def main():
 
         print(f"\n→ Destroying {env}...")
         destroyed = run_terraform_destroy(env_path)
+        if destroyed and env == "agentic-pit-decisions":
+            _cleanup_pit_decisions(root)
         if not destroyed and env == "airline-demo" and release_provider_integration(env_path):
             destroyed = run_terraform_destroy(env_path)
 
@@ -234,20 +252,27 @@ def main():
             print(f"  ⚠ Destroy failed but --force set: cleaning local state for {env}")
             cleanup_terraform_artifacts(env_path)
         else:
-            # Destroying core after a failed airline-demo destroy deletes the environment
-            # underneath airline-demo's state, so the next deploy fails with 401s.
+            # Destroying core after a failed lab destroy deletes the environment
+            # underneath the lab's state, so the next deploy fails with 401s.
             print(
                 f"\n✗ Destroy failed at {env}. Stopping so later environments keep their state. "
                 "Fix the error and rerun, or use --force to clean local state anyway."
             )
             sys.exit(1)
 
-    _cleanup_mcp(root)
+    if args.lab:
+        print("\n✓ Destroy process completed! Core and any other lab are still deployed.")
+        return
 
-    # With nothing deployed, the next deploy can be either kind again.
+    _cleanup_mcp(root)
+    _cleanup_pit_decisions(root)
+
+    # With nothing deployed, the next deploy can be either kind again and asks which lab.
     creds_file = root / "credentials.env"
-    if creds_file.exists() and dotenv_values(str(creds_file)).get(WORKSHOP):
-        unset_key(str(creds_file), WORKSHOP)
+    saved = dotenv_values(str(creds_file)) if creds_file.exists() else {}
+    for key in (WORKSHOP, DEPLOY_LABS):
+        if saved.get(key):
+            unset_key(str(creds_file), key)
 
     print("\n✓ Destroy process completed!")
 

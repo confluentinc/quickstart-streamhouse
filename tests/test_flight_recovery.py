@@ -12,8 +12,15 @@ import requests
 from scripts import airport_datagen as g
 
 START = datetime(2026, 9, 28, 17, 0)
-OFFER_FIELDS = {"passenger_id", "recommended_flight_id", "hotel_name", "status", "hotel_cost",
-                "impacted_at", "recommended_at"}
+OFFER_FIELDS = {
+    "passenger_id",
+    "recommended_flight_id",
+    "hotel_name",
+    "status",
+    "hotel_cost",
+    "impacted_at",
+    "recommended_at",
+}
 
 
 @pytest.fixture(scope="module")
@@ -76,8 +83,9 @@ def test_every_passenger_has_a_unique_seat_on_each_flight(plan, records):
 
 def test_itineraries_match_the_source_table_columns(records):
     # The Avro serializer silently drops a field the registered schema lacks.
-    sql = (Path(__file__).parent.parent / "terraform" / "airline-demo" / "sql"
-           / "21-source-passenger-itineraries.sql").read_text()
+    sql = (
+        Path(__file__).parent.parent / "terraform" / "airline-demo" / "sql" / "21-source-passenger-itineraries.sql"
+    ).read_text()
     columns = re.findall(r"^  (\w+) STRING", sql, re.M)
     assert columns == ["inbound_flight_id", "inbound_seat", "connecting_flight_id", "connecting_seat"]
     assert all(list(value) == columns for topic, _, value in records if topic == g.ITINERARIES)
@@ -124,8 +132,9 @@ def test_live_arrivals_revise_estimates_without_changing_anything_else(plan):
         for at in flight.ticks(datetime.min, datetime.max):
             assert flight.status_at(at) == original.status_at(at)
             assert g._band(flight.delay_at(at)) == g._band(original.delay_at(at))
-    assert ([(p.connecting and p.connecting.key, p.impacted_at) for p in live.passengers]
-            == [(p.connecting and p.connecting.key, p.impacted_at) for p in plain.passengers])
+    assert [(p.connecting and p.connecting.key, p.impacted_at) for p in live.passengers] == [
+        (p.connecting and p.connecting.key, p.impacted_at) for p in plain.passengers
+    ]
 
 
 def test_some_passengers_have_no_connection(plan):
@@ -167,14 +176,19 @@ def test_hero_offers_stay_open_for_the_presenter(plan):
 
 
 def test_initial_records_stay_within_lightning_row_cap(plan, records):
-    window = [f for d in [*plan.days, plan.tomorrow] for f in d.flights
-              if START - timedelta(hours=18) <= f.scheduled < START + timedelta(hours=6)]
+    window = [
+        f
+        for d in [*plan.days, plan.tomorrow]
+        for f in d.flights
+        if START - timedelta(hours=18) <= f.scheduled < START + timedelta(hours=6)
+    ]
     assert len(window) == 180
     written = {key for topic, key, _ in records if topic == g.ITINERARIES}
     expected = {p.key for d in plan.days for p in d.passengers if d.live or p.connecting}
     assert written == expected
-    assert all(value["scheduled_time"] <= START + timedelta(days=2)
-               for topic, _, value in records if topic == g.FLIGHTS)
+    assert all(
+        value["scheduled_time"] <= START + timedelta(days=2) for topic, _, value in records if topic == g.FLIGHTS
+    )
 
 
 def test_stream_updates_flights_every_minute_ra417_every_30_seconds_and_hotels_every_15(plan):
@@ -187,13 +201,16 @@ def test_stream_updates_flights_every_minute_ra417_every_30_seconds_and_hotels_e
     hero_updates = [value for _, topic, key, value in events if topic == g.FLIGHTS and key == hero.key]
     assert len(hero_updates) == 2 * g.STREAM_MINUTES
     assert hero_updates[-1]["estimated_time"] == hero.scheduled + timedelta(minutes=115)
-    rooms = {hotel: [(at, value["available_rooms"]) for at, topic, key, value in events
-                     if topic == g.HOTELS and key == hotel] for hotel in g.HOTEL_RATES}
+    rooms = {
+        hotel: [
+            (at, value["available_rooms"]) for at, topic, key, value in events if topic == g.HOTELS and key == hotel
+        ]
+        for hotel in g.HOTEL_RATES
+    }
     assert all(len(updates) == 4 * g.STREAM_MINUTES for updates in rooms.values())
     assert all((count == 0) == (at >= START + g.SELLOUT) for at, count in rooms[g.GRAND_HYATT])
     assert all(count >= 1 for hotel in (g.MARRIOTT, g.HILTON) for _, count in rooms[hotel])
-    assert all(abs(a - b) <= 1
-               for (_, a), (_, b) in pairwise([(START, g.GRAND_HYATT_ROOMS), *rooms[g.GRAND_HYATT]]))
+    assert all(abs(a - b) <= 1 for (_, a), (_, b) in pairwise([(START, g.GRAND_HYATT_ROOMS), *rooms[g.GRAND_HYATT]]))
     offers = [value for _, topic, _, value in events if topic == g.OFFERS]
     assert sum(value["passenger_id"].startswith("P-0928-417-") for value in offers) == 300
 
@@ -252,21 +269,37 @@ def _webhook_publisher(monkeypatch, statuses):
 
     monkeypatch.setattr(requests, "post", post)
     monkeypatch.setattr(g.time, "sleep", lambda seconds: None)
-    publisher = g.Publisher({"hotel_webhook_url": "https://lcc-1.example/webhook",
-                                           "hotel_webhook_api_key": "k", "hotel_webhook_api_secret": "s",
-                                           "schema_registry_url": "http://sr", "schema_registry_api_key": "a",
-                                           "schema_registry_api_secret": "b", "bootstrap_servers": "x:9092",
-                                           "kafka_api_key": "a", "kafka_api_secret": "b"}, dry_run=False)
+    publisher = g.Publisher(
+        {
+            "hotel_webhook_url": "https://lcc-1.example/webhook",
+            "hotel_webhook_api_key": "k",
+            "hotel_webhook_api_secret": "s",
+            "schema_registry_url": "http://sr",
+            "schema_registry_api_key": "a",
+            "schema_registry_api_secret": "b",
+            "bootstrap_servers": "x:9092",
+            "kafka_api_key": "a",
+            "kafka_api_secret": "b",
+        },
+        dry_run=False,
+    )
     return publisher, calls
 
 
 def test_hotel_updates_post_to_the_webhook_and_retry_when_it_is_busy(monkeypatch):
     publisher, calls = _webhook_publisher(monkeypatch, [503, 200])
-    publisher.publish(g.HOTELS, "Grand Hyatt at SFO",
-                      dict(available_rooms=40, nightly_rate=Decimal("329.00")))
-    assert calls == [("https://lcc-1.example/webhook",
-                      {"hotel_name": "Grand Hyatt at SFO", "available_rooms": 40, "nightly_rate": "329.00"},
-                      ("k", "s"))] * 2
+    publisher.publish(g.HOTELS, "Grand Hyatt at SFO", dict(available_rooms=40, nightly_rate=Decimal("329.00")))
+    assert (
+        calls
+        == [
+            (
+                "https://lcc-1.example/webhook",
+                {"hotel_name": "Grand Hyatt at SFO", "available_rooms": 40, "nightly_rate": "329.00"},
+                ("k", "s"),
+            )
+        ]
+        * 2
+    )
 
 
 def test_a_rejected_hotel_update_raises_after_the_retries(monkeypatch):
@@ -288,6 +321,7 @@ def test_hotel_warmup_sends_at_least_200_updates_and_ends_at_the_starting_rooms(
 
 def test_cluster_type_follows_region_unless_overridden():
     from scripts import tfvars
+
     assert tfvars.kafka_cluster_type("us-east-1") == "standard"
     assert tfvars.kafka_cluster_type("us-west-2") == "dedicated"
     assert tfvars.kafka_cluster_type("us-east-1", "dedicated") == "dedicated"

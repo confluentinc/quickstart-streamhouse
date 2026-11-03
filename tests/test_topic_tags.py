@@ -13,11 +13,21 @@ def response(data, status=200):
 
 def test_update_preserves_definition_and_retries_readback(monkeypatch):
     monkeypatch.setattr(topic_tags.time, "sleep", lambda _: None)
-    tag = {"name": "PII", "description": "Synthetic", "entityTypes": ["cf_entity"],
-           "attributeDefs": [], "superTypes": [], "color": "DEFAULT_COLOR"}
+    tag = {
+        "name": "PII",
+        "description": "Synthetic",
+        "entityTypes": ["cf_entity"],
+        "attributeDefs": [],
+        "superTypes": [],
+        "color": "DEFAULT_COLOR",
+    }
     session = Mock()
-    session.request.side_effect = [response(tag), response([{"name": "PII"}]),
-                                   response(tag), response({**tag, "color": "MAGENTA_LIGHT"})]
+    session.request.side_effect = [
+        response(tag),
+        response([{"name": "PII"}]),
+        response(tag),
+        response({**tag, "color": "MAGENTA_LIGHT"}),
+    ]
     assert topic_tags.update_tag_color(session, "https://catalog", "PII", "MAGENTA_LIGHT")
     payload = session.request.call_args_list[1].kwargs["json"][0]
     assert payload == {**tag, "color": "MAGENTA_LIGHT"}

@@ -10,13 +10,20 @@ from scripts import airport_datagen, demo_reset
 
 SQL = Path(__file__).parent.parent / "terraform" / "airline-demo" / "sql"
 STATEMENTS = {  # every statement deploy creates, by name, with its SQL file
-    "airport-table-flight-status": "20", "airport-table-passenger-itineraries": "21",
-    "airport-table-hotel-inventory": "22", "airport-table-passenger-recommendations": "23",
-    "airport-materialize-passenger-state": "24", "airport-materialize-flight-impact": "25",
-    "airport-agent-passenger-state-changes": "26", "airport-agent-impacted-passengers": "27",
-    "airport-agent-model": "32", "airport-agent-tool": "29", "airport-agent-passenger-recovery": "30",
+    "airport-table-flight-status": "20",
+    "airport-table-passenger-itineraries": "21",
+    "airport-table-hotel-inventory": "22",
+    "airport-table-passenger-recommendations": "23",
+    "airport-materialize-passenger-state": "24",
+    "airport-materialize-flight-impact": "25",
+    "airport-agent-passenger-state-changes": "26",
+    "airport-agent-impacted-passengers": "27",
+    "airport-agent-model": "32",
+    "airport-agent-tool": "29",
+    "airport-agent-passenger-recovery": "30",
     "airport-agent-insert-passenger-recommendations": "31",
-    "airport-table-hotel-availability-updates": "33", "airport-insert-hotel-inventory": "34",
+    "airport-table-hotel-availability-updates": "33",
+    "airport-insert-hotel-inventory": "34",
 }
 
 
@@ -27,9 +34,14 @@ def _deployed() -> list[dict]:
 def test_resets_only_demo_2_statements_and_stops_the_insert_first():
     names = demo_reset.demo_2_statements(_deployed())
     assert names[0] == "airport-agent-insert-passenger-recommendations"
-    assert set(names) == {"airport-agent-insert-passenger-recommendations", "airport-agent-passenger-recovery",
-                          "airport-agent-tool", "airport-agent-model",
-                          "airport-agent-passenger-state-changes", "airport-agent-impacted-passengers"}
+    assert set(names) == {
+        "airport-agent-insert-passenger-recommendations",
+        "airport-agent-passenger-recovery",
+        "airport-agent-tool",
+        "airport-agent-model",
+        "airport-agent-passenger-state-changes",
+        "airport-agent-impacted-passengers",
+    }
 
 
 def test_an_on_screen_insert_is_found_by_its_sql():
@@ -61,10 +73,14 @@ class _CLI:
         return type("Result", (), {"stdout": out, "stderr": "", "returncode": 0})()
 
 
-CORE = {"cloud_region": "us-east-1", "confluent_environment_id": "env-1",
-        "confluent_flink_compute_pool_id": "lfcp-1", "app_manager_service_account_id": "sa-1",
-        "confluent_environment_display_name": "RIVER-AIR-PROD-ENV",
-        "confluent_kafka_cluster_display_name": "RIVER-AIR-PROD-CLUSTER"}
+CORE = {
+    "cloud_region": "us-east-1",
+    "confluent_environment_id": "env-1",
+    "confluent_flink_compute_pool_id": "lfcp-1",
+    "app_manager_service_account_id": "sa-1",
+    "confluent_environment_display_name": "RIVER-AIR-PROD-ENV",
+    "confluent_kafka_cluster_display_name": "RIVER-AIR-PROD-CLUSTER",
+}
 
 
 def test_drop_runs_in_the_demo_catalog_then_cleans_up(monkeypatch):
@@ -73,7 +89,8 @@ def test_drop_runs_in_the_demo_catalog_then_cleans_up(monkeypatch):
     demo_reset.Flink(CORE).run("DROP TOOL IF EXISTS hotel_inventory_live_context")
     create, _, delete = cli.calls
     assert create[create.index("--property") + 1] == (
-        "sql.current-catalog=RIVER-AIR-PROD-ENV,sql.current-database=RIVER-AIR-PROD-CLUSTER")
+        "sql.current-catalog=RIVER-AIR-PROD-ENV,sql.current-database=RIVER-AIR-PROD-CLUSTER"
+    )
     assert create[create.index("--service-account") + 1] == "sa-1"
     assert delete[3:5] == ["delete", create[4]]
 

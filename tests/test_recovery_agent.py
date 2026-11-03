@@ -114,5 +114,4 @@ def test_video_2_deploy_stops_before_what_demo_2_creates_on_screen(monkeypatch, 
 
     monkeypatch.setattr(deploy, "_run_datagen", datagen)
     deploy._finish(tmp_path, "none", video_2=True, speed=4)
-    assert calls == [("datagen", True, 4, False), "rtce", deploy.VIDEO_2_TARGETS,
-                     ("datagen", False, 4, True), "colors"]
+    assert calls == [("datagen", True, 4, False), "rtce", deploy.VIDEO_2_TARGETS, ("datagen", False, 4, True), "colors"]

@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 
 from scripts import setup_rtce as rtce
 from scripts.airport_datagen import HUB, OFFERS, SEATS, Publisher
+from scripts.local_port import ensure_port_free
 from scripts.terraform import extract_kafka_credentials, get_project_root
 
 STATIC = Path(__file__).parent / "static"
@@ -72,8 +73,12 @@ class Deployment:
         return f"https://sql.{region}.{cloud}.confluent.cloud/query/v1alpha1"
 
     def lightning_query(
-        self, topic: str, key: str | None = None, limit: int = PAGE_SIZE,
-        where=(), order_by: tuple[str, str] | None = None,
+        self,
+        topic: str,
+        key: str | None = None,
+        limit: int = PAGE_SIZE,
+        where=(),
+        order_by: tuple[str, str] | None = None,
     ) -> list[dict]:
         """Run one Lightning Query; rows come back with lowercase column names."""
         query = rtce._build_lightning_query(topic, key=key, limit=limit, where=where, order_by=order_by)
@@ -126,8 +131,9 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _rows(topic: str, key: str | None = None, limit: int = PAGE_SIZE,
-          where=(), order_by: tuple[str, str] | None = None) -> list[dict]:
+def _rows(
+    topic: str, key: str | None = None, limit: int = PAGE_SIZE, where=(), order_by: tuple[str, str] | None = None
+) -> list[dict]:
     return deployment.lightning_query(topic, key=key, limit=limit, where=where, order_by=order_by)
 
 
@@ -163,21 +169,24 @@ def _get_publisher() -> Publisher:
 def _write_offer(offer: dict) -> None:
     hotel_cost = offer.get("hotel_cost")
     publisher = _get_publisher()
-    publisher.publish(OFFERS, offer["key"], {
-        "passenger_id": offer["passenger_id"],
-        "recommended_flight_id": offer["recommended_flight_id"],
-        "hotel_name": offer.get("hotel_name") or None,
-        "status": offer["status"],
-        "hotel_cost": Decimal(str(hotel_cost)) if hotel_cost not in (None, "") else None,
-        "impacted_at": _timestamp(offer.get("impacted_at")),
-        "recommended_at": _timestamp(offer.get("recommended_at")),
-    })
+    publisher.publish(
+        OFFERS,
+        offer["key"],
+        {
+            "passenger_id": offer["passenger_id"],
+            "recommended_flight_id": offer["recommended_flight_id"],
+            "hotel_name": offer.get("hotel_name") or None,
+            "status": offer["status"],
+            "hotel_cost": Decimal(str(hotel_cost)) if hotel_cost not in (None, "") else None,
+            "impacted_at": _timestamp(offer.get("impacted_at")),
+            "recommended_at": _timestamp(offer.get("recommended_at")),
+        },
+    )
     publisher.flush()
 
 
 def _passenger_offers(passenger_id: str) -> list[dict]:
-    return sorted(_rows(OFFERS, limit=3, where=[("passenger_id", "=", passenger_id)]),
-                  key=lambda row: row["key"])
+    return sorted(_rows(OFFERS, limit=3, where=[("passenger_id", "=", passenger_id)]), key=lambda row: row["key"])
 
 
 def _hotels() -> dict[str, dict]:
@@ -186,8 +195,10 @@ def _hotels() -> dict[str, dict]:
 
 def _hotel_options() -> list[dict]:
     """Every hotel's rooms left and rate, cheapest first (the order select_offer replaces a sold-out hotel in)."""
-    return sorted(({**row, "available_rooms": _int(row.get("available_rooms"))} for row in _hotels().values()),
-                  key=lambda row: Decimal(str(row["nightly_rate"])))
+    return sorted(
+        ({**row, "available_rooms": _int(row.get("available_rooms"))} for row in _hotels().values()),
+        key=lambda row: Decimal(str(row["nightly_rate"])),
+    )
 
 
 def _scheduled_rows(topic: str, start: datetime, end: datetime) -> list[dict]:
@@ -195,8 +206,11 @@ def _scheduled_rows(topic: str, start: datetime, end: datetime) -> list[dict]:
     rows: dict[tuple, dict] = {}
     since = start
     while True:
-        page = _rows(topic, where=[("scheduled_time", ">=", since), ("scheduled_time", "<", end)],
-                     order_by=("scheduled_time", "ASC"))
+        page = _rows(
+            topic,
+            where=[("scheduled_time", ">=", since), ("scheduled_time", "<", end)],
+            order_by=("scheduled_time", "ASC"),
+        )
         rows.update((tuple(row.items()), row) for row in page)  # each page repeats the last one's final time
         last = _timestamp(page[-1].get("scheduled_time")) if page else None
         if len(page) < PAGE_SIZE or last is None or last == since:
@@ -218,8 +232,12 @@ def _live_copies(flights: list[dict], impact: dict[str, dict]) -> list[dict]:
     for key, rows in copies.items():
         reported = impact.get(key, {}).get("delay_minutes")
         matching = [row for row in rows if reported not in (None, "") and row["delay_minutes"] == _int(reported)]
-        chosen.append(max(matching or rows, key=lambda row: (
-            STAGES.get(row.get("status"), 0), row["estimated_time"] or datetime.min)))
+        chosen.append(
+            max(
+                matching or rows,
+                key=lambda row: (STAGES.get(row.get("status"), 0), row["estimated_time"] or datetime.min),
+            )
+        )
     return chosen
 
 
@@ -229,6 +247,7 @@ def _flights(key: str | None = None, window: tuple[datetime, datetime] | None = 
     Status and delay come from flight_status (live within seconds), the at-risk count from flight_impact
     (about a minute behind).
     """
+
     def read(topic: str) -> list[dict]:
         # A key lookup asks for more than one row because flight_status can hold a stale copy (_live_copies).
         return _rows(topic, key=key, limit=10) if key is not None else _scheduled_rows(topic, *window)
@@ -240,17 +259,21 @@ def _flights(key: str | None = None, window: tuple[datetime, datetime] | None = 
         delay = round((estimated - scheduled) / timedelta(minutes=1)) if scheduled and estimated else 0
         flights.append({**row, "estimated_time": estimated, "delay_minutes": delay})
     impact = {row["key"]: row for row in impact.result()}
-    flights = sorted(_live_copies(flights, impact),
-                     key=lambda row: (_timestamp(row.get("scheduled_time")) or datetime.min, row["key"]))
-    return [{**row, "affected_passengers": _int(impact.get(row["key"], {}).get("affected_passengers"))}
-            for row in flights]
+    flights = sorted(
+        _live_copies(flights, impact),
+        key=lambda row: (_timestamp(row.get("scheduled_time")) or datetime.min, row["key"]),
+    )
+    return [
+        {**row, "affected_passengers": _int(impact.get(row["key"], {}).get("affected_passengers"))} for row in flights
+    ]
 
 
 @app.get("/api/state")
 def state():
     now = _now()
-    booked = _pool.submit(deployment.lightning_scan, OFFERS,
-                          [("status", "=", "BOOKED"), ("recommended_at", ">=", now - WINDOW_BEFORE)])
+    booked = _pool.submit(
+        deployment.lightning_scan, OFFERS, [("status", "=", "BOOKED"), ("recommended_at", ">=", now - WINDOW_BEFORE)]
+    )
     flights = _flights(window=(now - WINDOW_BEFORE, now + WINDOW_AFTER))
     booked = booked.result()
     delays = sorted(flights, key=lambda row: (-row["delay_minutes"], row.get("key") or ""))[:10]
@@ -301,11 +324,16 @@ def select_offer(passenger_id: str, offer_id: str):
         hotels = _hotels()
         hotel = hotels.get(chosen["hotel_name"])
         if not hotel or _int(hotel.get("available_rooms")) < 1:
-            available = sorted((row for row in hotels.values() if _int(row.get("available_rooms")) > 0),
-                               key=lambda row: Decimal(str(row["nightly_rate"])))
+            available = sorted(
+                (row for row in hotels.values() if _int(row.get("available_rooms")) > 0),
+                key=lambda row: Decimal(str(row["nightly_rate"])),
+            )
             # The passenger's other offer keeps its hotel, so the replacement is a third hotel when one has rooms.
-            other = {row.get("hotel_name") for row in offers
-                     if row is not chosen and row.get("status") in {"OFFERED", "SELECTED"}}
+            other = {
+                row.get("hotel_name")
+                for row in offers
+                if row is not chosen and row.get("status") in {"OFFERED", "SELECTED"}
+            }
             options = [row for row in available if row["key"] not in other] or available
             if not options:
                 raise HTTPException(status_code=409, detail="No hotel rooms available")
@@ -352,6 +380,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
+    ensure_port_free(args.host, args.port, "airport-app")
     import uvicorn
 
     uvicorn.run(app, host=args.host, port=args.port)

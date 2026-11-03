@@ -63,9 +63,7 @@ def _invoke_model(
         try:
             if attempt > 0:
                 wait_time = retry_delay * (2 ** (attempt - 1))
-                logger.info(
-                    f"Waiting {wait_time}s before retry (attempt {attempt + 1}/{max_retries})..."
-                )
+                logger.info(f"Waiting {wait_time}s before retry (attempt {attempt + 1}/{max_retries})...")
                 time.sleep(wait_time)
 
             response = bedrock_client.invoke_model(
@@ -78,18 +76,11 @@ def _invoke_model(
         except ClientError as e:
             error_code = e.response["Error"]["Code"]
 
-            if (
-                error_code == "UnrecognizedClientException"
-                and attempt < max_retries - 1
-            ):
-                logger.warning(
-                    f"Credentials not yet recognized (attempt {attempt + 1}/{max_retries})"
-                )
+            if error_code == "UnrecognizedClientException" and attempt < max_retries - 1:
+                logger.warning(f"Credentials not yet recognized (attempt {attempt + 1}/{max_retries})")
                 continue
 
-            logger.debug(
-                f"Bedrock error for {model_id}: {error_code} — {e.response['Error']['Message']}"
-            )
+            logger.debug(f"Bedrock error for {model_id}: {error_code} — {e.response['Error']['Message']}")
 
             if error_code == "UnrecognizedClientException":
                 return False, "invalid_keys"
@@ -150,9 +141,7 @@ def test_bedrock_credentials(
         "messages": [{"role": "user", "content": "Say 'test'"}],
     }
 
-    ok, error_type = _invoke_model(
-        client, model_id, body, logger, max_retries, retry_delay
-    )
+    ok, error_type = _invoke_model(client, model_id, body, logger, max_retries, retry_delay)
     if ok:
         logger.info("✓ Claude Sonnet 4.5 access confirmed")
     return ok, error_type
@@ -176,9 +165,7 @@ Examples:
         default=None,
         help="AWS session token (required for temporary credentials starting with ASIA)",
     )
-    parser.add_argument(
-        "--region", default="us-east-1", help="AWS region (default: us-east-1)"
-    )
+    parser.add_argument("--region", default="us-east-1", help="AWS region (default: us-east-1)")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     args = parser.parse_args()
 

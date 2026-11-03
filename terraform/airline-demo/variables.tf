@@ -17,7 +17,7 @@ variable "tableflow_topics" {
 }
 
 variable "workshop" {
-  description = "Deploy the self-service workshop's starting point (docs/workshop.md): the three source feeds and passenger_recommendations only. Attendees create passenger_state, flight_impact, and the recovery agent in the SQL workspace, and the workshop leaves out Tableflow and the hotel webhook. `uv run deploy --workshop` sets it."
+  description = "Deploy the self-service workshop's starting point (docs/flight-disruptions/workshop.md): the three source feeds and passenger_recommendations only. Attendees create passenger_state, flight_impact, and the recovery agent in the SQL workspace, and the workshop leaves out Tableflow and the hotel webhook. `uv run deploy --workshop` sets it."
   type        = bool
   default     = false
 }

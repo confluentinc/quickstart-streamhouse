@@ -70,9 +70,7 @@ def prompt_yes_no(prompt_text: str, default: bool | None = None) -> bool:
         print("Please answer y or n.")
 
 
-def prompt_with_default(
-    prompt_text: str, default: str = "", secret: bool = False, required: bool = True
-) -> str:
+def prompt_with_default(prompt_text: str, default: str = "", secret: bool = False, required: bool = True) -> str:
     """
     Prompt user with optional default value.
 

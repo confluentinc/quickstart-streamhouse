@@ -17,7 +17,7 @@ hours, and 150 of its passengers miss their connections. The demo has three scen
    Iceberg in S3 with an AWS Glue catalog, and Athena answers: how many flights were delayed in the
    last 30 days, how many passengers were impacted, what it cost, and how long recovery takes.
 
-The Flink SQL is in [`terraform/airline-demo/sql/`](../terraform/airline-demo/sql/) (files `20`–`25`),
+The Flink SQL is in [`terraform/airline-demo/sql/`](../../terraform/airline-demo/sql/) (files `20`–`25`),
 and the [data model](./data-model.md) explains every field.
 
 ## Run the demo
@@ -43,7 +43,7 @@ Ask the questions as "in the last 30 days"; the data covers a trailing 30-day wi
 
 Deploy also starts the recovery agent. It is Claude hosted in Confluent, reading live flights and
 hotel rooms through RTCE/MCP, and it writes the live day's offers for RA417
-([SQL 26–32](../terraform/airline-demo/sql/)). The generator writes every other flight's offers.
+([SQL 26–32](../../terraform/airline-demo/sql/)). The generator writes every other flight's offers.
 A deployment from before the agent moved off Amazon Bedrock keeps its Bedrock model until
 `uv run reset-demo-2 --full` swaps it for the hosted one. The Webhooks source connector is still
 planned, so the generator publishes hotel updates directly to Kafka.
@@ -53,12 +53,12 @@ To record Demo 2 with its statements run live, run `uv run reset-demo-2` first. 
 agent's model, the `hotel_inventory_live_context` tool, the agent, and its INSERT,
 rebuilds the two staging tables off screen, deletes today's RA417 offers, and restarts the stream.
 It prints when RA417 flips and when the Grand Hyatt sells out. Then run CREATE MODEL, CREATE TOOL,
-CREATE AGENT, and the INSERT on screen ([SQL 32, 29, 30, 31](../terraform/airline-demo/sql/)).
+CREATE AGENT, and the INSERT on screen ([SQL 32, 29, 30, 31](../../terraform/airline-demo/sql/)).
 Show the `passenger_state` join as `CREATE OR ALTER`; it already exists. To skip the live run,
 `uv run reset-demo-2 --restore` deletes any on-screen copy and starts the agent the way deploy does.
 
 When replaying `CREATE OR ALTER MATERIALIZED TABLE`, preserve the schema and `WITH` options in
-[`sql/24-serving-passenger-state.sql`](../terraform/airline-demo/sql/24-serving-passenger-state.sql),
+[`sql/24-serving-passenger-state.sql`](../../terraform/airline-demo/sql/24-serving-passenger-state.sql),
 and take the existing table's exact distribution from `SHOW CREATE MATERIALIZED TABLE`
 before evolving it. A query-only definition defaults to Avro keys and can mix Avro records
 with the existing raw keys, making `SELECT` fail at the first old record.
@@ -84,7 +84,7 @@ winget install astral-sh.uv Git.Git Hashicorp.Terraform ConfluentInc.Confluent-C
 
 > [!NOTE]
 >
-> This repository deploys to AWS `us-east-1` on a Standard Kafka cluster. To use another region, set `TF_VAR_cloud_region` in `credentials.env` before deploying. A region deploys a Dedicated cluster (1 CKU) when `DEDICATED_CLUSTER_REGIONS` in [tfvars.py](../scripts/tfvars.py) lists it (`us-west-2` does), or when you set `TF_VAR_kafka_cluster_type=dedicated`. Dedicated adds the hotel webhook connector; Standard has none, so the generator publishes hotel availability straight to Kafka. Changing the type of an existing deployment replaces its cluster.
+> This repository deploys to AWS `us-east-1` on a Standard Kafka cluster. To use another region, set `TF_VAR_cloud_region` in `credentials.env` before deploying. A region deploys a Dedicated cluster (1 CKU) when `DEDICATED_CLUSTER_REGIONS` in [tfvars.py](../../scripts/tfvars.py) lists it (`us-west-2` does), or when you set `TF_VAR_kafka_cluster_type=dedicated`. Dedicated adds the hotel webhook connector; Standard has none, so the generator publishes hotel availability straight to Kafka. Changing the type of an existing deployment replaces its cluster.
 
 - **Confluent Cloud** account with rights to create environments, clusters, Flink pools, and API keys.
 - **AWS credentials** (optional) power the Tableflow S3/Glue analytics scene. Run
@@ -108,13 +108,30 @@ source tables, `passenger_state`, `flight_impact`, and Tableflow to S3/Glue when
 uv run deploy
 ```
 
-It prompts for your Confluent Cloud login + API key, (optionally) AWS credentials, and which coding agent should get the RTCE MCP server. After Terraform it publishes the demo data, starts the live stream, and enables RTCE + Lightning on the demo topics. To re-register the MCP server later, run `uv run setup-rtce`.
+It asks which lab to deploy (choose **Flight Disruptions** or **Both**), then prompts for your Confluent Cloud login and API key, optional AWS credentials, and which coding agent should get the RTCE MCP server. After Terraform finishes, it publishes 30 days of history and today's flights, starts a 90-minute live stream in the background, enables RTCE and Lightning on the demo topics, and offers to start the app at http://127.0.0.1:8000. Later, run `uv run airport-app` to restart the app, `uv run airport-datagen` to restart the scene, or `uv run setup-rtce` to re-register the MCP server.
 
 > [!NOTE]
 >
 > Deploy mints an org-wide (Global) API key for the reader service account and writes it to the
 > git-ignored `credentials.env`. It's the key the app and Lightning queries authenticate with —
 > keep it out of screenshots and recordings.
+
+### Fixed resource names
+
+Resource names get a random suffix so workshop deployments can share an org. For a recording, add `TF_VAR_deployment_name=RIVER-AIR-PROD` to `credentials.env` before deploying to get fixed names: `RIVER-AIR-PROD-ENV`, `RIVER-AIR-PROD-CLUSTER`, and so on. Service account names must be unique across the org, so a second fixed deployment needs its own `TF_VAR_deployment_name`. To still show `RIVER-AIR-PROD` on screen, set `TF_VAR_environment_name=RIVER-AIR-PROD`, which renames only the environment, cluster, and compute pool.
+
+### Topic tag colors
+
+Deploy finishes by applying topic tag colors: green for `DATA_PRODUCT`, pink for `PII`, gray for `RAW_DATA`, and blue for `PARTNER_DATA`. Terraform owns the tag definitions and topic assignments in [tags.tf](../../terraform/airline-demo/tags.tf), while the Catalog API sets the colors because the Terraform provider has no color attribute. Run `uv run setup-topic-tags` to restore the configured colors after a manual Terraform update.
+
+## The app
+
+`uv run airport-app` serves the FastAPI app:
+
+- **Operations:** today's 180 flights with delay and passengers at risk, the biggest delays, and a drill-down into each flight's passengers.
+- **Passenger:** two rebooking offers, live hotel options in place of the biggest delays, offer selection and booking, and a replacement hotel offer when the chosen room has sold out.
+
+The browser polls every 2.5 seconds. Lightning credentials stay server-side. A recovery agent (Claude hosted in Confluent, reading RTCE/MCP) writes the live day's offers for RA417; the generator writes every other flight's. Hotel changes publish directly to Kafka because no Webhooks source connector is deployed yet.
 
 ## Conclusion
 
@@ -156,6 +173,6 @@ a recording. Synthetic data only — no real PII; never commit secrets.
 
 ## Navigation
 
-- **Overview:** [README](../README.md)
+- **Overview:** [README](../../README.md)
 - **Workshop:** [workshop.md](./workshop.md)
 - **Data model:** [data-model.md](./data-model.md)
