@@ -619,7 +619,7 @@ Now you see the recovery from the passenger's side. Some of the agent's offers i
 
 With a Streamhouse architecture, that's not an issue: River Air's app always has the current state of hotel availability. It checks the rooms left with a Lightning Query when a passenger selects an offer, swaps in another hotel if the room is gone, and checks again at booking.
 
-1. In the dashboard app, click the **RA417-…** flight, then click a delayed passenger's seat. **Scroll to Passenger recovery**, which shows their two offers. **These offers come from the agent you built!**
+1. In the [dashboard app](http://127.0.0.1:8000), click the **RA417-…** flight, then click a delayed passenger's seat. **Scroll to Passenger recovery**, which shows their two offers. **These offers come from the agent you built!**
 
 <img src="../images/flight-disruptions/dashboard-passenger-hotel-options.png" alt="Hotel options and Passenger recovery in the app, with the Grand Hyatt sold out and one passenger&#x27;s two offers" width="750">
 
