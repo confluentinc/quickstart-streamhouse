@@ -1,8 +1,8 @@
 # Demo script: what's on screen
 
-![River Air flight recovery architecture](./images/flight-disruptions/architecture.png)
+![River Air flight recovery architecture](../images/flight-disruptions/architecture.png)
 
-Source: [`docs/images/flight-disruptions/architecture.excalidraw`](./images/flight-disruptions/architecture.excalidraw). Re-export the PNG after editing it.
+Source: [`docs/images/flight-disruptions/architecture.excalidraw`](../images/flight-disruptions/architecture.excalidraw). Re-export the PNG after editing it.
 
 This is the full demo script. Each row marked **▶ On screen** follows the script row that mentions it. It names the thing to show and the exact query or click path that shows it. The [data model](./data-model.md) defines the fields, and the [walkthrough](./walkthrough.md) covers deploy and run.
 
@@ -105,7 +105,7 @@ Start the stream at least 40 minutes before scene 2.4.
 
 ### A. Flink join: `passenger_state` (2.1)
 
-Running statement `airport-materialize-passenger-state`, from [`sql/24-serving-passenger-state.sql`](../terraform/airline-demo/sql/24-serving-passenger-state.sql). The query part:
+Running statement `airport-materialize-passenger-state`, from [`sql/24-serving-passenger-state.sql`](../../terraform/airline-demo/sql/24-serving-passenger-state.sql). The query part:
 
 For a live `CREATE OR ALTER`, preserve the SQL file's schema and
 `WITH ('key.format' = 'raw', ...)` options, and copy the exact distribution from
@@ -134,7 +134,7 @@ LEFT JOIN flight_status onward ON p.connecting_flight_id = onward.`key`;
 
 ### B. CREATE MODEL (2.3a)
 
-Statement `airport-agent-model`, from [`sql/32-model-passenger-recovery-native.sql`](../terraform/airline-demo/sql/32-model-passenger-recovery-native.sql): Claude hosted in Confluent, with no connection or key to manage. The agent runs on it.
+Statement `airport-agent-model`, from [`sql/32-model-passenger-recovery-native.sql`](../../terraform/airline-demo/sql/32-model-passenger-recovery-native.sql): Claude hosted in Confluent, with no connection or key to manage. The agent runs on it.
 
 ```sql
 CREATE MODEL IF NOT EXISTS passenger_recovery_model
@@ -151,7 +151,7 @@ WITH (
 
 ### C. RTCE tool and CREATE AGENT (2.3b)
 
-`uv run deploy` creates the MCP connection `rtce-connection` with the Confluent CLI. It points at the RTCE endpoint for the cluster, uses streamable HTTP, and signs in with the RTCE Global key from `credentials.env`. The key never appears in SQL or Terraform. The tool is statement `airport-agent-tool`, from [`sql/29-tool-hotel-inventory-live-context.sql`](../terraform/airline-demo/sql/29-tool-hotel-inventory-live-context.sql):
+`uv run deploy` creates the MCP connection `rtce-connection` with the Confluent CLI. It points at the RTCE endpoint for the cluster, uses streamable HTTP, and signs in with the RTCE Global key from `credentials.env`. The key never appears in SQL or Terraform. The tool is statement `airport-agent-tool`, from [`sql/29-tool-hotel-inventory-live-context.sql`](../../terraform/airline-demo/sql/29-tool-hotel-inventory-live-context.sql):
 
 ```sql
 CREATE TOOL IF NOT EXISTS hotel_inventory_live_context
@@ -163,7 +163,7 @@ WITH (
 );
 ```
 
-The agent is statement `airport-agent-passenger-recovery`, from [`sql/30-agent-passenger-recovery.sql`](../terraform/airline-demo/sql/30-agent-passenger-recovery.sql). Its rules match the generator's offers, so the Athena history and the live day agree.
+The agent is statement `airport-agent-passenger-recovery`, from [`sql/30-agent-passenger-recovery.sql`](../../terraform/airline-demo/sql/30-agent-passenger-recovery.sql). Its rules match the generator's offers, so the Athena history and the live day agree.
 
 ```sql
 CREATE AGENT IF NOT EXISTS passenger_recovery_agent
@@ -193,7 +193,7 @@ WITH (
 
 ### D. AI_RUN_AGENT (2.3c)
 
-Three off-diagram steps feed the agent. First, `passenger_state` is an upsert table, and `AI_RUN_AGENT` reads only append-only input. So a staging table, `passenger_state_changes`, gets one new row for every insert or update to `passenger_state`. Each row's `$rowtime` is when that change landed. It's statement `airport-agent-passenger-state-changes`, from [`sql/26-staging-passenger-state-changes.sql`](../terraform/airline-demo/sql/26-staging-passenger-state-changes.sql):
+Three off-diagram steps feed the agent. First, `passenger_state` is an upsert table, and `AI_RUN_AGENT` reads only append-only input. So a staging table, `passenger_state_changes`, gets one new row for every insert or update to `passenger_state`. Each row's `$rowtime` is when that change landed. It's statement `airport-agent-passenger-state-changes`, from [`sql/26-staging-passenger-state-changes.sql`](../../terraform/airline-demo/sql/26-staging-passenger-state-changes.sql):
 
 ```sql
 CREATE OR ALTER MATERIALIZED TABLE passenger_state_changes (
@@ -221,7 +221,7 @@ FROM TO_CHANGELOG(
 );
 ```
 
-Second, `impacted_passengers` keeps one row per RA417 passenger, the first time they turn HIGH. `first_high` groups the HIGH change rows by passenger, and `TO_CHANGELOG` passes on only each group's first row, so later delay notices for someone already HIGH add nothing. `impacted_at` is when the first HIGH row landed. It's its own table because a Flink statement can hold only one `TO_CHANGELOG`. Statement `airport-agent-impacted-passengers`, from [`sql/27-staging-impacted-passengers.sql`](../terraform/airline-demo/sql/27-staging-impacted-passengers.sql):
+Second, `impacted_passengers` keeps one row per RA417 passenger, the first time they turn HIGH. `first_high` groups the HIGH change rows by passenger, and `TO_CHANGELOG` passes on only each group's first row, so later delay notices for someone already HIGH add nothing. `impacted_at` is when the first HIGH row landed. It's its own table because a Flink statement can hold only one `TO_CHANGELOG`. Statement `airport-agent-impacted-passengers`, from [`sql/27-staging-impacted-passengers.sql`](../../terraform/airline-demo/sql/27-staging-impacted-passengers.sql):
 
 ```sql
 CREATE OR ALTER MATERIALIZED TABLE impacted_passengers (
@@ -256,7 +256,7 @@ FROM TO_CHANGELOG(
 );
 ```
 
-Third, the agent query is statement `airport-agent-insert-passenger-recommendations`, from [`sql/31-insert-passenger-recommendations.sql`](../terraform/airline-demo/sql/31-insert-passenger-recommendations.sql). Passengers on the same inbound flight to the same final destination get the same offers, so `first_group` groups them and `TO_CHANGELOG` passes on each group's first row: the agent runs once per destination. The agent returns one line, the query splits it into two offers, and the join hands them to every passenger in the group. Zoom in on the `LATERAL TABLE(AI_RUN_AGENT(...))` block.
+Third, the agent query is statement `airport-agent-insert-passenger-recommendations`, from [`sql/31-insert-passenger-recommendations.sql`](../../terraform/airline-demo/sql/31-insert-passenger-recommendations.sql). Passengers on the same inbound flight to the same final destination get the same offers, so `first_group` groups them and `TO_CHANGELOG` passes on each group's first row: the agent runs once per destination. The agent returns one line, the query splits it into two offers, and the join hands them to every passenger in the group. Zoom in on the `LATERAL TABLE(AI_RUN_AGENT(...))` block.
 
 ```sql
 INSERT INTO passenger_recommendations

@@ -23,7 +23,7 @@ Flight Disruptions runs, in order:
 With --workshop, steps 1 and 2 build only the three source feeds and
 passenger_recommendations, and deploy stops after the Global API key and tag colors:
 attendees publish the data, build passenger_state, flight_impact, and the recovery
-agent, and turn on Lightning Tables and RTCE themselves (docs/workshop.md). The
+agent, and turn on Lightning Tables and RTCE themselves (docs/flight-disruptions/workshop.md). The
 choice is saved to credentials.env, so later runs stay in workshop mode.
 
 AWS-only by design (RTCE + Flink Native Inference are AWS-only), so there is no
@@ -244,7 +244,7 @@ def main():
     parser.add_argument(
         "--workshop",
         action="store_true",
-        help="Deploy the self-service workshop's starting point (docs/workshop.md): the source feeds only",
+        help="Deploy the self-service workshop's starting point (docs/flight-disruptions/workshop.md)",
     )
     parser.add_argument(
         "--automated",
@@ -322,7 +322,7 @@ def main():
     labs = _select_labs(args.lab, creds_file, creds, workshop, interactive=True)
     flights = FLIGHT_DISRUPTIONS in labs
     if workshop:
-        print("\nWorkshop mode: deploys the source feeds only; the labs in docs/workshop.md build the rest.")
+        print("\nWorkshop mode: deploys the source feeds only; docs/flight-disruptions/workshop.md builds the rest.")
 
     # Confluent Cloud login (saved for auto-login). A saved login that stopped working is asked for again.
     prompted = False
@@ -502,7 +502,7 @@ def _finish(root, client: str, video_2: bool = False, speed: float = 1.0) -> Non
 
 
 def _finish_workshop(root) -> None:
-    """Stop where docs/workshop.md begins, adding only the Global API key the app reads Lightning with.
+    """Stop where docs/flight-disruptions/workshop.md begins, adding only the Global API key for Lightning reads.
 
     Attendees publish the data, build passenger_state, flight_impact, and the recovery agent, and turn on
     Lightning Tables and RTCE in the labs.
@@ -514,7 +514,7 @@ def _finish_workshop(root) -> None:
     print("\n=== Applying topic tag colors ===")
     apply_tag_colors(root)
     _print_env_name(root)
-    print('\n✓ Your workshop environment is ready. Next: "Start the data" in docs/workshop.md.')
+    print('\n✓ Your workshop environment is ready. Next: "Start the data" in docs/flight-disruptions/workshop.md.')
 
 
 def _finish_pit_decisions(root, with_labs: bool = False) -> bool:

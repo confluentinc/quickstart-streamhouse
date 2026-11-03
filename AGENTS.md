@@ -4,7 +4,7 @@ Instructions for AI coding agents and contributors working in this repository. `
 
 ## Project mission
 
-This repository is the River Air flight recovery demo on Confluent Cloud. The demo script is the source of truth for the story; the [data model](./docs/data-model.md) is the data contract that serves it. The Flink SQL is in `terraform/airline-demo/sql/20` through `32`; `uv run airport-datagen` and `uv run airport-app` run the generator and app. The [self-service workshop](./docs/workshop.md) turns the first two scenes into hands-on labs.
+This repository is the River Air flight recovery demo on Confluent Cloud. The demo script is the source of truth for the story; the [data model](./docs/flight-disruptions/data-model.md) is the data contract that serves it. The Flink SQL is in `terraform/airline-demo/sql/20` through `32`; `uv run airport-datagen` and `uv run airport-app` run the generator and app. The [self-service workshop](./docs/flight-disruptions/workshop.md) turns the first two scenes into hands-on labs.
 
 ## Labs
 
@@ -45,7 +45,7 @@ The repo holds two labs that share `terraform/core`. `uv run deploy` asks which 
 * [`terraform/airline-demo/`](./terraform/airline-demo/) — the Flight Disruptions pipeline (Flink SQL in `sql/`) and Tableflow to S3/Glue. Separate root because its provider reads core's outputs.
 * [`terraform/agentic-pit-decisions/`](./terraform/agentic-pit-decisions/) — the Agentic Pit Decisions source tables and hosted model; also reads core's outputs.
 * [`tests/`](./tests/) — pytest suites.
-* [`docs/`](./docs/) — walkthrough, workshop guide, data model, and architecture diagram.
+* [`docs/`](./docs/) — one folder per lab (`flight-disruptions/`, `agentic-pit-decisions/`) holding its walkthrough and guides, plus `images/<lab>/` for screenshots and architecture diagrams.
 
 Entry points are defined in [`pyproject.toml`](./pyproject.toml) (`uv run deploy`, `uv run airport-datagen`, `uv run airport-app`, ...). Add to an existing module before creating a new directory.
 

@@ -11,7 +11,7 @@ from scripts import airport_datagen, demo_reset, deploy, setup_rtce
 
 ROOT = Path(__file__).parent.parent
 SQL = ROOT / "terraform" / "airline-demo" / "sql"
-GUIDE = ROOT / "docs" / "workshop.md"
+GUIDE = ROOT / "docs" / "flight-disruptions" / "workshop.md"
 UTC = "SET 'sql.local-time-zone' = 'UTC';"
 # What attendees paste to build the pipeline, in order.
 CHAIN = ("24", "25", "26", "27", "32", "29", "30", "31")

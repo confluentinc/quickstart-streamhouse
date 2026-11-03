@@ -8,7 +8,7 @@ Two hands-on labs on Confluent Cloud:
 <th width="75%">Description</th>
 </tr>
 <tr>
-<td><a href="./docs/walkthrough.md"><strong>Flight Disruptions</strong></a></td>
+<td><a href="./docs/flight-disruptions/walkthrough.md"><strong>Flight Disruptions</strong></a></td>
 <td>Rebook passengers in real time when a delay breaks their connections.<br><br><img src="./docs/images/flight-disruptions/architecture.png" alt="Flight Disruptions architecture diagram"></td>
 </tr>
 <tr>

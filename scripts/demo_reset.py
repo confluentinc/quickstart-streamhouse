@@ -11,7 +11,7 @@ The reset
   6. restarts the stream, so RA417's delay and the Grand Hyatt sellout play out again.
 
 Then CREATE MODEL, CREATE TOOL, CREATE AGENT, and the AI_RUN_AGENT INSERT run live on screen
-(see the SQL for each in docs/demo-script-screens.md). Running the reset again is safe.
+(see the SQL for each in docs/flight-disruptions/demo-script-screens.md). Running the reset again is safe.
 
 Usage:
   uv run reset-demo-2            # reset to the start of Demo 2
