@@ -5,7 +5,8 @@ flight uses one 182-seat layout, modeled after a two-class Boeing 737-900ER, and
 passenger has a seat on each of their flights.
 The live day is shifted so flight RA417 from Chicago is scheduled 50 minutes after the
 stream starts. Its delay grows every 30 seconds from +5 to +25 minutes, and 150 of its 170
-passengers miss their connection. Every active flight publishes its status every 30 seconds,
+passengers miss their connection. RA183 from Boston and RA185 from Las Vegas follow the same
+script later in the stream (AGENT_FLIGHTS). Every active flight publishes its status every 30 seconds,
 and on the live day each growing delay climbs a little with every update, as RA417's does.
 En-route arrivals revise their estimate by a minute or two along the way, and the three
 hotels publish their rooms every 15 seconds. Announced delays only grow (a severe delay may
@@ -13,12 +14,12 @@ shrink by at most three minutes near landing), so a flight never goes from hours
 to on time.
 
 The generator writes two rebooking offers a few seconds after a connection becomes HIGH
-risk. Past bookings are completed the way customers would complete them; RA417's offers
-stay open for the presenter. When the recovery agent runs in Flink (sql/26-32), it writes
-RA417's offers and the generator writes every other flight's.
+risk. Past bookings are completed the way customers would complete them; the offers for
+those three flights stay open for the presenter. When the recovery agent runs in Flink
+(sql/26-32), it writes their offers and the generator writes every other flight's.
 
     uv run airport-datagen                  # history + live day, then stream 90 minutes
-    uv run airport-datagen --offers generator  # write RA417's offers even if the agent runs
+    uv run airport-datagen --offers generator  # write the agent flights' offers even if the agent runs
     uv run airport-datagen --speed 5        # play the 90-minute stream in 18 minutes
     uv run airport-datagen --minutes 0      # publish the current state and exit
     uv run airport-datagen --resume         # pick a stopped stream back up on its original clock
@@ -97,6 +98,25 @@ HERO_DELAY = 115
 HERO_CONNECTING = 150
 HERO_LOCAL = 20
 HERO_BUFFER = (50, 110)
+
+
+# Two later arrivals the recovery agent also handles (sql/27-staging-impacted-passengers.sql), so its
+# offers come in three waves. Like RA417's, each delay climbs over a window of stream minutes that
+# ends about 25 minutes before the flight is due, where the map starts its descent, and it breaks every
+# connection onto the on-time last bank. RA183's passengers turn HIGH before the Grand Hyatt sells
+# out, RA185's after.
+@dataclass(frozen=True)
+class AgentFlight:
+    ramp: tuple[timedelta, timedelta]  # minutes into the stream the delay climbs from and to
+    delay: int
+    connecting: int
+    local: int
+
+
+AGENT_FLIGHTS = {
+    183: AgentFlight((timedelta(minutes=21), timedelta(minutes=36)), 75, 40, 120),  # from Boston, due at +61
+    185: AgentFlight((timedelta(minutes=49), timedelta(minutes=59)), 60, 30, 130),  # from Las Vegas, due at +84
+}
 
 CONNECTION_MINUTES = 45  # Flink's HIGH threshold in sql/24-serving-passenger-state.sql
 CONNECTING_SHARE = 0.3
@@ -247,6 +267,11 @@ class Day:
     def hero(self) -> Flight:
         return self.arrivals[ARRIVAL_MINUTES.index(HERO_MINUTE)]
 
+    @property
+    def agent_flights(self) -> list[Flight]:
+        """The live day's flights the recovery agent writes offers for: RA417, then AGENT_FLIGHTS."""
+        return [self.hero, *(f for f in self.arrivals if f.number in AGENT_FLIGHTS)]
+
 
 @dataclass
 class Plan:
@@ -290,8 +315,9 @@ def _delays(flight: Flight, steps, climb: bool = False) -> None:
 
 def _assign_delays(day: Day, rng: random.Random) -> None:
     hero = day.hero if day.live else None
+    scripted = {f.key: AGENT_FLIGHTS[f.number] for f in day.agent_flights[1:]} if day.live else {}
     forced = {f.key for f in day.departures[LAST_BANK:]} if day.live else set()
-    pool = [f for f in day.flights if f is not hero and f.key not in forced]
+    pool = [f for f in day.flights if f is not hero and f.key not in forced and f.key not in scripted]
     severe = {f.key for f in rng.sample(pool, SEVERE_PER_DAY - (1 if hero else 0))}
     # The live day streams its updates, so its delays climb the way RA417's does. History days
     # publish only their final rows, so they keep their two or three notices and the
@@ -301,6 +327,10 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
         if flight is hero:
             start, (first, last) = flight.scheduled - HERO_LEAD, HERO_RAMP
             flight.reveals = _climb(start + first, start + last, HERO_DELAY)
+        elif flight.key in scripted:
+            # On the minute, like RA417, so its passengers turn HIGH at the same stream minutes every day.
+            script, flight.offset, start = scripted[flight.key], 0, hero.scheduled - HERO_LEAD
+            flight.reveals = _climb(start + script.ramp[0], start + script.ramp[1], script.delay)
         elif flight.key in forced:
             continue
         elif flight.key in severe:
@@ -342,10 +372,15 @@ def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[P
     open_seats = {d.key: seat_rng.sample(SEATS, len(SEATS)) for d in day.departures}
     for flight in day.arrivals:
         hero = day.live and flight is day.hero
+        script = AGENT_FLIGHTS.get(flight.number) if day.live else None
         if hero:
             plan = [True] * HERO_CONNECTING + [False] * HERO_LOCAL
             rng.shuffle(plan)
             low, high = HERO_BUFFER
+        elif script:
+            plan = [True] * script.connecting + [False] * script.local
+            rng.shuffle(plan)
+            low, high = CONNECTION_BUFFER
         else:
             plan = [rng.random() < CONNECTING_SHARE for _ in range(rng.randint(*PASSENGERS_PER_FLIGHT))]
             low, high = CONNECTION_BUFFER
@@ -393,9 +428,10 @@ def _revise_estimates(day: Day, rng: random.Random) -> None:
     for passenger in day.passengers:
         if passenger.connecting:
             onward.setdefault(passenger.inbound.key, {})[passenger.connecting.key] = passenger.connecting
+    scripted = {f.key for f in day.agent_flights}
     for flight in day.arrivals:
         updates = list(flight.ticks(start, flight.estimated_at() - SETTLE_BEFORE))
-        if flight is day.hero or len(updates) < 2:
+        if flight.key in scripted or len(updates) < 2:
             continue
         settle = (updates[-1], flight.delay_at(updates[-1]))
         announced = {w for w, _ in flight.reveals}
@@ -472,6 +508,7 @@ def _recoveries(day: Day, next_day: Day, seed: int, sellout_at: datetime | None)
         open_hotels = [h for h in HOTEL_ORDER if h != GRAND_HYATT or sellout_at is None or at < sellout_at]
         return open_hotels[index]
 
+    agent = {f.key for f in day.agent_flights} if day.live else set()  # their offers stay open for the presenter
     recoveries = []
     for passenger in day.passengers:
         if passenger.impacted_at is None:
@@ -501,7 +538,7 @@ def _recoveries(day: Day, next_day: Day, seed: int, sellout_at: datetime | None)
                 recommended_at,
                 resolved_at=decided_at if books else recommended_at + OFFER_EXPIRY,
                 booked=choice if books else None,
-                completes=not (day.live and passenger.inbound is day.hero),
+                completes=passenger.inbound.key not in agent,
             )
         )
     return recoveries
@@ -797,8 +834,9 @@ def run(
 ) -> None:
     plan = build_plan(start, seed, history=history and not stream_only)
     if agent_offers:
-        plan.recoveries = [r for r in plan.recoveries if r.passenger.inbound is not plan.live.hero]
-        logging.info("The recovery agent writes %s's offers; the generator writes the rest", plan.live.hero.key)
+        agent = [f.key for f in plan.live.agent_flights]
+        plan.recoveries = [r for r in plan.recoveries if r.passenger.inbound.key not in agent]
+        logging.info("The recovery agent writes the offers for %s; the generator writes the rest", ", ".join(agent))
     publisher = Publisher(None if dry_run else extract_kafka_credentials("aws", get_project_root()), dry_run)
     if not dry_run:
         stop_previous_stream()
@@ -837,13 +875,15 @@ def run(
         follow.connecting.key,
         follow.connecting.destination,
     )
-    impacted = [p.impacted_at for p in plan.live.passengers if p.inbound is hero and p.impacted_at]
     end = plan.start + timedelta(minutes=minutes)
-    for moment, at in (
-        (f"{hero.key}'s first passenger turns HIGH", min(impacted)),
-        (f"{hero.key}'s last passenger turns HIGH", max(impacted)),
-        (f"{GRAND_HYATT} sells out", plan.start + SELLOUT),
-    ):
+    moments = [(f"{GRAND_HYATT} sells out", plan.start + SELLOUT)]
+    for flight in plan.live.agent_flights:
+        impacted = [p.impacted_at for p in plan.live.passengers if p.inbound is flight and p.impacted_at]
+        moments += [
+            (f"{flight.key}'s first passenger turns HIGH", min(impacted)),
+            (f"{flight.key}'s last passenger turns HIGH", max(impacted)),
+        ]
+    for moment, at in sorted(moments, key=lambda moment: moment[1]):
         if at <= end:
             logging.info("%s at %s UTC", moment, f"{_due(plan.start, at, speed):%H:%M}")
     try:
@@ -904,13 +944,13 @@ def main(argv: list[str] | None = None) -> None:
         "--offers",
         choices=("auto", "agent", "generator"),
         default="auto",
-        help="who writes RA417's offers (default auto: the agent when Terraform runs it)",
+        help="who writes the offers for RA417, RA183, and RA185 (default auto: the agent when Terraform runs it)",
     )
     parser.add_argument(
         "--resume",
         action="store_true",
         help="pick the last stream back up where its clock is now, at its start and speed, "
-        "without republishing; with --offers generator, RA417's missed offers arrive at once",
+        "without republishing; with --offers generator, the agent flights' missed offers arrive at once",
     )
     args = parser.parse_args(argv)
     if args.speed <= 0:

@@ -18,7 +18,9 @@ This is the full demo script. Each row marked **▶ On screen** follows the scri
 | --- | --- |
 | +5 to +25 | RA417's delay grows every 30 seconds, up to 115 minutes. |
 | +6 to +16:30 | RA417's passengers go HIGH one destination at a time, about once a minute, until all 150 are at risk. |
+| +21 to +36 | RA183 from Boston, due at +61, gets later with each update, up to 75 minutes. Its 40 connecting passengers go HIGH from +26 to +32. |
 | +40 | The Grand Hyatt at SFO sells out. |
+| +49 to +59 | RA185 from Las Vegas, due at +84, gets later with each update, up to 60 minutes. Its 30 connecting passengers go HIGH from +52:30 to +54:30, so their offers use the Marriott and the Hilton. |
 | +90 | The stream stops. |
 
 Start the stream at least 40 minutes before scene 2.4.
@@ -96,9 +98,9 @@ Start the stream at least 40 minutes before scene 2.4.
 
 **Known limits**
 
-1. The agent handles only today's RA417, the date taken from UTC when a passenger turns HIGH. RA417 is finished by +25, so start the stream before 23:30 UTC.
+1. The agent handles only today's RA417, RA183, and RA185, the date taken from UTC when a passenger turns HIGH. The last of them, RA185, is finished by about +55, so start the stream before 23:00 UTC.
 2. `impacted_at` is when a passenger's first HIGH row landed in `passenger_state_changes`. If that table or `impacted_passengers` is rebuilt, the rebuild time replaces it, and recovery times for the live day come out long. History days aren't affected.
-3. The agent runs about 40 s per destination, one after another. That is fine for RA417's 11 destinations; widening it to every flight would take hours.
+3. The agent runs about 40 s per flight and destination, one after another. That is fine for its three flights, whose 11, 6, and 3 destinations turn HIGH at different times. Every flight would add about 50 runs at the stream start, for passengers already HIGH from earlier in the day, and RA417's offers would wait behind them.
 4. Flink commits its results to Kafka about once a minute (exactly-once), and Lightning only sees committed data. So the **At risk** counts and seat-map colors trail the stream by up to a minute (about 20–25 s in rehearsal), while flight status, delays, hotel rooms, and the generator's bookings show within seconds. Restarting the stream republishes every itinerary, so Flink needs a few minutes to recompute every passenger before the seat maps settle.
 
 ## Appendix: full queries
@@ -221,7 +223,7 @@ FROM TO_CHANGELOG(
 );
 ```
 
-Second, `impacted_passengers` keeps one row per RA417 passenger, the first time they turn HIGH. `first_high` groups the HIGH change rows by passenger, and `TO_CHANGELOG` passes on only each group's first row, so later delay notices for someone already HIGH add nothing. `impacted_at` is when the first HIGH row landed. It's its own table because a Flink statement can hold only one `TO_CHANGELOG`. Statement `airport-agent-impacted-passengers`, from [`sql/27-staging-impacted-passengers.sql`](../../terraform/airline-demo/sql/27-staging-impacted-passengers.sql):
+Second, `impacted_passengers` keeps one row per passenger on the agent's three flights (RA417, RA183, and RA185), the first time they turn HIGH. `first_high` groups the HIGH change rows by passenger, and `TO_CHANGELOG` passes on only each group's first row, so later delay notices for someone already HIGH add nothing. `impacted_at` is when the first HIGH row landed. It's its own table because a Flink statement can hold only one `TO_CHANGELOG`. Statement `airport-agent-impacted-passengers`, from [`sql/27-staging-impacted-passengers.sql`](../../terraform/airline-demo/sql/27-staging-impacted-passengers.sql):
 
 ```sql
 CREATE OR ALTER MATERIALIZED TABLE impacted_passengers (
@@ -246,7 +248,11 @@ AS WITH first_high AS (
     CAST(MIN($rowtime) AS TIMESTAMP(3)) AS impacted_at
   FROM passenger_state_changes
   WHERE risk = 'HIGH'
-    AND inbound_flight_id = CONCAT('RA417-', DATE_FORMAT(CURRENT_TIMESTAMP, 'yyyyMMdd'))
+    AND inbound_flight_id IN (
+      CONCAT('RA417-', DATE_FORMAT(CURRENT_TIMESTAMP, 'yyyyMMdd')),
+      CONCAT('RA183-', DATE_FORMAT(CURRENT_TIMESTAMP, 'yyyyMMdd')),
+      CONCAT('RA185-', DATE_FORMAT(CURRENT_TIMESTAMP, 'yyyyMMdd'))
+    )
   GROUP BY `key`, inbound_flight_id, connecting_flight_id, final_destination
 )
 SELECT `key`, inbound_flight_id, connecting_flight_id, final_destination, impacted_at

@@ -150,7 +150,7 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
     | `flight_status` | One row per flight: route, scheduled and estimated time, status |
     | `passenger_itineraries` | One row per passenger: inbound flight and seat, connecting flight and seat (null when the trip ends at SFO) |
     | `hotel_inventory` | One row per hotel: rooms left and nightly rate |
-    | `passenger_recommendations` | The rebooking offers. The generator writes every other flight's, and we'll create the agent for flight RA417's recommendations in Lab 4 |
+    | `passenger_recommendations` | The rebooking offers. The generator writes most flights', and in Lab 4 we'll create the agent that writes them for RA417 and two later delayed flights, RA183 and RA185 |
 
 3. Create `passenger_state`. Paste this whole statement into one cell and run it:
 
@@ -378,7 +378,11 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
         CAST(MIN($rowtime) AS TIMESTAMP(3)) AS impacted_at
       FROM passenger_state_changes
       WHERE risk = 'HIGH'
-        AND inbound_flight_id = CONCAT('RA417-', DATE_FORMAT(CURRENT_TIMESTAMP, 'yyyyMMdd'))
+        AND inbound_flight_id IN (
+          CONCAT('RA417-', DATE_FORMAT(CURRENT_TIMESTAMP, 'yyyyMMdd')),
+          CONCAT('RA183-', DATE_FORMAT(CURRENT_TIMESTAMP, 'yyyyMMdd')),
+          CONCAT('RA185-', DATE_FORMAT(CURRENT_TIMESTAMP, 'yyyyMMdd'))
+        )
       GROUP BY `key`, inbound_flight_id, connecting_flight_id, final_destination
     )
     SELECT `key`, inbound_flight_id, connecting_flight_id, final_destination, impacted_at
@@ -529,7 +533,7 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
     WHERE passenger_id LIKE 'P-____-417-%';
     ```
 
-    Within a few minutes, each of RA417's 150 at-risk passengers has two offers for tomorrow morning: the first with the Grand Hyatt at SFO ($329), the second with the SFO Airport Marriott Waterfront ($229). If the Grand Hyatt had already sold out when your agent ran, it offers the Marriott and the Hilton instead.
+    Within a few minutes, each of RA417's 150 at-risk passengers has two offers for tomorrow morning: the first with the Grand Hyatt at SFO ($329), the second with the SFO Airport Marriott Waterfront ($229). If the Grand Hyatt had already sold out when your agent ran, it offers the Marriott and the Hilton instead. The agent also writes offers for RA183 from Boston (40 passengers, who turn HIGH 26 to 32 minutes into the stream) and RA185 from Las Vegas (30 passengers, 52 to 55 minutes in, after the Grand Hyatt sells out, so they get the Marriott and the Hilton). To see them, change `417` in the query to `183` or `185`.
 
     ![Query results from passenger_recommendations: RA417 passengers' offers with the Grand Hyatt at SFO and the SFO Airport Marriott Waterfront](../images/flight-disruptions/passenger-recommendations-query.png)
 

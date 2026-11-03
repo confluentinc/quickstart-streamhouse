@@ -34,9 +34,11 @@ def test_agent_runs_on_the_confluent_hosted_model():
     assert "bedrock_enabled" not in main
 
 
-def test_agent_handles_the_generators_hero_flight():
-    hero = f"{airport_datagen.AIRLINE}{airport_datagen.HERO_NUMBER}-"
-    assert f"inbound_flight_id = CONCAT('{hero}'" in _sql("27")
+def test_agent_handles_the_generators_agent_flights():
+    sql = _sql("27")
+    numbers = re.findall(rf"CONCAT\('{airport_datagen.AIRLINE}(\d+)-'", sql)
+    assert [int(n) for n in numbers] == [airport_datagen.HERO_NUMBER, *airport_datagen.AGENT_FLIGHTS]
+    assert "inbound_flight_id IN (" in sql
 
 
 def test_insert_writes_every_recommendation_column_in_order():

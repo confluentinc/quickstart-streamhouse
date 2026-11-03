@@ -42,8 +42,9 @@ is already enabled by Terraform), then run the Athena queries in the [data model
 Ask the questions as "in the last 30 days"; the data covers a trailing 30-day window.
 
 Deploy also starts the recovery agent. It is Claude hosted in Confluent, reading live flights and
-hotel rooms through RTCE/MCP, and it writes the live day's offers for RA417
-([SQL 26–32](../../terraform/airline-demo/sql/)). The generator writes every other flight's offers.
+hotel rooms through RTCE/MCP, and it writes the live day's offers for RA417 and for RA183 and
+RA185, whose delays build after it ([SQL 26–32](../../terraform/airline-demo/sql/)). The generator
+writes every other flight's offers.
 A deployment from before the agent moved off Amazon Bedrock keeps its Bedrock model until
 `uv run reset-demo-2 --full` swaps it for the hosted one. The Webhooks source connector is still
 planned, so the generator publishes hotel updates directly to Kafka.
@@ -131,7 +132,7 @@ Deploy finishes by applying topic tag colors: green for `DATA_PRODUCT`, pink for
 - **Operations:** today's 180 flights with delay and passengers at risk, the biggest delays, and a drill-down into each flight's passengers.
 - **Passenger:** two rebooking offers, live hotel options in place of the biggest delays, offer selection and booking, and a replacement hotel offer when the chosen room has sold out.
 
-The browser polls every 2.5 seconds. Lightning credentials stay server-side. A recovery agent (Claude hosted in Confluent, reading RTCE/MCP) writes the live day's offers for RA417; the generator writes every other flight's. Hotel changes publish directly to Kafka because no Webhooks source connector is deployed yet.
+The browser polls every 2.5 seconds. Lightning credentials stay server-side. A recovery agent (Claude hosted in Confluent, reading RTCE/MCP) writes the live day's offers for RA417, RA183, and RA185; the generator writes every other flight's. Hotel changes publish directly to Kafka because no Webhooks source connector is deployed yet.
 
 ## Conclusion
 

@@ -56,11 +56,12 @@ def test_drops_cover_every_object_demo_2_creates():
     assert "DROP MODEL IF EXISTS passenger_recovery_model" in demo_reset.DROPS  # 2.3a creates the agent's model
 
 
-def test_ra417_offer_keys_cover_every_connecting_passenger():
+def test_agent_offer_keys_cover_every_connecting_passenger_on_the_agent_flights():
     plan = airport_datagen.build_plan(datetime(2026, 10, 1, 17), history=False)
-    keys = demo_reset.ra417_offer_keys(plan)
-    assert len(keys) == 2 * airport_datagen.HERO_CONNECTING
-    assert all(k.startswith("P-1001-417-") and k[-3:] in ("-O1", "-O2") for k in keys)
+    keys = demo_reset.agent_offer_keys(plan)
+    connecting = airport_datagen.HERO_CONNECTING + sum(f.connecting for f in airport_datagen.AGENT_FLIGHTS.values())
+    assert len(keys) == 2 * connecting
+    assert all(k.startswith(("P-1001-417-", "P-1001-183-", "P-1001-185-")) and k[-3:] in ("-O1", "-O2") for k in keys)
 
 
 class _CLI:

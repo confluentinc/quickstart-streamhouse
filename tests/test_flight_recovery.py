@@ -179,13 +179,36 @@ def test_offers_are_feasible_and_recovery_time_excludes_decisions(plan):
                 assert not (row["hotel_name"] == g.GRAND_HYATT and recovery.resolved_at >= sellout)
 
 
-def test_hero_offers_stay_open_for_the_presenter(plan):
-    hero = [r for r in plan.recoveries if r.passenger.inbound is plan.live.hero]
-    assert len(hero) == 150
-    assert all(not r.completes for r in hero)
+def test_two_more_agent_flights_strand_their_connections_before_and_after_the_sellout(plan):
+    live = plan.live
+    assert [f.key for f in live.agent_flights] == ["RA417-20260928", "RA183-20260928", "RA185-20260928"]
+    for flight, origin, due in zip(live.agent_flights[1:], ("BOS", "LAS"), (61, 84), strict=True):
+        script = g.AGENT_FLIGHTS[flight.number]
+        first, last = script.ramp
+        assert flight.origin == origin and flight.scheduled == START + timedelta(minutes=due)
+        steps = (last - first) // g.UPDATE_EVERY
+        assert [when for when, _ in flight.reveals] == [START + first + g.UPDATE_EVERY * k for k in range(1, steps + 1)]
+        assert flight.delay_at(datetime.max) == script.delay
+        assert START + last <= flight.scheduled - timedelta(minutes=25)  # done before the map starts its descent
+        passengers = [p for p in live.passengers if p.inbound is flight]
+        assert len(passengers) == script.connecting + script.local
+        impacted = [p.impacted_at for p in passengers if p.impacted_at]
+        assert len(impacted) == sum(p.connecting is not None for p in passengers) == script.connecting
+        assert all(START + first < at <= START + last for at in impacted)
+    ra183, ra185 = live.agent_flights[1:]
+    assert max(p.impacted_at for p in live.passengers if p.inbound is ra183 and p.impacted_at) < START + g.SELLOUT
+    assert min(p.impacted_at for p in live.passengers if p.inbound is ra185 and p.impacted_at) > START + g.SELLOUT
+
+
+def test_agent_flight_offers_stay_open_for_the_presenter(plan):
+    agent = {f.key for f in plan.live.agent_flights}
+    offers = [r for r in plan.recoveries if r.passenger.inbound.key in agent]
+    assert len([r for r in offers if r.passenger.inbound is plan.live.hero]) == 150
+    assert len(offers) == 150 + sum(f.connecting for f in g.AGENT_FLIGHTS.values())
+    assert all(not r.completes for r in offers)
     # Offered before the sellout: the Grand Hyatt and the Marriott, then the Marriott and the Hilton once it sells out.
-    assert all(r.hotels == [g.GRAND_HYATT, g.MARRIOTT] for r in hero if r.recommended_at < START + g.SELLOUT)
-    assert all(r.hotels == [g.MARRIOTT, g.HILTON] for r in hero if r.recommended_at >= START + g.SELLOUT)
+    assert all(r.hotels == [g.GRAND_HYATT, g.MARRIOTT] for r in offers if r.recommended_at < START + g.SELLOUT)
+    assert all(r.hotels == [g.MARRIOTT, g.HILTON] for r in offers if r.recommended_at >= START + g.SELLOUT)
 
 
 def test_initial_records_stay_within_lightning_row_cap(plan, records):
@@ -251,16 +274,17 @@ def test_dry_run_prints_json(capsys):
 
 
 def _offer_keys(capsys, **kwargs):
-    g.run(START, history=False, minutes=30, dry_run=True, **kwargs)
+    g.run(START, history=False, minutes=60, dry_run=True, **kwargs)
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     return [row["key"] for row in rows if row["topic"] == g.OFFERS]
 
 
-def test_agent_writes_ra417_offers_instead_of_the_generator(capsys):
-    hero = f"P-0928-{g.HERO_NUMBER}-"
-    assert any(key.startswith(hero) for key in _offer_keys(capsys))
+def test_agent_writes_the_agent_flights_offers_instead_of_the_generator(capsys):
+    agent = tuple(f"P-0928-{number}-" for number in (g.HERO_NUMBER, *g.AGENT_FLIGHTS))
+    written = _offer_keys(capsys)
+    assert all(any(key.startswith(prefix) for key in written) for prefix in agent)
     offers = _offer_keys(capsys, agent_offers=True)
-    assert offers and not any(key.startswith(hero) for key in offers)
+    assert offers and not any(key.startswith(agent) for key in offers)
 
 
 def test_speed_compresses_waiting_but_not_stream_time():

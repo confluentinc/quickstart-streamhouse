@@ -565,7 +565,9 @@ def print_video_2_clock(clock, speed: float) -> None:
     print(f"""
 ✓ Ready for Demo 2. The stream started at {at(0)} UTC:
   {at(6)} to {at(16.5)}  RA417's passengers turn HIGH (record 2.1 here)
+  {at(26)} to {at(32)}  RA183's passengers turn HIGH
   {at(40)}           Grand Hyatt sells out (record 2.4 from {at(38)})
+  {at(52.5)} to {at(54.5)}  RA185's passengers turn HIGH
 Run CREATE MODEL, CREATE TOOL, CREATE AGENT, then the AI_RUN_AGENT INSERT on screen.""")
 
 
@@ -582,7 +584,7 @@ def _start_agent(root, targets=AGENT_TARGETS) -> bool:
         started = run_terraform(root / "terraform" / "airline-demo", targets=targets)
     if not started:
         print(
-            "⚠ The recovery agent did not start, so RA417 has no offers yet. "
+            "⚠ The recovery agent did not start, so RA417, RA183, and RA185 have no offers yet. "
             "Run `uv run airport-datagen --offers generator` to have the generator write them."
         )
     return started
@@ -591,7 +593,7 @@ def _start_agent(root, targets=AGENT_TARGETS) -> bool:
 def _run_datagen(root, agent: bool, history: bool = True, speed: float = 1.0, stream: bool = True):
     """Publish history and today's flights, then stream live updates in the background.
 
-    When the recovery agent will run, it writes RA417's live offers and the generator skips them.
+    When the recovery agent will run, it writes the agent flights' live offers and the generator skips them.
     Returns the stream start.
     """
     from confluent_kafka.schema_registry import SchemaRegistryClient
