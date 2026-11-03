@@ -14,7 +14,7 @@ SQL = ROOT / "terraform" / "airline-demo" / "sql"
 GUIDE = ROOT / "docs" / "flight-disruptions" / "workshop.md"
 UTC = "SET 'sql.local-time-zone' = 'UTC';"
 # What attendees paste to build the pipeline, in order.
-CHAIN = ("24", "25", "26", "27", "32", "29", "30", "31")
+CHAIN = ("24", "25", "26", "27", "29", "30", "31")
 
 
 def _statement(sql: str) -> str:
@@ -59,29 +59,34 @@ def test_guide_model_is_the_hosted_one_the_agent_uses():
 
 def test_statements_that_read_the_clock_run_in_utc():
     for block in _pipeline_blocks():
-        assert ("CURRENT_TIMESTAMP" in block) == block.startswith(UTC), block[:80]
+        reads_clock = "CURRENT_TIMESTAMP" in block or "$rowtime" in block
+        assert reads_clock == block.startswith(UTC), block[:80]
 
 
-def test_workshop_mode_sticks_to_the_checkout(monkeypatch, tmp_path):
+def test_workshop_is_the_default_and_sticks_to_the_checkout(monkeypatch, tmp_path):
     saved = {}
     monkeypatch.setattr(deploy, "_save_env_safe", lambda _file, key, value: saved.update({key: value}))
+    creds_file = tmp_path / "credentials.env"
+    assert not deploy._workshop_mode(False, True, creds_file, {})  # --with-labs
+    assert not deploy._workshop_mode(False, False, creds_file, {}, default=False)  # bots
+    assert saved == {}
     creds = {}
-    assert not deploy._workshop_mode(False, tmp_path / "credentials.env", creds)
-    assert deploy._workshop_mode(True, tmp_path / "credentials.env", creds)
+    assert deploy._workshop_mode(False, False, creds_file, creds)
     assert saved == {deploy.WORKSHOP: "true"} == {k: v for k, v in creds.items() if k == deploy.WORKSHOP}
-    assert deploy._workshop_mode(False, tmp_path / "credentials.env", creds)  # a later run without the flag
+    assert deploy._workshop_mode(False, False, creds_file, creds, default=False)  # a later bot run
+    with pytest.raises(SystemExit, match="has the workshop"):
+        deploy._workshop_mode(False, True, creds_file, creds)  # a later --with-labs
 
 
 def test_workshop_deploy_stops_where_the_guide_starts(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(deploy.setup_rtce, "ensure_global_key", lambda *_: calls.append("key") or "KEY")
-    monkeypatch.setattr(deploy, "apply_tag_colors", lambda root: calls.append("colors"))
     monkeypatch.setattr(deploy, "_print_env_name", lambda root: None)
     for name in ("_run_datagen", "_start_agent"):
         monkeypatch.setattr(deploy, name, lambda *args, **kwargs: pytest.fail("the attendee does this"))
     monkeypatch.setattr(deploy.setup_rtce, "main", lambda argv: pytest.fail("the attendee turns on RTCE"))
     deploy._finish_workshop(tmp_path)
-    assert calls == ["key", "colors"]
+    assert calls == ["key"]
 
 
 def test_targeted_applies_include_the_tables_the_workshop_leaves_out():
@@ -144,8 +149,9 @@ def test_workshop_mode_refuses_a_checkout_with_a_full_deployment(tmp_path):
     state.parent.mkdir(parents=True)
     state.write_text("{}")
     with pytest.raises(SystemExit):
-        deploy._workshop_mode(True, tmp_path / "credentials.env", {})
-    assert deploy._workshop_mode(False, tmp_path / "credentials.env", {deploy.WORKSHOP: "true"})
+        deploy._workshop_mode(True, False, tmp_path / "credentials.env", {})
+    assert not deploy._workshop_mode(False, False, tmp_path / "credentials.env", {})  # a plain rerun stays full
+    assert deploy._workshop_mode(False, False, tmp_path / "credentials.env", {deploy.WORKSHOP: "true"})
 
 
 def test_stream_names_a_passenger_who_misses_their_connection():
@@ -209,3 +215,10 @@ def test_a_failed_key_check_keeps_the_stored_key(monkeypatch):
 def test_setup_rtce_rejects_flags_that_dont_combine(argv):
     with pytest.raises(SystemExit):
         setup_rtce._parse_args(argv)
+
+
+def test_workshop_terraform_creates_the_agents_model():
+    main = (SQL.parent / "main.tf").read_text()
+    block = main.split('resource "confluent_flink_statement" "agent_setup" {', 1)[1]
+    assert "var.workshop ? { model = local.agent_setup.model }" in block
+    assert 'model = "sql/32-model-passenger-recovery-native.sql"' in main

@@ -72,9 +72,6 @@ def generate_core_tfvars_content(
     deployment_name: str | None = None,
     environment_name: str | None = None,
     cluster_type: str | None = None,
-    aws_bedrock_access_key: str | None = None,
-    aws_bedrock_secret_key: str | None = None,
-    aws_session_token: str | None = None,
     aws_tableflow_access_key: str | None = None,
     aws_tableflow_secret_key: str | None = None,
     aws_tableflow_session_token: str | None = None,
@@ -82,9 +79,8 @@ def generate_core_tfvars_content(
     """
     Generate terraform.tfvars content for the (AWS-only) core module.
 
-    Bedrock and Tableflow AWS credentials are both optional: when omitted, the
-    topic/serving/ops stack still deploys and the recovery streaming agent /
-    Tableflow S3+Glue analytics path are skipped, respectively.
+    The Tableflow AWS credentials are optional: when omitted, everything else
+    still deploys and the Tableflow S3+Glue analytics path is skipped.
 
     Args:
         region: AWS region
@@ -96,9 +92,6 @@ def generate_core_tfvars_content(
         environment_name: Base name for just the environment, cluster, and compute pool
             (optional, defaults to deployment_name)
         cluster_type: Kafka cluster type, standard or dedicated (optional, defaults to standard)
-        aws_bedrock_access_key: AWS Bedrock access key (optional)
-        aws_bedrock_secret_key: AWS Bedrock secret key (optional)
-        aws_session_token: AWS session token for Bedrock (optional, for ASIA* temp creds)
         aws_tableflow_access_key: AWS access key for the Tableflow S3/Glue path (optional)
         aws_tableflow_secret_key: AWS secret key for the Tableflow S3/Glue path (optional)
         aws_tableflow_session_token: AWS session token for Tableflow (optional, for ASIA* temp creds)
@@ -119,12 +112,6 @@ confluent_cloud_api_secret = "{api_secret}"
         content += f'environment_name = "{environment_name}"\n'
     if cluster_type:
         content += f'kafka_cluster_type = "{cluster_type}"\n'
-
-    if aws_bedrock_access_key and aws_bedrock_secret_key:
-        content += f'aws_bedrock_access_key = "{aws_bedrock_access_key}"\n'
-        content += f'aws_bedrock_secret_key = "{aws_bedrock_secret_key}"\n'
-        if aws_session_token:
-            content += f'aws_session_token = "{aws_session_token}"\n'
 
     if aws_tableflow_access_key and aws_tableflow_secret_key:
         content += f'aws_tableflow_access_key = "{aws_tableflow_access_key}"\n'
@@ -163,9 +150,6 @@ def write_tfvars_for_deployment(root: Path, region: str, creds: dict[str, str], 
         deployment_name=get_credential_value(creds, "deployment_name"),
         environment_name=get_credential_value(creds, "environment_name"),
         cluster_type=kafka_cluster_type(region, get_credential_value(creds, "kafka_cluster_type")),
-        aws_bedrock_access_key=get_credential_value(creds, "aws_bedrock_access_key"),
-        aws_bedrock_secret_key=get_credential_value(creds, "aws_bedrock_secret_key"),
-        aws_session_token=get_credential_value(creds, "aws_session_token"),
         aws_tableflow_access_key=get_credential_value(creds, "aws_tableflow_access_key"),
         aws_tableflow_secret_key=get_credential_value(creds, "aws_tableflow_secret_key"),
         aws_tableflow_session_token=get_credential_value(creds, "aws_tableflow_session_token"),

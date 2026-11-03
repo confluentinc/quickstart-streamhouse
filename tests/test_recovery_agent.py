@@ -36,9 +36,27 @@ def test_agent_runs_on_the_confluent_hosted_model():
 
 def test_agent_handles_the_generators_agent_flights():
     sql = _sql("27")
-    numbers = re.findall(rf"CONCAT\('{airport_datagen.AIRLINE}(\d+)-'", sql)
+    flights = re.search(r"SPLIT_INDEX\(inbound_flight_id, '-', 0\) IN \(([^)]*)\)", sql).group(1)
+    numbers = re.findall(rf"'{airport_datagen.AIRLINE}(\d+)'", flights)
     assert [int(n) for n in numbers] == [airport_datagen.HERO_NUMBER, *airport_datagen.AGENT_FLIGHTS]
-    assert "inbound_flight_id IN (" in sql
+
+
+def test_agent_filter_keeps_the_live_flights_and_drops_history_at_any_hour():
+    """sql/27 keeps a HIGH passenger only while their inbound flight is still due to land, not by UTC date."""
+    sql = _sql("27")
+    assert "CAST($rowtime AS TIMESTAMP(3)) < inbound_estimated_time" in sql
+    assert "CURRENT_TIMESTAMP" not in sql
+    assert "inbound.estimated_time AS inbound_estimated_time" in _sql("24")
+    assert "  inbound_estimated_time\nFROM TO_CHANGELOG(" in _sql("26")
+    # Noon, and a start whose agent flights turn HIGH after UTC midnight.
+    for start in (datetime(2026, 9, 28, 12, 0), datetime(2026, 9, 28, 23, 40)):
+        plan = airport_datagen.build_plan(start)
+        agent = {f.key for f in plan.live.agent_flights}
+        live = [p for p in plan.live.passengers if p.inbound.key in agent and p.impacted_at]
+        assert len({p.inbound.key for p in live}) == len(agent)
+        assert all(p.impacted_at < p.inbound.estimated_at(p.impacted_at) for p in live)
+        # History is published before the stream starts, after every history flight has landed.
+        assert all(f.estimated_at() < start for day in plan.days if not day.live for f in day.flights)
 
 
 def test_insert_writes_every_recommendation_column_in_order():
@@ -107,7 +125,6 @@ def test_video_2_deploy_stops_before_what_demo_2_creates_on_screen(monkeypatch, 
     calls = []
     monkeypatch.setattr(deploy.setup_rtce, "main", lambda argv: calls.append("rtce"))
     monkeypatch.setattr(deploy, "_start_agent", lambda root, targets: calls.append(targets) or True)
-    monkeypatch.setattr(deploy, "apply_tag_colors", lambda root: calls.append("colors"))
     monkeypatch.setattr(deploy, "_print_env_name", lambda root: None)
 
     def datagen(root, agent, history=True, speed=1.0, stream=True):
@@ -116,4 +133,14 @@ def test_video_2_deploy_stops_before_what_demo_2_creates_on_screen(monkeypatch, 
 
     monkeypatch.setattr(deploy, "_run_datagen", datagen)
     deploy._finish(tmp_path, "none", video_2=True, speed=4)
-    assert calls == [("datagen", True, 4, False), "rtce", deploy.VIDEO_2_TARGETS, ("datagen", False, 4, True), "colors"]
+    assert calls == [("datagen", True, 4, False), "rtce", deploy.VIDEO_2_TARGETS, ("datagen", False, 4, True)]
+
+
+def test_deploy_finishes_with_data_then_rtce_then_the_agent(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(deploy, "_run_datagen", lambda *a, **kw: calls.append("data"))
+    monkeypatch.setattr(deploy.setup_rtce, "main", lambda _: calls.append("rtce"))
+    monkeypatch.setattr(deploy, "_start_agent", lambda _: calls.append("agent"))
+    monkeypatch.setattr(deploy, "_print_env_name", lambda _: None)
+    deploy._finish(tmp_path, "codex")
+    assert calls == ["data", "rtce", "agent"]

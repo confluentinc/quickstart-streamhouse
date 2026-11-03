@@ -2,9 +2,8 @@
 # Core infrastructure for the Streamhouse airport-disruption demo (AWS-only).
 #
 # Creates: environment, Kafka cluster, Flink compute pool, the app-manager
-# service account + API keys (Kafka / Schema Registry / Flink), the RTCE reader
-# service account, and the managed Bedrock connection used by the recovery
-# streaming agent (the agent/model itself lives in terraform/airline-demo).
+# service account + API keys (Kafka / Schema Registry / Flink), and the RTCE
+# reader service account.
 #
 # Scenario-specific Flink objects (tables, maintained-state INSERTs, the
 # recovery model + agent) are NOT here — they live in terraform/airline-demo so
@@ -38,9 +37,6 @@ locals {
   }
 
   dedicated_cluster = var.kafka_cluster_type == "dedicated"
-
-  # Bedrock inference-profile prefix follows the region family (us-*, eu-*, apac-*).
-  model_prefix = length(regexall("^us-", var.cloud_region)) > 0 ? "us" : (length(regexall("^eu-", var.cloud_region)) > 0 ? "eu" : "apac")
 }
 
 resource "confluent_environment" "staging" {
@@ -302,50 +298,3 @@ resource "confluent_kafka_acl" "app-manager-read-on-group" {
   }
 }
 
-# ---------------------------------------------------------------------------
-# Managed Bedrock connection (AWS-only) — powers the recovery streaming agent.
-# The connection lives in core because it is reusable infra; the MODEL and AGENT
-# that use it are scenario-specific and live in terraform/airline-demo.
-# Endpoint uses a Claude Sonnet inference profile keyed off the region family.
-# ---------------------------------------------------------------------------
-
-resource "confluent_flink_connection" "bedrock_connection" {
-  # Only created when Bedrock credentials are supplied. Without them, the topic /
-  # serving / ops stack still deploys fully; the recovery streaming agent (in
-  # terraform/airline-demo) is skipped until creds are added and this is re-applied.
-  count = var.aws_bedrock_access_key != "" ? 1 : 0
-
-  organization {
-    id = data.confluent_organization.main.id
-  }
-  environment {
-    id = confluent_environment.staging.id
-  }
-  compute_pool {
-    id = confluent_flink_compute_pool.flinkpool-main.id
-  }
-  principal {
-    id = confluent_service_account.app-manager.id
-  }
-  rest_endpoint = data.confluent_flink_region.demo_flink_region.rest_endpoint
-  credentials {
-    key    = confluent_api_key.app-manager-flink-api-key.id
-    secret = confluent_api_key.app-manager-flink-api-key.secret
-  }
-
-  display_name      = "bedrock-connection"
-  type              = "BEDROCK"
-  endpoint          = "https://bedrock-runtime.${var.cloud_region}.amazonaws.com/model/${local.model_prefix}.anthropic.claude-sonnet-4-5-20250929-v1:0/invoke"
-  aws_access_key    = var.aws_bedrock_access_key
-  aws_secret_key    = var.aws_bedrock_secret_key
-  aws_session_token = var.aws_session_token != "" ? var.aws_session_token : null
-
-  depends_on = [
-    confluent_api_key.app-manager-flink-api-key,
-    confluent_role_binding.app-manager-kafka-cluster-admin
-  ]
-
-  lifecycle {
-    create_before_destroy = false
-  }
-}

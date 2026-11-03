@@ -3,17 +3,12 @@
 Workshop Key Manager — create and manage scoped AWS credentials for workshops.
 
 Lets a workshop organizer mint one AWS IAM user + access key pair, scoped to
-exactly what this demo uses that key for:
-  1. Bedrock model invocation, for the recovery streaming agent.
-  2. Provisioning the Tableflow-to-S3/Glue path (Demo 3): an S3
-     bucket, a cross-account IAM role, and its S3 + Glue Data Catalog
-     policies (terraform/airline-demo/analytics.tf).
+exactly what this demo uses that key for: provisioning the Tableflow-to-S3/Glue
+path (Demo 3), an S3 bucket, a cross-account IAM role, and its S3 + Glue Data
+Catalog policies (terraform/airline-demo/analytics.tf).
 
-deploy.py writes this same key/secret into both TF_VAR_aws_bedrock_* and
-TF_VAR_aws_tableflow_* (both features use one identity in a demo), so the
-IAM policy here grants the union of what both paths need. The credentials
-go into API-KEYS-AWS.md; paste the access key / secret into credentials.env
-before `uv run deploy`.
+The credentials go into API-KEYS-AWS.md and TF_VAR_aws_tableflow_* in
+credentials.env, ready for `uv run deploy --with-labs`.
 
 This repo is AWS-only by design (RTCE + Flink Native Inference are AWS-only).
 
@@ -123,12 +118,10 @@ def get_resource_scope(project_root: Path) -> str:
 def get_demo_policy(account_id: str, region: str, resource_scope: str) -> dict:
     """IAM policy covering exactly what this demo's one AWS key is used for:
 
-    1. Bedrock model invocation (terraform/core/main.tf bedrock_connection) —
-       used directly by Confluent's managed connection, not scoped further.
-    2. Provisioning the Tableflow-to-S3/Glue path (Demo 3, optional):
-       an S3 bucket, a cross-account IAM role, and its S3 + Glue policies
-       (terraform/airline-demo/analytics.tf), scoped by the names they share
-       (see get_resource_scope).
+    provisioning the Tableflow-to-S3/Glue path (Demo 3, optional): an S3 bucket,
+    a cross-account IAM role, and its S3 + Glue policies
+    (terraform/airline-demo/analytics.tf), scoped by the names they share
+    (see get_resource_scope).
     """
     bucket_pattern = f"{resource_scope}-analytics"
     role_pattern = f"{resource_scope}-tableflow-glue"
@@ -137,15 +130,6 @@ def get_demo_policy(account_id: str, region: str, resource_scope: str) -> dict:
     return {
         "Version": "2012-10-17",
         "Statement": [
-            {
-                "Sid": "BedrockInvoke",
-                "Effect": "Allow",
-                "Action": [
-                    "bedrock:InvokeModel",
-                    "bedrock:InvokeModelWithResponseStream",
-                ],
-                "Resource": "*",
-            },
             {
                 "Sid": "CallerIdentity",
                 "Effect": "Allow",
@@ -280,7 +264,7 @@ def attach_demo_policy(
     resource_scope: str,
     username: str = AWS_IAM_USERNAME,
 ) -> None:
-    """Attach the inline demo policy (Bedrock invoke + Tableflow S3/Glue provisioning) to the IAM user."""
+    """Attach the inline demo policy (Tableflow S3/Glue provisioning) to the IAM user."""
     logger.info(f"Attaching policy '{AWS_POLICY_NAME}'...")
 
     policy_doc = get_demo_policy(account_id, region, resource_scope)
@@ -316,22 +300,6 @@ def create_access_key(iam_client, logger: logging.Logger, username: str = AWS_IA
     return access_key_id, secret_access_key
 
 
-def test_bedrock_credentials(access_key_id: str, secret_access_key: str, region: str, logger: logging.Logger) -> bool:
-    """Test AWS Bedrock credentials."""
-    from .test_bedrock_credentials import test_bedrock_credentials as test_func
-
-    logger.info("Testing Bedrock access with Claude Sonnet 4.5...")
-
-    # test_func returns (ok, error_type); callers here only need the bool.
-    ok, _error_type = test_func(
-        access_key_id=access_key_id,
-        secret_access_key=secret_access_key,
-        region=region,
-        logger=logger,
-    )
-    return ok
-
-
 def save_aws_credentials_file(
     project_root: Path,
     access_key_id: str,
@@ -352,9 +320,8 @@ def save_aws_credentials_file(
 
 ## AWS Access Keys
 
-Use these credentials when running `uv run deploy`. The same key powers both
-the recovery streaming agent (Bedrock) and the Tableflow S3/Glue
-analytics path (Demo 3) — both optional, both skipped if you leave this blank.
+Use these credentials when running `uv run deploy --with-labs`. They power the
+Tableflow S3/Glue analytics path (Demo 3), which is skipped if you leave them blank.
 
 ```
 AWS Access Key ID:     {access_key_id}
@@ -373,7 +340,7 @@ AWS Secret Access Key: {secret_access_key}
 
 2. Run deployment:
    ```bash
-   uv run deploy
+   uv run deploy --with-labs
    ```
 
 3. When prompted, enter the credentials above:
@@ -383,9 +350,9 @@ AWS Secret Access Key: {secret_access_key}
 ## Security Notes
 
 - **Do NOT commit these credentials to Git**
-- These keys are scoped to exactly this demo: Bedrock model invocation, plus
-  creating/destroying the S3 bucket, IAM role, and Glue Data Catalog entries
-  named `{resource_scope}-...` (the Tableflow-to-S3/Glue path)
+- These keys are scoped to exactly this demo: creating/destroying the S3 bucket,
+  IAM role, and Glue Data Catalog entries named `{resource_scope}-...` (the
+  Tableflow-to-S3/Glue path)
 - Keys should be revoked immediately after the workshop
 - Each participant will use the same shared credentials
 
@@ -420,7 +387,6 @@ The api-keys destroy command will:
 **Resource name scope:** `{resource_scope}-...`
 **Policy:** `{AWS_POLICY_NAME}` (inline policy)
 **Permissions:**
-- `bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream` (unscoped)
 - `sts:GetCallerIdentity` (unscoped)
 - S3 create/read/write/delete on bucket `{resource_scope}-analytics`
 - IAM create/read/delete on role `{resource_scope}-tableflow-glue` and its policies
@@ -437,14 +403,11 @@ The api-keys destroy command will:
 
     logger.info(f"✓ Saved credentials to {creds_file}")
 
-    # Also update credentials.env if it exists. One key covers both Bedrock and
-    # Tableflow (see module docstring), matching deploy.py's dual write.
+    # Also update credentials.env if it exists, where deploy reads the Tableflow key.
     env_file = project_root / "credentials.env"
     if env_file.exists():
-        for name in ("aws_bedrock_access_key", "aws_tableflow_access_key"):
-            set_key(str(env_file), f"TF_VAR_{name}", access_key_id)
-        for name in ("aws_bedrock_secret_key", "aws_tableflow_secret_key"):
-            set_key(str(env_file), f"TF_VAR_{name}", secret_access_key)
+        set_key(str(env_file), "TF_VAR_aws_tableflow_access_key", access_key_id)
+        set_key(str(env_file), "TF_VAR_aws_tableflow_secret_key", secret_access_key)
         set_key(str(env_file), "TF_VAR_aws_iam_username", username)
         logger.info("✓ Updated credentials.env with new AWS credentials")
 
@@ -787,32 +750,6 @@ def create_aws_command(args: argparse.Namespace, logger: logging.Logger) -> int:
                 print("CREATING AWS WORKSHOP CREDENTIALS (new user)")
                 print("=" * 70)
 
-        # Test Bedrock access
-        test_success = test_bedrock_credentials(
-            access_key_id=access_key_id,
-            secret_access_key=secret_access_key,
-            region=region,
-            logger=logger,
-        )
-
-        if not test_success:
-            print("\n" + "=" * 70)
-            print("⚠ WARNING: Bedrock access test did not complete successfully")
-            print("=" * 70)
-            print("\nPossible issues:")
-            print("  1. AWS credentials haven't propagated yet (wait 30-60 seconds)")
-            print("  2. Claude Sonnet 4.5 model not enabled in your AWS account")
-            print("  3. Insufficient Bedrock permissions")
-            print("\nTo verify manually:")
-            print(f"  uv run test-bedrock --access-key {access_key_id} \\")
-            print("    --secret-key <SECRET_KEY>")
-            print("\nTo enable Claude models:")
-            print("  AWS Console → Bedrock → Model Access → Request access")
-            print("=" * 70)
-            logger.warning("Bedrock test did not pass, but continuing anyway")
-        else:
-            logger.info("✓ Bedrock access test passed - Claude Sonnet 4.5 is accessible")
-
         # Save credentials
         save_aws_credentials_file(
             project_root,
@@ -865,14 +802,17 @@ def destroy_aws_command(args: argparse.Namespace, logger: logging.Logger) -> int
         # Load access key and IAM username from credentials.env
         env_file = project_root / "credentials.env"
         env_creds = dotenv_values(str(env_file)) if env_file.exists() else {}
-        access_key_id = env_creds.get("TF_VAR_aws_bedrock_access_key")
+        # A credentials.env from before the Bedrock connection was removed has only the Bedrock name.
+        access_key_id = env_creds.get("TF_VAR_aws_tableflow_access_key") or env_creds.get(
+            "TF_VAR_aws_bedrock_access_key"
+        )
         iam_username = env_creds.get("TF_VAR_aws_iam_username", AWS_IAM_USERNAME)
 
         if not access_key_id:
             print("\n" + "=" * 70)
             print("WARNING: No AWS credentials found")
             print("=" * 70)
-            print("\nNo AWS Bedrock access key found in credentials.env.")
+            print("\nNo AWS access key found in credentials.env.")
             print("This usually means no credentials were created with this tool,")
             print("or they were already destroyed.")
             print("\nIf you want to manually delete workshop credentials:")
@@ -998,7 +938,7 @@ def destroy_aws_command(args: argparse.Namespace, logger: logging.Logger) -> int
 def main():
     """Create or revoke scoped AWS workshop credentials (AWS-only)."""
     parser = argparse.ArgumentParser(
-        description="Create and manage scoped AWS workshop credentials (Bedrock + Tableflow S3/Glue)",
+        description="Create and manage scoped AWS workshop credentials (Tableflow S3/Glue)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

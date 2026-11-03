@@ -176,7 +176,8 @@ resource "confluent_flink_statement" "flight_impact" {
 # needs the model and tool; the INSERT needs the agent, impacted_passengers, and
 # passenger_recommendations.
 resource "confluent_flink_statement" "agent_setup" {
-  for_each = local.agent_enabled ? local.agent_setup : {}
+  # The workshop gets only the model; attendees create the tool, agent, and INSERT themselves.
+  for_each = local.agent_enabled ? local.agent_setup : (var.workshop ? { model = local.agent_setup.model } : {})
 
   organization { id = data.confluent_organization.main.id }
   environment { id = local.core.confluent_environment_id }
