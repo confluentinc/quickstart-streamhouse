@@ -16,7 +16,7 @@ Build one on Confluent Cloud in either of these hands-on labs:
 <th width="75%">Description</th>
 </tr>
 <tr>
-<td><a href="./docs/flight-disruptions/workshop.md"><strong>Agentic Flight Disruptions</strong></a></td>
+<td><a href="./docs/flight-disruptions/workshop.md"><strong>Agentic Airline Operations</strong></a></td>
 <td>Rebook passengers in real time when a delay breaks their connections. A streaming agent recovers three delayed flights (RA417, RA183, and RA185) while hotel rooms sell out.<br><br><img src="./docs/images/flight-disruptions/architecture.png" alt="Flight Disruptions architecture diagram"></td>
 </tr>
 <tr>
@@ -84,7 +84,7 @@ Deploy, and pick a lab (or both) when it asks:
 uv run deploy
 ```
 
-Then follow its guide: [Agentic Flight Disruptions](./docs/flight-disruptions/workshop.md) or [F1 Agentic Pit Decisions](./docs/agentic-pit-decisions/walkthrough.md).
+Then follow its guide: [Agentic Airline Operations](./docs/flight-disruptions/workshop.md) or [F1 Agentic Pit Decisions](./docs/agentic-pit-decisions/walkthrough.md).
 
 > [!TIP]
 >
