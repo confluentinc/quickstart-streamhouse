@@ -391,12 +391,6 @@ Now for River Air's second challenge. RA417 is running almost two hours late, 15
 
 In this lab, you build a streaming agent that runs inside Flink, on Claude hosted in Confluent Cloud. The moment a passenger turns HIGH risk, it checks live flights and hotel rooms through the Real-Time Context Engine (RTCE) and writes two rebooking offers: the next two flights to their final destination, with a hotel when the wait is overnight. No batch job, no polling, and no model keys to manage: the agent itself is a few SQL statements.
 
-> [!NOTE]
->
-> You could set up this agent for passengers connecting in any city. This workshop sets it up for SFO, River Air's hub, to keep the scope small.
->
-> For the same reason, the agent handles only three of today's delayed flights: RA417, RA183, and RA185, picked by the flight-number filter in `impacted_passengers` in step 2. It could handle every flight, but then RA417's offers would wait behind the rest of the day's delayed passengers. The data generator writes the other flights' offers.
-
 1. Connect Flink to RTCE, so the agent can look up live flights and hotel rooms. In a terminal, from the repo's root folder (`quickstart-streamhouse`), run:
 
     ```bash
@@ -529,6 +523,12 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
     SHOW AGENTS;
     ```
     <img src="../images/flight-disruptions/show-agents.png" alt="SHOW AGENTS results listing passenger_recovery_agent" width="750">
+
+> [!NOTE]
+>
+> You could set up this agent for passengers connecting in any city. This workshop sets it up for SFO, River Air's hub, to keep the scope small.
+>
+> For the same reason, the agent handles only three of today's delayed flights: RA417, RA183, and RA185, picked by the flight-number filter in `impacted_passengers` from step 2. It could handle every flight, but then RA417's offers would wait behind the rest of the day's delayed passengers. The data generator writes the other flights' offers.
 
 6. Start the agent:
 
