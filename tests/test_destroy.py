@@ -62,11 +62,16 @@ def test_stuck_provider_integration_is_left_to_core(tmp_path, monkeypatch):
     ("state", "expected"),
     [
         ("data.aws_caller_identity.current[0]\n" + destroy.TABLEFLOW_PROVIDER_INTEGRATION + "\n", True),
+        (
+            destroy.TABLEFLOW_PROVIDER_INTEGRATION + '\nconfluent_tag.demo["PII"]\nconfluent_tag.demo["RAW_DATA"]\n',
+            True,
+        ),
+        ('confluent_tag.demo["PII"]\n', True),
         (destroy.TABLEFLOW_PROVIDER_INTEGRATION + "\naws_s3_bucket.analytics[0]\n", False),
         ("aws_s3_bucket.analytics[0]\n", False),
     ],
 )
-def test_release_only_when_integration_is_all_that_is_left(tmp_path, monkeypatch, state, expected):
+def test_release_only_when_integration_and_tags_are_all_that_is_left(tmp_path, monkeypatch, state, expected):
     calls = []
 
     def fake_run(cmd, **kwargs):
@@ -76,5 +81,4 @@ def test_release_only_when_integration_is_all_that_is_left(tmp_path, monkeypatch
     monkeypatch.setattr(destroy.subprocess, "run", fake_run)
 
     assert destroy.release_provider_integration(tmp_path) is expected
-    removed = ["terraform", "state", "rm", destroy.TABLEFLOW_PROVIDER_INTEGRATION]
-    assert (removed in calls) is expected
+    assert (any(cmd[:3] == ["terraform", "state", "rm"] for cmd in calls)) is expected

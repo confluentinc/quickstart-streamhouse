@@ -76,27 +76,29 @@ def cleanup_terraform_artifacts(env_path: Path) -> None:
 
 # Confluent can keep listing a Tableflow topic as a user of the provider
 # integration after Tableflow is gone, sometimes for good, so deleting it returns
-# 409 "integration is being used in some confluent resource". Deleting the
-# environment removes the integration regardless, so when it's all that's left
-# in airline-demo's state, drop it from state and let core's destroy take it.
+# 409 "integration is being used in some confluent resource". The catalog tags
+# 409 the same way while a topic still carries them. Deleting the environment
+# removes both regardless, so when only these are left in airline-demo's state,
+# drop them from state and let core's destroy take them.
 TABLEFLOW_PROVIDER_INTEGRATION = "confluent_provider_integration.tableflow[0]"
+CATALOG_TAG_PREFIX = "confluent_tag.demo["
 
 
 def release_provider_integration(env_path: Path) -> bool:
-    """Drop the provider integration from state if it's the only resource left."""
+    """Drop the provider integration and catalog tags from state if nothing else is left."""
     listed = subprocess.run(["terraform", "state", "list"], cwd=env_path, capture_output=True, text=True)
     if listed.returncode != 0:
         return False
     managed = [r for r in listed.stdout.split() if not r.startswith("data.")]
-    if managed != [TABLEFLOW_PROVIDER_INTEGRATION]:
+    if not managed or not all(r == TABLEFLOW_PROVIDER_INTEGRATION or r.startswith(CATALOG_TAG_PREFIX) for r in managed):
         return False
 
-    removed = subprocess.run(["terraform", "state", "rm", TABLEFLOW_PROVIDER_INTEGRATION], cwd=env_path)
+    removed = subprocess.run(["terraform", "state", "rm", *managed], cwd=env_path)
     if removed.returncode != 0:
         return False
     print(
-        "  ⚠ Confluent still lists the Tableflow provider integration as in use; "
-        "core's destroy deletes it with the environment"
+        "  ⚠ Confluent still lists the Tableflow provider integration or catalog tags as in use; "
+        "core's destroy deletes them with the environment"
     )
     return True
 
