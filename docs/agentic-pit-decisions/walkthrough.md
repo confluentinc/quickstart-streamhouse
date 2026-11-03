@@ -402,31 +402,35 @@ Real-Time Context Engine (RTCE), powered by Lightning Tables, exposes a Kafka to
 
 Because RTCE reads from Lightning Tables, a topic is available to agents once its **Lightning Table** is enabled. Enable it in the Console for all three race topics: `car_telemetry`, `car_state`, and `pit_decisions`.
 
-> [!NOTE]
->
-> It may take a couple of minutes to enable each Lightning Table. You can close the dialog and move on to the next topic; the Console notifies you when it's ready.
-
 1. Open **[Topics](https://confluent.cloud/go/topics)**, select your **environment** (`streamhouse-…-env`) and **cluster** (`streamhouse-…-cluster`), find the **Lightning Tables** column, and click **+ Enable** for `car_telemetry`:
 
-    <img src="../images/agentic-pit-decisions/lightning-tables-enable.png" alt="The cluster's Topics list with + Enable in the Lightning Tables column for car_state and car_telemetry" width="600">
+    <img src="../images/agentic-pit-decisions/lightning-tables-enable.png" alt="The cluster's Topics list with + Enable in the Lightning Tables column for car_state and car_telemetry" width="750">
 
     In the dialog, click **Enable**:
 
-    <img src="../images/agentic-pit-decisions/lightning-tables-confirm.png" alt="The Enable a Lightning Table for car_telemetry? dialog with its Enable button" width="600">
+    <img src="../images/agentic-pit-decisions/lightning-tables-confirm.png" alt="The Enable a Lightning Table for car_telemetry? dialog with its Enable button" width="750">
 
     The dialog shows its progress while it sets up the table:
 
-    <img src="../images/agentic-pit-decisions/lightning-tables-progress.png" alt="The Lightning Table dialog showing Enabled Lightning Table, Query engine is ready, and Finalizing infrastructure" width="600">
+    <img src="../images/agentic-pit-decisions/lightning-tables-progress.png" alt="The Lightning Table dialog showing Enabled Lightning Table, Query engine is ready, and Finalizing infrastructure" width="750">
 
-    When it's ready, the dialog shows **Lightning Table is enabled**. Click **Done**:
+> [!NOTE]
+>
+> It may take a couple of minutes to enable each Lightning Table.
 
-    <img src="../images/agentic-pit-decisions/lightning-tables-enabled.png" alt="The Lightning Table enabled for car_telemetry dialog with Lightning Table is enabled and a Done button" width="600">
+When it's ready, the dialog shows **Lightning Table is enabled**. Click **Done**:
+
+<img src="../images/agentic-pit-decisions/lightning-tables-enabled.png" alt="The Lightning Table enabled for car_telemetry dialog with Lightning Table is enabled and a Done button" width="750">
 
 2. Repeat for `car_state` and `pit_decisions`.
 
 ## 6. (Optional) Ask your coding agent about the race with Real-Time Context Engine
 
-1. Point your coding agent at RTCE in one command:
+> [!NOTE]
+>
+> Run this in a **new terminal**. Keep `f1-race` and `f1-pitwall` running in their own terminals.
+
+1. In a **new terminal**, point your coding agent at RTCE in one command:
 
     ```bash
     uv run setup-rtce
