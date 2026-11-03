@@ -319,6 +319,8 @@ Every HIGH-risk passenger gets two offers: the next two flights to their final d
 > [!NOTE]
 >
 > You could set up this agent for passengers connecting in any city. This workshop sets it up for SFO, River Air's hub, to keep the scope small.
+>
+> For the same reason, the agent handles only three of today's delayed flights: RA417, RA183, and RA185, picked by the `inbound_flight_id IN (...)` filter in step 2. It could handle every flight, but then RA417's offers would wait behind the rest of the day's delayed passengers. The data generator writes the other flights' offers.
 
 1. Connect Flink to RTCE. **In your terminal window in the `quickstart-streamhouse` folder**, run:
 
