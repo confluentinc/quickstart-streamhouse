@@ -489,6 +489,13 @@ Fill in the first `<column>` with the recommended tire compound, and the second 
 
 </details>
 
+<details>
+<summary>Expected result</summary>
+
+<img src="../images/agentic-pit-decisions/lightning-query-lap-24.png" alt="The Lightning Query curl command and its JSON result for lap 24: MEDIUM, with the agent's reasoning" width="750">
+
+</details>
+
 ## 🧩 (Optional) Challenge #2 — Social Media Agent (Claude + Real-Time Context Engine)
 
 Take on the role of River Racing's social media team. Using live race data from RTCE, have your AI agent draft an engaging social media post:
