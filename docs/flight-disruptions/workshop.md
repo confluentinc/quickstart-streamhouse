@@ -493,6 +493,11 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
 
 4. Create the agent. Its model, `passenger_recovery_model`, is a Claude model hosted in Confluent Cloud. It's already deployed for you.
 
+    Its prompt tells it to:
+    - Offer the first two flights that leave 45+ minutes after the passenger lands.
+    - Add a hotel if the flight leaves 6+ hours later.
+    - Pick hotels in order, skipping sold-out ones.
+
     ```sql
     CREATE AGENT IF NOT EXISTS passenger_recovery_agent
     USING MODEL passenger_recovery_model
@@ -518,8 +523,6 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
       'handle_exception' = 'continue'
     );
     ```
-
-    Its prompt has three rules: 1. Offer the first two departures to the passenger's destination at least 45 minutes after they land 2. Add a hotel when the flight leaves six or more hours later, and 3. Take hotels in order of preference, skipping any with no rooms left.
 
 5. Confirm the agent exists:
 
