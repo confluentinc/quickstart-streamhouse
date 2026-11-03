@@ -409,7 +409,7 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
 
 2. Give the agent a feed of impacted passengers. `AI_RUN_AGENT` reads only append-only input, and `passenger_state` is an upsert table, so two staging tables turn its changes into new rows. 
 
-    **In your SQL Workspace**, run each statement in its own cell:
+    Back in your [Flink SQL workspace](https://confluent.cloud/go/flink), run each statement in its own cell:
 
     `passenger_state_changes` records every change to a passenger's connection risk as a new row:
 
