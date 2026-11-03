@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 
 from scripts import setup_rtce as rtce
 from scripts.airport_datagen import HUB, OFFERS, SEATS, Publisher
+from scripts.local_port import ensure_port_free
 from scripts.terraform import extract_kafka_credentials, get_project_root
 
 STATIC = Path(__file__).parent / "static"
@@ -379,6 +380,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
+    ensure_port_free(args.host, args.port, "airport-app")
     import uvicorn
 
     uvicorn.run(app, host=args.host, port=args.port)

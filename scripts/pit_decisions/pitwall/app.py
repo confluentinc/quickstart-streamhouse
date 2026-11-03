@@ -25,6 +25,7 @@ import webbrowser
 
 import uvicorn
 
+from scripts.local_port import ensure_port_free
 from scripts.pit_decisions.card import load_card
 from scripts.pit_decisions.pitwall.circuits import CIRCUIT_ENV_VAR, CIRCUITS, DEFAULT_CIRCUIT, resolve_circuit
 from scripts.pit_decisions.pitwall.server import create_app
@@ -57,6 +58,8 @@ def main() -> None:
     )
     args = parser.parse_args()
     circuit = resolve_circuit(args.circuit)
+    # Before the feed and browser start: an old Pit Wall on the port would otherwise answer with stale data.
+    ensure_port_free("127.0.0.1", args.port, "f1-pitwall")
 
     # Configure logging from the parsed args, not at import time: the consumer's
     # deliberate suppressions log at DEBUG, so INFO makes them unreachable — which
