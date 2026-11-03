@@ -2,11 +2,11 @@
 
 ![Agentic Pit Decisions architecture](./images/architecture.png)
 
-River Racing's car #88 streams telemetry from Silverstone. Flink flags a front-left tire anomaly with `ML_DETECT_ANOMALIES`, and a streaming agent on Claude hosted in Confluent calls `STAY OUT`, `PIT SOON`, or `PIT NOW` on every lap. You provision your own Confluent Cloud environment with `uv run deploy` and run the race simulator on your machine. It takes about 45 minutes.
+In this ~45-minute lab, River Racing's car #88 streams live telemetry from Silverstone. Flink uses `ML_DETECT_ANOMALIES` to flag a front-left tire anomaly, and a streaming agent running on Confluent-hosted Claude recommends `STAY OUT`, `PIT SOON`, or `PIT NOW` on every lap. You'll provision your own Confluent Cloud environment with `uv run deploy` and run the race simulator locally.
 
 ## 0. Clone, install, and provision
 
-You need a Confluent Cloud account ([Sign up for Confluent Cloud](https://www.confluent.io/confluent-cloud/tryfree/))
+You need a Confluent Cloud account ([Sign up for Confluent Cloud](https://www.confluent.io/confluent-cloud/tryfree/)).
 
 > [!WARNING]
 > ⚠️ You may be asked to create a cluster during sign-up. **Skip it** — Terraform creates your cluster later.
@@ -70,7 +70,7 @@ You need a Confluent Cloud account ([Sign up for Confluent Cloud](https://www.co
     | Confluent Cloud API Key / Secret | Press **Enter** to confirm the key and secret `uv` just created |
     | Which lab do you want to deploy? | Choose **Agentic Pit Decisions** (or **Both** to add the Flight Disruptions lab) |
 
-    Deploy creates the shared core (environment, cluster, Flink compute pool) and this lab's source tables and model, seeds the race history, and writes your credential card to `tmp/agentic-pit-decisions-card.env`. It ends by printing your **catalog** and **database** names. To skip the prompt, run `uv run deploy --lab agentic-pit-decisions`.
+    `uv run deploy` provisions the shared core (environment, cluster, and Flink compute pool) along with this lab's source tables and model. It then seeds the race history, writes your credential card to `tmp/agentic-pit-decisions-card.env`, and prints your **catalog** and **database** names. To skip the lab selection prompt, run `uv run deploy --lab agentic-pit-decisions`.
 
 ## 1. Enhance the data with built-in ML functions and start the race
 
@@ -161,7 +161,7 @@ The provisioning step sets up source tables for car telemetry, live race standin
     uv run f1-pitwall
     ```
 
-    The dashboard at http://localhost:8001 shows the Silverstone track map, the live leaderboard, and car #88's tyre/fuel gauges. The **Anomaly Detection** panel unlocks as `car_state` emits rows, and the **AI Pit Strategist** panel unlocks once you create `pit_decisions` in Section 3.
+    The dashboard at http://localhost:8001 shows the Silverstone track map, the live leaderboard, and car #88's tire and fuel gauges. The **Anomaly Detection** panel unlocks as `car_state` emits rows, and the **AI Pit Strategist** panel unlocks once you create `pit_decisions` in Section 3.
 
     ![Pit Wall dashboard showing a nominal front-left tire temperature](./images/pitwall-nominal.png)
 
@@ -316,7 +316,7 @@ Next we create the `pit_decisions` table, which invokes `pit_strategy_agent` on 
 
 ## (Optional) Expose `car_telemetry` to AI agents with Real-Time Context Engine
 
-Real-Time Context Engine (RTCE) exposes a Kafka topic as an MCP tool, so any MCP-compatible AI agent can query the live stream. `uv run deploy` created a Global RTCE API key and stored it on your credential card, and you enable RTCE **per topic in the Console** for `car_telemetry` (and optionally `car_state` or `pit_decisions`).
+Real-Time Context Engine (RTCE) exposes a Kafka topic as an MCP tool, so any MCP-compatible AI agent can query the live stream. `uv run deploy` created a Global RTCE API key and saved it to your credential card. You enable RTCE **per topic in the Console** for `car_telemetry` (and optionally `car_state` or `pit_decisions`).
 
 1. Under your environment's cluster, open **[Topics](https://confluent.cloud/go/topics) → `car_telemetry`**, open the **Real-Time Context Engine** panel, and click **Enable** (or **Turn on**). Once enabled, the **Topics** list shows Real-Time Context Engine **On**:
 
@@ -332,7 +332,7 @@ Real-Time Context Engine (RTCE) exposes a Kafka topic as an MCP tool, so any MCP
     uv run setup-rtce
     ```
 
-    This registers RTCE as the `confluent-streamhouse-rtce` MCP server with Claude Code (or prints a config snippet for Codex CLI), using the same Global API key that is on your credential card. If you also deployed Flight Disruptions, the same server serves both labs' topics. Restart your coding agent, then ask questions in plain English:
+    This registers RTCE as the `confluent-streamhouse-rtce` MCP server in Claude Code (or prints a config snippet for Codex CLI) using the Global API key from your credential card. If you also deployed Flight Disruptions, this one MCP server handles topics for both labs. Restart your coding agent, then ask questions in plain English:
 
     ```text
     What topics do I have access to in the Real-Time Context Engine?
@@ -362,7 +362,7 @@ Real-Time Context Engine (RTCE) exposes a Kafka topic as an MCP tool, so any MCP
 
 ## 🧩 (Optional) Challenge #1 — Social Media Agent (Claude + Real-Time Context Engine)
 
-Now, it's time to switch gears and take on the role of the social media team for River Racing. You've been given access to the live race data via RTCE and need to use AI to generate an engaging social media post. Based on what you've learned in this lab, do the following:
+Take on the role of River Racing's social media team. Using live race data from RTCE, have your AI agent draft an engaging social media post:
 
 1. Enable RTCE on the `car_state` and `pit_decisions` topics in the Confluent Cloud Console (the same way you enabled `car_telemetry` above).
 2. Create a persona prompt for your agent to help it develop an engaging social media post. 
@@ -380,7 +380,7 @@ Feel free to use one of the following prompts to draft your next post:
 > [!IMPORTANT]
 > Lightning Queries must be enabled for your Confluent organization. If `uv run setup-rtce --lightning car_telemetry` reports `api_not_enabled`, skip this challenge.
 
-RTCE is powered by Lightning Tables, so the same real-time context is also queryable directly with Lightning Queries. They read an RTCE-enabled topic over low-latency REST, so enable RTCE on `car_telemetry` in the Console first if you haven't already.
+RTCE runs on Lightning Tables, so you can also query the same real-time data directly with Lightning Queries over low-latency REST. Make sure you've enabled RTCE on `car_telemetry` in the Console first.
 
 From the repo directory, print a ready-to-run query:
 
@@ -405,7 +405,7 @@ Fill in the first `<column>` with the recommended tire compound, and the second 
 
 ## Run the lab again or tear it down
 
-Stop `f1-race` with Ctrl-C when you finish. Use `f1-reset` when you want to erase the race and repeat the lab from a clean slate. It stops and drops only this lab's statements and tables, so a Flight Disruptions deployment in the same environment keeps running:
+Stop `f1-race` with Ctrl-C when you finish. To clear the race data and rerun the lab from a clean slate, run `f1-reset`. It stops and drops only this lab's statements and tables, leaving any Flight Disruptions resources in the same environment untouched:
 
 ```bash
 uv run f1-reset
