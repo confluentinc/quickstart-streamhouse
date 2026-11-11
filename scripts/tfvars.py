@@ -154,5 +154,6 @@ def write_tfvars_for_deployment(root: Path, region: str, creds: dict[str, str], 
         aws_tableflow_secret_key=get_credential_value(creds, "aws_tableflow_secret_key"),
         aws_tableflow_session_token=get_credential_value(creds, "aws_tableflow_session_token"),
     )
-    if write_tfvars_file(core_tfvars_path, content):
-        print(f"✓ Wrote {core_tfvars_path}")
+    if not write_tfvars_file(core_tfvars_path, content):
+        raise SystemExit(f"✗ Could not write {core_tfvars_path}; fix the folder permissions and re-run deploy.")
+    print(f"✓ Wrote {core_tfvars_path}")
