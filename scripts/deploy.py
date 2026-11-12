@@ -705,7 +705,10 @@ def _start_agent(root, targets=AGENT_TARGETS) -> bool:
         print(f"✓ Flink connection '{setup_rtce.AGENT_CONNECTION}' reaches RTCE")
         os.environ["TF_VAR_enable_recovery_agent"] = "true"
         started = run_terraform(root / "terraform" / "airline-demo", targets=targets)
-    if not started:
+    if not started and creds.get(ALWAYS_ON) == "true":
+        # The generator's offers follow the scripted 90-minute plan, which doesn't belong in the always-on topics.
+        print("⚠ The recovery agent did not start, so no new offers are written. Rerun `uv run deploy --always-on`.")
+    elif not started:
         print(
             "⚠ The recovery agent did not start, so RA417, RA183, and RA185 have no offers yet. "
             "Run `uv run airport-datagen --offers generator` to have the generator write them."
@@ -874,16 +877,21 @@ def _preflight_always_on(creds: dict) -> None:
 
 
 def _finish_always_on(root, reset_data: bool = False) -> None:
-    """Publish the data once from here, then hand the stream to ECS and the flight board to App Runner."""
+    """Publish the data once from here, then hand the stream to ECS and the flight board to App Runner.
+
+    History goes out only on the first always-on deploy or with --reset-data: on a rerun it would overwrite the
+    agent's offers and the customers' answers for D-30..D-2 with the generator's."""
     from .airport_datagen import SEED, _wall_clock, run_continuous
 
     creds_file = root / "credentials.env"
-    print("\n=== Publishing history and the current state ===")
+    # Checked before anything below applies terraform/always-on (the image push creates its state).
+    history = reset_data or not (root / "terraform" / "always-on" / "terraform.tfstate").exists()
+    print(f"\n=== Publishing {'history and ' if history else ''}the current state ===")
     _wait_for_demo_schemas(root)
     if reset_data:
         _reset_always_on_data(root)
     now = _wall_clock().replace(microsecond=0)
-    run_continuous(SEED, now=now, history=True, until=now)  # publishes and returns; ECS streams from here on
+    run_continuous(SEED, now=now, history=history, until=now)  # publishes and returns; ECS streams from here on
     print("\n=== Enabling Lightning Tables and RTCE ===")
     setup_rtce.main(["--client", "none"])
     print("\n=== Starting the recovery agent ===")
@@ -1129,6 +1137,7 @@ def _write_card(root, outputs: dict, emails: list[str]):
         "ALWAYS_ON_DEMO_USERS": ",".join(emails),
     }
     path.write_text("".join(f"{key}='{value}'\n" for key, value in card.items()), encoding="utf-8")
+    path.chmod(0o600)  # it holds the flight board's password
     print(f"\n✓ The always-on demo is running. Card: {ALWAYS_ON_CARD}")
     for key, value in card.items():
         print(f"  {key}={value}")

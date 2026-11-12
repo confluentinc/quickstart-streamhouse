@@ -328,3 +328,55 @@ def test_destroy_skips_always_on_without_its_state(tmp_path):
     (tmp_path / "terraform/always-on").mkdir(parents=True)
     (tmp_path / "terraform/always-on/terraform.tfstate").write_text("{}")
     assert destroy._envs_to_destroy(None, tmp_path)[0] == "always-on"
+
+
+def _deployed_before(tmp_path):
+    (tmp_path / "terraform" / "always-on").mkdir(parents=True)
+    (tmp_path / "terraform" / "always-on" / "terraform.tfstate").write_text("{}")
+
+
+def test_first_always_on_deploy_publishes_history(monkeypatch, tmp_path):
+    calls = []
+    _stub_finish(monkeypatch, tmp_path, calls)
+    deploy._finish_always_on(tmp_path)
+    assert calls[0][2]["history"] is True
+
+
+def test_rerun_publishes_only_the_current_state(monkeypatch, tmp_path):
+    # Rewriting D-30..D-2 would replace the agent's offers and the customers' answers with the generator's.
+    calls = []
+    _stub_finish(monkeypatch, tmp_path, calls)
+    _deployed_before(tmp_path)
+    deploy._finish_always_on(tmp_path)
+    assert calls[0][0] == "history" and calls[0][2]["history"] is False
+
+
+def test_rerun_with_reset_data_publishes_history_again(monkeypatch, tmp_path):
+    calls = []
+    _stub_finish(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(deploy, "_reset_always_on_data", lambda root: calls.append("reset"))
+    _deployed_before(tmp_path)
+    deploy._finish_always_on(tmp_path, reset_data=True)
+    assert calls[0] == "reset" and calls[1][2]["history"] is True
+
+
+def _agent_fails(monkeypatch, tmp_path, env: str):
+    (tmp_path / "credentials.env").write_text(env)
+    monkeypatch.setattr(deploy.setup_rtce, "core_infra", lambda _: None)
+    assert deploy._start_agent(tmp_path) is False
+
+
+def test_failed_agent_on_always_on_says_to_rerun_deploy(monkeypatch, tmp_path, capsys):
+    _agent_fails(monkeypatch, tmp_path, "TF_VAR_always_on=true\n")
+    out = capsys.readouterr().out
+    assert "uv run deploy --always-on" in out and "--offers generator" not in out
+
+
+def test_failed_agent_on_the_scripted_demo_suggests_the_generator(monkeypatch, tmp_path, capsys):
+    _agent_fails(monkeypatch, tmp_path, "")
+    assert "uv run airport-datagen --offers generator" in capsys.readouterr().out
+
+
+def test_card_is_readable_only_by_its_owner(tmp_path):
+    path = deploy._write_card(tmp_path, {"app_url": "https://board", "app_password": "pw"}, ["a@x.io"])
+    assert path.stat().st_mode & 0o777 == 0o600

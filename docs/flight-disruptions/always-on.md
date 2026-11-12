@@ -23,7 +23,7 @@
 uv run deploy --always-on
 ```
 
-It deploys the full Flight Disruptions demo with `terraform/core` and `terraform/airline-demo` (with `TF_VAR_continuous`, which drops `sql/27`'s three-flight filter so the agent handles every flight, and adds Tableflow on `passenger_recommendations` next to `flight_impact`). It then publishes 29 finished days plus the current state, enables Lightning Tables and RTCE, starts the recovery agent, and compacts the source topics.
+It deploys the full Flight Disruptions demo with `terraform/core` and `terraform/airline-demo` (with `TF_VAR_continuous`, which drops `sql/27`'s three-flight filter so the agent handles every flight, and adds Tableflow on `passenger_recommendations` next to `flight_impact`). It then publishes 29 finished days plus the current state (on a rerun only the current state, so the agent's offers and the customers' answers in history stay as they are), enables Lightning Tables and RTCE, starts the recovery agent, and compacts the source topics.
 
 Then [`terraform/always-on/`](../../terraform/always-on/) creates, on AWS:
 
@@ -91,7 +91,9 @@ uv run deploy --always-on
 uv run deploy --always-on --reset-data
 ```
 
-This tombstones every generated key (scripted runs and the continuous days within the 35-day retention) before it publishes the data again. Use it when the board looks wrong or after a long outage. Without it, deploy publishes over the existing keys.
+This tombstones every generated key (scripted runs and the continuous days within the 35-day retention) before it publishes the history and the current state again. Use it when the board looks wrong or after a long outage. Without it, deploy republishes only the current state and leaves the finished days alone.
+
+Flink keeps each passenger's first HIGH-risk state, so passengers already impacted before the reset get no new offers until their flights land; this heals within about 3 hours.
 
 ## Logs and restarts
 
