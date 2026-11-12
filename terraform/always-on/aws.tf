@@ -13,7 +13,7 @@ resource "aws_ecr_repository" "images" {
 
 # Lets App Runner pull the image from ECR.
 resource "aws_iam_role" "flight_board_access" {
-  name = "${local.name}-flight-board-access"
+  name = local.limited_names.flight_board_access_role.name
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -31,7 +31,7 @@ resource "aws_iam_role_policy_attachment" "flight_board_access" {
 
 # The running service's role: it only reads the settings secret.
 resource "aws_iam_role" "flight_board_instance" {
-  name = "${local.name}-flight-board-instance"
+  name = local.limited_names.flight_board_instance_role.name
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -57,13 +57,21 @@ resource "aws_iam_role_policy" "flight_board_settings" {
 
 # Exactly one instance: the app keeps its view of the day in memory.
 resource "aws_apprunner_auto_scaling_configuration_version" "flight_board" {
-  auto_scaling_configuration_name = "${local.name}-flight-board"
+  auto_scaling_configuration_name = local.limited_names.flight_board_scaling.name
   min_size                        = 1
   max_size                        = 1
+
+  # Checked here, the first App Runner resource, so a long core name fails at plan with a clear message.
+  lifecycle {
+    precondition {
+      condition     = length(local.names_too_long) == 0
+      error_message = "These names are longer than AWS allows; shorten core's resource name: ${join(", ", local.names_too_long)}"
+    }
+  }
 }
 
 resource "aws_apprunner_service" "flight_board" {
-  service_name                   = "${local.name}-flight-board"
+  service_name                   = local.limited_names.flight_board_service.name
   auto_scaling_configuration_arn = aws_apprunner_auto_scaling_configuration_version.flight_board.arn
 
   source_configuration {
@@ -90,12 +98,6 @@ resource "aws_apprunner_service" "flight_board" {
     protocol = "TCP"
   }
 
-  lifecycle {
-    precondition {
-      condition     = length("${local.name}-flight-board") <= 40
-      error_message = "App Runner service names are at most 40 characters; shorten core's resource name."
-    }
-  }
 
   depends_on = [
     aws_iam_role_policy_attachment.flight_board_access,
@@ -119,7 +121,7 @@ resource "aws_cloudwatch_log_group" "generator" {
 
 # ECS uses this role to pull the image, read the settings secret, and write logs.
 resource "aws_iam_role" "generator_execution" {
-  name = "${local.name}-flight-generator-execution"
+  name = local.limited_names.generator_execution_role.name
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
