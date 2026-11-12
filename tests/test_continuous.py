@@ -320,3 +320,45 @@ def test_flush_gives_up_after_its_total_limit(monkeypatch):
     with pytest.raises(RuntimeError, match="records were not delivered"):
         publisher.flush()
     assert len(publisher.producer.rounds) <= g.FLUSH_LIMIT.total_seconds() // 300 + 1
+
+
+def test_start_tombstones_the_days_a_missed_midnight_would_have():
+    tombstones = g.startup_tombstones(g.SEED, NOW)
+    days = {(DAY - timedelta(days=g.RETENTION_DAYS + k)).strftime("%Y%m%d"): 0 for k in range(g.MISSED_MIDNIGHTS)}
+    for topic, key, value in tombstones:
+        assert value is None
+        if topic == g.FLIGHTS:
+            days[key.split("-")[1]] += 1
+    assert days == dict.fromkeys(days, 180)
+    assert {t for t, _, _ in tombstones} == {g.FLIGHTS, g.ITINERARIES, g.OFFERS}
+
+
+def test_run_continuous_publishes_the_state_then_the_missed_tombstones(monkeypatch):
+    published = []
+
+    class FakePublisher:
+        def __init__(self, credentials, dry_run):
+            pass
+
+        def publish(self, topic, key, value):
+            published.append((topic, key, value))
+
+        def flush(self):
+            published.append("flush")
+
+    monkeypatch.setattr(g, "Publisher", FakePublisher)
+    monkeypatch.setattr(g, "extract_kafka_credentials", lambda *a: {})
+    monkeypatch.setattr(g, "stop_previous_stream", lambda: None)
+    g.run_continuous(g.SEED, now=NOW, until=NOW)
+    state = g.continuous_state(g.SEED, NOW)
+    assert published[: len(state)] == state
+    assert published[len(state) + 1 :] == [*g.startup_tombstones(g.SEED, NOW), "flush"]
+    tomorrow = (DAY + timedelta(days=1)).strftime("%Y%m%d")
+    assert sum(1 for t, k, _ in state if t == g.FLIGHTS and k.split("-")[1] == tomorrow) == 180
+
+
+def test_grand_hyatt_drains_gradually_through_the_day():
+    assert g.rooms_at(g.SEED, MIDNIGHT + timedelta(hours=6))[g.GRAND_HYATT] > 10
+    assert g.rooms_at(g.SEED, MIDNIGHT + timedelta(hours=15))[g.GRAND_HYATT] <= 10
+    hourly = [g.rooms_at(g.SEED, MIDNIGHT + timedelta(hours=h))[g.GRAND_HYATT] for h in range(1, 19)]
+    assert all(b <= a + g.HYATT_BAND for a, b in pairwise(hourly)) and len(set(hourly)) > 10

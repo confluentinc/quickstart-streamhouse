@@ -700,13 +700,16 @@ def _hotel_rooms(plan: Plan, until: datetime):
 
 
 CONTINUOUS_SELLOUT_HOUR = 18  # the Grand Hyatt is sold out from 18:00 UTC until it refills at midnight
+HYATT_BAND = 5  # through the day the Grand Hyatt's rooms stay within this many of a steady drain to the sellout
 
 
 @lru_cache(maxsize=8)
 def continuous_hotel_rooms(seed: int, service_date: date) -> list[tuple[datetime, str, int]]:
     """(time, hotel, rooms) for all three hotels every HOTEL_EVERY from midnight to the next midnight.
 
-    Each day starts from the full counts. The Grand Hyatt drains to 0 by CONTINUOUS_SELLOUT_HOUR and stays there."""
+    Each day starts from the full counts. The Grand Hyatt drains to 0 by CONTINUOUS_SELLOUT_HOUR and stays there:
+    its walk stays within HYATT_BAND rooms under a line from full at midnight to 0 at the sellout, so the rooms go
+    down visibly all day rather than hitting 1 within the first hour."""
     rng = random.Random(f"{seed}:{service_date.isoformat()}:continuous:hotels")
     midnight = datetime.combine(service_date, datetime.min.time())
     sellout_step = timedelta(hours=CONTINUOUS_SELLOUT_HOUR) // HOTEL_EVERY
@@ -715,7 +718,9 @@ def continuous_hotel_rooms(seed: int, service_date: date) -> list[tuple[datetime
     for step in range(1, timedelta(days=1) // HOTEL_EVERY + 1):
         left = sellout_step - step
         if left > 0:
-            hyatt = max(1, min(GRAND_HYATT_ROOMS, left, hyatt + rng.choices((-1, 0, 1), (45, 35, 20))[0]))
+            ceiling = -(-GRAND_HYATT_ROOMS * left // sellout_step)  # ceil: at least 1 until the sellout
+            walk = hyatt + rng.choices((-1, 0, 1), (45, 35, 20))[0]
+            hyatt = max(1, ceiling - HYATT_BAND, min(ceiling, walk))
         else:
             hyatt = 0
         marriott = max(1, marriott + rng.choices((-1, 0, 1), (25, 55, 20))[0])
@@ -766,6 +771,22 @@ def _expired_keys(seed: int, service_date: date) -> list[tuple[str, str]]:
         if passenger.impacted_at:
             keys += [(OFFERS, f"{passenger.key}-O1"), (OFFERS, f"{passenger.key}-O2")]
     return keys
+
+
+MISSED_MIDNIGHTS = 3  # a starting stream tombstones the days the last this many midnights would have
+
+
+def startup_tombstones(seed: int, now: datetime) -> list[tuple[str, str, None]]:
+    """Tombstones for the days past retention at today's and the two previous midnights.
+
+    The stream tombstones a day only at a midnight it streams through, so a generator down at midnight would skip
+    it forever. Republishing a tombstone is harmless, so every start sends these. (The day after next needs no
+    catch-up: continuous_state always covers tomorrow.)"""
+    rows = []
+    for k in range(MISSED_MIDNIGHTS):
+        expired = now.date() - timedelta(days=RETENTION_DAYS + k)
+        rows += [(topic, key, None) for topic, key in _expired_keys(seed, expired)]
+    return rows
 
 
 def continuous_events(seed: int, start: datetime, end: datetime) -> list[tuple[datetime, str, str, dict | None]]:
@@ -1248,6 +1269,12 @@ def run_continuous(
         publisher.publish(topic, key, value)
     publisher.flush()
     logging.info("Published %d records: the hotels, yesterday, today, and tomorrow as of %s UTC", len(rows), now)
+    if not dry_run:  # a dry run prints the live rows only
+        tombstones = startup_tombstones(seed, now)
+        for topic, key, value in tombstones:
+            publisher.publish(topic, key, value)
+        publisher.flush()
+        logging.info("Published %d tombstones for the days past retention", len(tombstones))
     if until is not None and until <= now:
         return
     watcher = None

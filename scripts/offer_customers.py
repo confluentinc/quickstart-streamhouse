@@ -64,7 +64,8 @@ def _naive_utc(value: dict) -> dict:
 
 
 class OfferWatcher:
-    """Reads the offers topic and answers, once per passenger, when both of their offers are open."""
+    """Reads the offers topic and answers, once per passenger, when both of their offers are open (or their only
+    one has waited LONE_OFFER_GRACE for a second)."""
 
     def __init__(self, credentials: dict, seed: int):
         registry = SchemaRegistryClient(
