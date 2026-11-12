@@ -1,9 +1,14 @@
 from datetime import date, datetime, timedelta
+from itertools import pairwise
+
+import pytest
 
 from scripts import airport_datagen as g
 
 DAY = date(2026, 11, 12)
 MIDNIGHT = datetime(2026, 11, 12)
+NOW = datetime(2026, 11, 12, 14, 7, 30)
+STAGE = {"ON_TIME": 0, "DELAYED": 0, "BOARDING": 1, "DEPARTED": 2, "LANDED": 2}
 
 
 def around_the_clock_day():
@@ -150,3 +155,126 @@ def test_rooms_at_midnight_is_the_new_days_full_counts_and_is_cached():
     assert g.rooms_at(g.SEED, MIDNIGHT) == full
     assert g.rooms_at(g.SEED, MIDNIGHT - timedelta(seconds=1))[g.GRAND_HYATT] == 0
     assert g.continuous_hotel_rooms(g.SEED, DAY) is g.continuous_hotel_rooms(g.SEED, DAY)
+
+
+def test_restart_republishes_the_same_state():
+    assert g.continuous_state(g.SEED, NOW) == g.continuous_state(g.SEED, NOW)
+    before = {k: v for t, k, v in g.continuous_state(g.SEED, NOW) if t == g.FLIGHTS}
+    after = {k: v for t, k, v in g.continuous_state(g.SEED, NOW + timedelta(minutes=10)) if t == g.FLIGHTS}
+    assert before.keys() == after.keys() and len(before) == 3 * 180
+    for key, row in before.items():
+        assert STAGE[after[key]["status"]] >= STAGE[row["status"]]
+        # A delay never goes back to on time, and a severe one may shrink by at most 3 minutes. (On-time flights
+        # aren't checked: an early-arrival notice plus a minute's revision can move them by a few minutes.)
+        if row["status"] == "DELAYED":
+            assert after[key]["status"] != "ON_TIME"
+            assert after[key]["estimated_time"] >= row["estimated_time"] - timedelta(minutes=3)
+
+
+def test_state_has_current_hotels_and_every_live_days_itineraries():
+    state = g.continuous_state(g.SEED, NOW)
+    hotels = {k: v["available_rooms"] for t, k, v in state if t == g.HOTELS}
+    assert hotels == g.rooms_at(g.SEED, NOW)
+    itineraries = {k for t, k, _ in state if t == g.ITINERARIES}
+    days = [g.continuous_day(g.SEED, DAY + timedelta(days=n)) for n in (-1, 0, 1)]
+    assert itineraries == {p.key for d in days for p in d.passengers}
+
+
+def test_events_cross_midnight_without_gaps():
+    start, end = datetime(2026, 11, 12, 23, 50), datetime(2026, 11, 13, 0, 10)
+    events = g.continuous_events(g.SEED, start, end)
+    assert events == sorted(events, key=lambda event: event[0])
+    assert all(start < at <= end for at, *_ in events)
+    ticks = {}
+    for at, topic, key, value in events:
+        # Streamed ticks only: day D+2's rows published at midnight and old-day tombstones aren't ticks.
+        if topic == g.FLIGHTS and value is not None and key.split("-")[1] != "20261114":
+            ticks.setdefault(key, []).append(at)
+    assert any("-20261112" in k for k in ticks) and any("-20261113" in k for k in ticks)
+    assert all(b - a == g.UPDATE_EVERY for times in ticks.values() for a, b in pairwise(times))
+    assert any("-20261114" in k for _, t, k, _ in events if t == g.FLIGHTS)  # D+1 published at midnight
+    assert any(t == g.ITINERARIES and k.startswith("P-1114-") for _, t, k, _ in events)
+    assert len({(at, k) for at, _, k, _ in events}) == len(events)
+
+
+def test_hotels_refill_at_midnight_once():
+    midnight = datetime(2026, 11, 13)
+    events = g.continuous_events(g.SEED, midnight - timedelta(seconds=30), midnight + timedelta(seconds=30))
+    hotels = [(at, k, v["available_rooms"]) for at, t, k, v in events if t == g.HOTELS]
+    assert len(hotels) == 3 * 4
+    at_midnight = {k: rooms for at, k, rooms in hotels if at == midnight}
+    assert at_midnight == g.rooms_at(g.SEED, midnight) and at_midnight[g.GRAND_HYATT] == g.GRAND_HYATT_ROOMS
+
+
+def test_midnight_tombstones_the_day_past_retention():
+    events = g.continuous_events(g.SEED, datetime(2026, 11, 12, 23, 59), datetime(2026, 11, 13, 0, 1))
+    old = (date(2026, 11, 13) - timedelta(days=g.RETENTION_DAYS)).strftime("%Y%m%d")
+    tombstones = {(t, k) for _, t, k, v in events if v is None}
+    assert sum(1 for t, k in tombstones if t == g.FLIGHTS and k.split("-")[1] == old) == 180
+    assert any(t == g.ITINERARIES for t, _ in tombstones)
+    assert any(t == g.OFFERS and k.endswith("-O1") for t, k in tombstones)
+    assert any(t == g.OFFERS and k.endswith("-O2") for t, k in tombstones)
+
+
+def test_continuous_writes_no_live_offers():
+    events = g.continuous_events(g.SEED, NOW, NOW + timedelta(hours=1))
+    assert events and not any(t == g.OFFERS and v is not None for _, t, _, v in events)
+
+
+def test_history_is_finished_and_has_completed_offers():
+    rows = g.continuous_history(g.SEED, NOW)
+    offers = [v for t, _, v in rows if t == g.OFFERS]
+    assert offers and {v["status"] for v in offers} == {"BOOKED", "CLOSED"}
+    flights = [(k, v) for t, k, v in rows if t == g.FLIGHTS]
+    assert len(flights) == 29 * 180
+    assert all(v["estimated_time"] < NOW and v["status"] in ("LANDED", "DEPARTED") for _, v in flights)
+    assert all(v["connecting_flight_id"] for t, _, v in rows if t == g.ITINERARIES)
+    dates = {k.split("-")[1] for k, _ in flights}
+    assert min(dates) == "20261013" and max(dates) == "20261110"
+
+
+def test_continuous_dry_run_prints_json(capsys):
+    g.main(["--continuous", "--dry-run", "--now", "2026-11-12T14:00:00Z", "--until", "2026-11-12T14:02:00Z"])
+    out = capsys.readouterr().out
+    assert '"topic": "flight_status"' in out and '"topic": "passenger_recommendations"' not in out
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [["--minutes", "5"], ["--speed", "2"], ["--resume"], ["--stream-only"], ["--offers", "agent"], ["--reset"]],
+)
+def test_continuous_rejects_scripted_flags(flags):
+    with pytest.raises(SystemExit):
+        g.main(["--continuous", *flags])
+
+
+def test_history_needs_continuous():
+    with pytest.raises(SystemExit):
+        g.main(["--history", "--dry-run"])
+
+
+class FakeWatcher:
+    def __init__(self, rows, open_once):
+        self.rows, self.open_once, self.checked = rows, open_once, []
+
+    def poll(self, timeout, limit=500):
+        rows, self.rows = self.rows, []
+        return rows
+
+    def still_open(self, passenger_id):
+        self.checked.append(passenger_id)
+        return self.open_once.pop(passenger_id, False)  # open the first time only, as after our own booking
+
+
+def test_customer_rows_drop_when_someone_booked_in_the_app():
+    def offer(passenger, n, status):
+        return (NOW + timedelta(seconds=5), f"{passenger}-O{n}", {"passenger_id": passenger, "status": status})
+
+    rows = [offer("P-A", 1, "BOOKED"), offer("P-A", 2, "CLOSED"), offer("P-B", 1, "CLOSED"), offer("P-B", 2, "BOOKED")]
+    watcher = FakeWatcher(rows, {"P-A": False, "P-B": True})
+    published = []
+    g._stream_continuous(g.SEED, NOW, NOW + timedelta(minutes=1), lambda *row: published.append(row), watcher=watcher)
+    offers = [(k, v["status"]) for t, k, v in published if t == g.OFFERS]
+    assert offers == [("P-B-O1", "CLOSED"), ("P-B-O2", "BOOKED")]
+    assert sorted(set(watcher.checked)) == ["P-A", "P-B"]
+    assert any(t == g.FLIGHTS for t, _, _ in published)

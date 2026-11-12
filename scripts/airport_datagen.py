@@ -25,9 +25,20 @@ those three flights stay open for the presenter. When the recovery agent runs in
     uv run airport-datagen --resume         # pick a stopped stream back up on its original clock
     uv run airport-datagen --dry-run --skip-history --minutes 5
     uv run airport-datagen --reset          # tombstone every generated key
+
+The continuous mode runs around the clock instead: each UTC day has 180 flights, eight RA417s from Chicago
+three hours apart, and a Grand Hyatt that sells out at 18:00 and refills at midnight. Every row follows from
+the seed and the wall clock, so a restarted stream picks up where it was. The recovery agent writes every offer;
+the stream answers them as the customers would, unless someone already decided in the app. At each UTC
+midnight it publishes the day after next and tombstones the day RETENTION_DAYS back.
+
+    uv run airport-datagen --continuous                # stream forever from now
+    uv run airport-datagen --continuous --history      # first publish the 29 finished days before yesterday
+    uv run airport-datagen --continuous --dry-run --now 2026-11-12T14:00:00Z  # print an hour as JSON
 """
 
 import argparse
+import heapq
 import json
 import logging
 import os
@@ -183,6 +194,7 @@ DECISION_SECONDS = (3 * 60, 90 * 60)
 OFFER_EXPIRY = timedelta(minutes=90)
 
 HISTORY_DAYS = 30
+RETENTION_DAYS = 35  # the continuous stream tombstones a service day this many days after it
 STREAM_MINUTES = 90
 SEED = 42
 
@@ -327,12 +339,18 @@ class Plan:
         return self.days[-1]
 
 
-def _clock(value: str | None) -> datetime:
-    """Stream start as naive UTC, trimmed to the minute."""
-    dt = datetime.fromisoformat(value.replace("Z", "+00:00")) if value else datetime.now(timezone.utc)
+def _utc(value: str) -> datetime:
+    """An ISO-8601 time as naive UTC; one without a zone is taken as UTC."""
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _clock(value: str | None) -> datetime:
+    """Stream start as naive UTC, trimmed to the minute."""
+    dt = _utc(value) if value else datetime.now(timezone.utc).replace(tzinfo=None)
+    return dt.replace(second=0, microsecond=0)
 
 
 def _climb(first: datetime, last: datetime, delay: int) -> list[tuple[datetime, int]]:
@@ -723,6 +741,86 @@ def rooms_at(seed: int, at: datetime) -> dict[str, int]:
     return rooms
 
 
+def _midnight(service_date: date) -> datetime:
+    return datetime.combine(service_date, datetime.min.time())
+
+
+def continuous_state(seed: int, now: datetime) -> list[tuple[str, str, dict]]:
+    """Every live row as of `now` (UTC): the hotels, then each flight and passenger of yesterday, today, and tomorrow.
+
+    It depends only on the seed and `now`, so a restarted stream republishes what it last streamed, and a later
+    `now` never moves a flight back."""
+    days = [continuous_day(seed, now.date() + timedelta(days=n)) for n in (-1, 0, 1)]
+    rooms = rooms_at(seed, now)
+    rows = [(HOTELS, name, _hotel(name, rooms[name])) for name in HOTEL_ORDER]
+    rows += [(FLIGHTS, flight.key, flight.row(now)) for day in days for flight in day.flights]
+    rows += [(ITINERARIES, p.key, _itinerary(p)) for day in days for p in day.passengers]
+    return rows
+
+
+def _expired_keys(seed: int, service_date: date) -> list[tuple[str, str]]:
+    """Every flight, itinerary, and offer key a continuous day wrote, for its tombstones."""
+    day = continuous_day.__wrapped__(seed, service_date)  # uncached: an old day is needed once
+    keys = [(FLIGHTS, f.key) for f in day.flights] + [(ITINERARIES, p.key) for p in day.passengers]
+    for passenger in day.passengers:
+        if passenger.impacted_at:
+            keys += [(OFFERS, f"{passenger.key}-O1"), (OFFERS, f"{passenger.key}-O2")]
+    return keys
+
+
+def continuous_events(seed: int, start: datetime, end: datetime) -> list[tuple[datetime, str, str, dict | None]]:
+    """Timed updates in (start, end]: flight ticks, hotel rooms, and at each UTC midnight the day after next's
+    schedule and passengers plus tombstones for the day past RETENTION_DAYS. Offers come from the agent."""
+    first = start.date() - timedelta(days=1)
+    days = [continuous_day(seed, first + timedelta(days=n)) for n in range((end.date() - first).days + 2)]
+    events = [
+        (tick, FLIGHTS, flight.key, flight.row(tick))
+        for day in days
+        for flight in day.flights
+        for tick in flight.ticks(start, end)
+    ]
+    for n in range((end.date() - start.date()).days + 1):
+        service_date = start.date() + timedelta(days=n)
+        rows, times = continuous_hotel_rooms(seed, service_date), _continuous_room_times(seed, service_date)
+        # A day's last row is stamped the next midnight, when the next day refills the hotels instead.
+        for at, hotel, rooms in rows[bisect_right(times, start) : bisect_right(times, end)]:
+            if at.date() == service_date:
+                events.append((at, HOTELS, hotel, _hotel(hotel, rooms)))
+    midnight = _midnight(start.date() + timedelta(days=1))
+    while midnight <= end:
+        rooms = rooms_at(seed, midnight)
+        events += [(midnight, HOTELS, name, _hotel(name, rooms[name])) for name in HOTEL_ORDER]
+        upcoming = continuous_day(seed, midnight.date() + timedelta(days=1))
+        events += [(midnight, FLIGHTS, f.key, f.row(midnight)) for f in upcoming.flights]
+        events += [(midnight, ITINERARIES, p.key, _itinerary(p)) for p in upcoming.passengers]
+        expired = midnight.date() - timedelta(days=RETENTION_DAYS)
+        events += [(midnight, topic, key, None) for topic, key in _expired_keys(seed, expired)]
+        midnight += timedelta(days=1)
+    events.sort(key=itemgetter(0))
+    return events
+
+
+def continuous_history(seed: int, now: datetime) -> list[tuple[str, str, dict]]:
+    """The finished days before yesterday (D-30 to D-2): final flight rows, connecting passengers, completed offers."""
+    today = now.date()
+    dates = [today - timedelta(days=back) for back in range(HISTORY_DAYS, 1, -1)]
+
+    def build(service_date: date) -> Day:  # uncached, so 29 old days don't push the live ones out of the cache
+        return continuous_day.__wrapped__(seed, service_date)
+
+    rows = []
+    day = build(dates[0])
+    for service_date in dates:
+        following = service_date + timedelta(days=1)
+        next_day = continuous_day(seed, following) if following == today - timedelta(days=1) else build(following)
+        rows += [(FLIGHTS, f.key, f.row(datetime.max)) for f in day.flights]
+        rows += [(ITINERARIES, p.key, _itinerary(p)) for p in day.passengers if p.connecting]
+        for recovery in _recoveries(day, next_day, seed, None):
+            rows += [(OFFERS, key, value) for key, value in recovery.rows(datetime.max)]
+        day = next_day
+    return rows
+
+
 def hotel_warmup(plan: Plan, updates: int = 200):
     """At least `updates` hotel rows from the morning before the stream, ending at the starting rooms.
 
@@ -747,6 +845,15 @@ def hotel_warmup(plan: Plan, updates: int = 200):
             yield HOTELS, name, _hotel(name, step[name])
 
 
+def _itinerary(passenger: Passenger) -> dict:
+    return dict(
+        inbound_flight_id=passenger.inbound.key,
+        inbound_seat=passenger.inbound_seat,
+        connecting_flight_id=passenger.connecting.key if passenger.connecting else None,
+        connecting_seat=passenger.connecting_seat,
+    )
+
+
 def initial_records(plan: Plan):
     """Every row as of the stream start: history final state, the live day so far, tomorrow's schedule."""
     at = plan.start
@@ -759,16 +866,7 @@ def initial_records(plan: Plan):
         for passenger in day.passengers:
             # History keeps only connecting passengers; nobody else can be impacted.
             if day.live or passenger.connecting:
-                yield (
-                    ITINERARIES,
-                    passenger.key,
-                    dict(
-                        inbound_flight_id=passenger.inbound.key,
-                        inbound_seat=passenger.inbound_seat,
-                        connecting_flight_id=passenger.connecting.key if passenger.connecting else None,
-                        connecting_seat=passenger.connecting_seat,
-                    ),
-                )
+                yield ITINERARIES, passenger.key, _itinerary(passenger)
     for recovery in plan.recoveries:
         for key, value in recovery.rows(at):
             yield OFFERS, key, value
@@ -1040,6 +1138,117 @@ def run(
             pid_file.unlink()
 
 
+CONTINUOUS_WINDOW = timedelta(hours=1)  # the continuous stream works out its events an hour at a time
+WATCH_EVERY = 1.0  # seconds between offer polls while the stream waits
+
+
+def _wall_clock() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _stream_continuous(seed: int, start: datetime, until: datetime | None, publish, watcher=None, clock=None) -> None:
+    """Publish continuous_events after `start` (until `until`, or forever), plus the customers' answers to offers.
+
+    `clock` returns the current UTC time; without one nothing waits. The watcher's rows join the pending heap.
+    Right before a customer's first row goes out, the watcher must still see both offers open: if someone
+    booked in the app first, every pending row for that passenger is dropped.
+    """
+    pending: list[tuple[datetime, int, str, str, dict | None, str | None]] = []
+    order = count()
+    loaded = start
+    approved: set[str] = set()
+    dropped: set[str] = set()
+    minute, sent = None, 0
+
+    def push(rows) -> None:
+        for at, key, value in rows:
+            heapq.heappush(pending, (at, next(order), OFFERS, key, value, value["passenger_id"]))
+
+    while True:
+        # Keep the next hour of events on hand, so a customer row due later never jumps ahead of them.
+        while (until is None or loaded < until) and (not pending or pending[0][0] > loaded):
+            window_end = loaded + CONTINUOUS_WINDOW if until is None else min(loaded + CONTINUOUS_WINDOW, until)
+            for at, topic, key, value in continuous_events(seed, loaded, window_end):
+                heapq.heappush(pending, (at, next(order), topic, key, value, None))
+            loaded = window_end
+        if not pending or (until is not None and pending[0][0] > until):
+            break
+        at = pending[0][0]
+        wait = (at - clock()).total_seconds() if clock else 0.0
+        if watcher is not None:
+            rows = watcher.poll(max(0.0, min(wait, WATCH_EVERY)))
+            push(rows)
+            if rows or (clock and at > clock()):
+                continue  # look again: a customer row may be due first, and the poll may not have waited enough
+        elif wait > 0:
+            time.sleep(wait)
+        at, _, topic, key, value, passenger = heapq.heappop(pending)
+        if passenger is not None:
+            if passenger in dropped:
+                continue
+            if passenger not in approved:
+                if not watcher.still_open(passenger):
+                    dropped.add(passenger)
+                    logging.info("%s already decided in the app; dropping the simulated answer", passenger)
+                    continue
+                approved.add(passenger)  # our own first row closes the offers, so check only once
+        publish(topic, key, value)
+        sent += 1
+        if minute != at.replace(second=0, microsecond=0):
+            if minute is not None:
+                logging.info("%s UTC: %d updates", f"{minute:%H:%M}", sent)
+            minute, sent = at.replace(second=0, microsecond=0), 0
+
+
+def run_continuous(
+    seed: int = SEED,
+    now: datetime | None = None,
+    history: bool = False,
+    dry_run: bool = False,
+    until: datetime | None = None,
+) -> None:
+    """The always-on stream: publish the state as of `now` (and history), then stream on the wall clock forever.
+
+    The state depends only on the seed and the clock, so a restart picks up where the last stream was.
+    """
+    now = now or _wall_clock().replace(microsecond=0)
+    if dry_run and until is None:
+        until = now + CONTINUOUS_WINDOW  # a dry run prints an hour rather than forever
+    credentials = None if dry_run else extract_kafka_credentials("aws", get_project_root())
+    publisher = Publisher(credentials, dry_run)
+    if not dry_run:
+        stop_previous_stream()
+    if history:
+        rows = continuous_history(seed, now)
+        for topic, key, value in rows:
+            publisher.publish(topic, key, value)
+        publisher.flush()
+        logging.info("Published %d history records for the %d days before yesterday", len(rows), HISTORY_DAYS - 1)
+    rows = continuous_state(seed, now)
+    for topic, key, value in rows:
+        publisher.publish(topic, key, value)
+    publisher.flush()
+    logging.info("Published %d records: the hotels, yesterday, today, and tomorrow as of %s UTC", len(rows), now)
+    if until is not None and until <= now:
+        return
+    watcher = None
+    pid_file = _pid_file()
+    if not dry_run:
+        from .offer_customers import OfferWatcher  # it imports this module
+
+        watcher = OfferWatcher(credentials, seed)
+        pid_file.parent.mkdir(exist_ok=True)
+        pid_file.write_text(str(os.getpid()))
+    logging.info("Streaming continuously%s", f" until {until} UTC" if until else "; Ctrl-C stops it")
+    try:
+        _stream_continuous(seed, now, until, publisher.publish, watcher, None if dry_run else _wall_clock)
+        publisher.flush()
+        logging.info("Stream finished")
+    finally:
+        if not dry_run and pid_file.exists() and pid_file.read_text().strip() == str(os.getpid()):
+            pid_file.unlink()
+
+
 def reset(start: datetime, seed: int, dry_run: bool) -> None:
     publisher = Publisher(None if dry_run else extract_kafka_credentials("aws", get_project_root()), dry_run)
     if not dry_run:
@@ -1056,15 +1265,24 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--now", help="ISO-8601 UTC stream start (default: now)")
     parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="stream around the clock: every flight's state follows the seed and the UTC wall clock",
+    )
+    parser.add_argument(
+        "--history", action="store_true", help=f"with --continuous, first publish {HISTORY_DAYS - 1} finished days"
+    )
+    parser.add_argument("--until", help=argparse.SUPPRESS)  # with --continuous: stop streaming at this UTC time
+    parser.add_argument(
         "--minutes",
         type=int,
-        default=STREAM_MINUTES,
+        default=None,
         help=f"minutes of live updates to stream (default: {STREAM_MINUTES}; 0 exits after publishing)",
     )
     parser.add_argument(
         "--speed",
         type=float,
-        default=1.0,
+        default=None,
         help="play the stream this many times faster, e.g. 5 runs 90 minutes in 18 (default: 1). "
         "Event timestamps keep stream time, so the dashboard's clock runs ahead of the wall clock",
     )
@@ -1077,7 +1295,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--offers",
         choices=("auto", "agent", "generator"),
-        default="auto",
+        default=None,
         help="who writes the offers for RA417, RA183, and RA185 (default auto: the agent when Terraform runs it)",
     )
     parser.add_argument(
@@ -1087,6 +1305,31 @@ def main(argv: list[str] | None = None) -> None:
         "without republishing; with --offers generator, the agent flights' missed offers arrive at once",
     )
     args = parser.parse_args(argv)
+    if args.continuous:
+        scripted = {
+            "--minutes": args.minutes is not None,
+            "--speed": args.speed is not None,
+            "--resume": args.resume,
+            "--stream-only": args.stream_only,
+            "--offers": args.offers is not None,
+            "--reset": args.reset,
+            "--skip-history": args.skip_history,
+        }
+        given = [flag for flag, used in scripted.items() if used]
+        if given:
+            parser.error(f"--continuous can't be combined with {', '.join(given)}")
+        setup_logging()
+        now = _utc(args.now) if args.now else None
+        try:
+            run_continuous(args.seed, now, args.history, args.dry_run, _utc(args.until) if args.until else None)
+        except KeyboardInterrupt:
+            logging.info("Stopped")
+        return
+    if args.history or args.until:
+        parser.error("--history and --until only apply with --continuous")
+    args.minutes = STREAM_MINUTES if args.minutes is None else args.minutes
+    args.speed = 1.0 if args.speed is None else args.speed
+    args.offers = args.offers or "auto"
     if args.speed <= 0:
         parser.error("--speed must be greater than 0")
     if args.resume:
