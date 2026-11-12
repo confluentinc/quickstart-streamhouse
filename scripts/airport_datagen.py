@@ -681,6 +681,48 @@ def _hotel_rooms(plan: Plan, until: datetime):
         yield at, HILTON, hilton
 
 
+CONTINUOUS_SELLOUT_HOUR = 18  # the Grand Hyatt is sold out from 18:00 UTC until it refills at midnight
+
+
+@lru_cache(maxsize=8)
+def continuous_hotel_rooms(seed: int, service_date: date) -> list[tuple[datetime, str, int]]:
+    """(time, hotel, rooms) for all three hotels every HOTEL_EVERY from midnight to the next midnight.
+
+    Each day starts from the full counts. The Grand Hyatt drains to 0 by CONTINUOUS_SELLOUT_HOUR and stays there."""
+    rng = random.Random(f"{seed}:{service_date.isoformat()}:continuous:hotels")
+    midnight = datetime.combine(service_date, datetime.min.time())
+    sellout_step = timedelta(hours=CONTINUOUS_SELLOUT_HOUR) // HOTEL_EVERY
+    hyatt, marriott, hilton = GRAND_HYATT_ROOMS, MARRIOTT_ROOMS, HILTON_ROOMS
+    rows = []
+    for step in range(1, timedelta(days=1) // HOTEL_EVERY + 1):
+        left = sellout_step - step
+        if left > 0:
+            hyatt = max(1, min(GRAND_HYATT_ROOMS, left, hyatt + rng.choices((-1, 0, 1), (45, 35, 20))[0]))
+        else:
+            hyatt = 0
+        marriott = max(1, marriott + rng.choices((-1, 0, 1), (25, 55, 20))[0])
+        hilton = max(1, hilton + rng.choices((-1, 0, 1), (25, 55, 20))[0])
+        at = midnight + HOTEL_EVERY * step
+        rows += [(at, GRAND_HYATT, hyatt), (at, MARRIOTT, marriott), (at, HILTON, hilton)]
+    return rows
+
+
+@lru_cache(maxsize=8)
+def _continuous_room_times(seed: int, service_date: date) -> list[datetime]:
+    return [at for at, _, _ in continuous_hotel_rooms(seed, service_date)]
+
+
+def rooms_at(seed: int, at: datetime) -> dict[str, int]:
+    """Rooms per hotel as of `at` (UTC): the day's latest row at or before it, or the full counts at midnight."""
+    rooms = {GRAND_HYATT: GRAND_HYATT_ROOMS, MARRIOTT: MARRIOTT_ROOMS, HILTON: HILTON_ROOMS}
+    service_date = at.date()
+    rows = continuous_hotel_rooms(seed, service_date)
+    last = bisect_right(_continuous_room_times(seed, service_date), at)  # rows come three to a timestamp
+    for _, hotel, count_ in rows[max(0, last - 3) : last]:
+        rooms[hotel] = count_
+    return rooms
+
+
 def hotel_warmup(plan: Plan, updates: int = 200):
     """At least `updates` hotel rows from the morning before the stream, ending at the starting rooms.
 

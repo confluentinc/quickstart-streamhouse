@@ -121,3 +121,32 @@ def test_continuous_day_is_deterministic():
     assert [(p.key, p.connecting and p.connecting.key) for p in a.passengers] == [
         (p.key, p.connecting and p.connecting.key) for p in b.passengers
     ]
+
+
+def test_grand_hyatt_sells_out_each_evening_and_refills_at_midnight():
+    assert g.rooms_at(g.SEED, MIDNIGHT + timedelta(hours=19))[g.GRAND_HYATT] == 0
+    assert g.rooms_at(g.SEED, MIDNIGHT + timedelta(minutes=1))[g.GRAND_HYATT] > 0
+    assert all(r >= 1 for h, r in g.rooms_at(g.SEED, MIDNIGHT + timedelta(hours=19)).items() if h != g.GRAND_HYATT)
+
+
+def test_hotel_rooms_publish_every_15_seconds():
+    rows = g.continuous_hotel_rooms(g.SEED, DAY)
+    assert len(rows) == 3 * (24 * 3600 // 15)
+    assert [r[0] for r in rows] == sorted(r[0] for r in rows)
+
+
+def test_hotel_rooms_stay_in_bounds_all_day_and_hyatt_is_zero_from_sellout_to_midnight():
+    sellout = MIDNIGHT + timedelta(hours=g.CONTINUOUS_SELLOUT_HOUR)
+    for at, hotel, rooms in g.continuous_hotel_rooms(g.SEED, DAY):
+        if hotel == g.GRAND_HYATT:
+            assert 0 <= rooms <= g.GRAND_HYATT_ROOMS
+            assert (rooms == 0) == (at >= sellout)
+        else:
+            assert rooms >= 1
+
+
+def test_rooms_at_midnight_is_the_new_days_full_counts_and_is_cached():
+    full = {g.GRAND_HYATT: g.GRAND_HYATT_ROOMS, g.MARRIOTT: g.MARRIOTT_ROOMS, g.HILTON: g.HILTON_ROOMS}
+    assert g.rooms_at(g.SEED, MIDNIGHT) == full
+    assert g.rooms_at(g.SEED, MIDNIGHT - timedelta(seconds=1))[g.GRAND_HYATT] == 0
+    assert g.continuous_hotel_rooms(g.SEED, DAY) is g.continuous_hotel_rooms(g.SEED, DAY)
