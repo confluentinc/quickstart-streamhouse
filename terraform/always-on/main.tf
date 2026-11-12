@@ -2,7 +2,7 @@
 # always-on — the River Air demo running continuously on AWS.
 #
 # One container image (the repo's Dockerfile) runs twice:
-#   App Runner service  -> the flight board (airport-app, port 8000)
+#   Lambda function URL -> the flight board (airport-app, port 8000)
 #   ECS Fargate service -> the generator   (airport-datagen --continuous)
 # Both read their settings from one Secrets Manager secret built from core's
 # outputs. The demo users are invited by hand and get their roles from the CLI,
@@ -20,14 +20,11 @@ locals {
   core = data.terraform_remote_state.core.outputs
   name = lower(local.core.resource_name)
 
-  # Names AWS caps at a length, each with its limit. The auto-scaling configuration's cap is 32,
-  # so it gets the short "-board" suffix: core's default streamhouse-<8 hex> plus "-flight-board" is 33.
+  # Names AWS caps at a length, each with its limit.
   limited_names = {
-    flight_board_service       = { name = "${local.name}-flight-board", limit = 40 }
-    flight_board_scaling       = { name = "${local.name}-board", limit = 32 }
-    flight_board_access_role   = { name = "${local.name}-flight-board-access", limit = 64 }
-    flight_board_instance_role = { name = "${local.name}-flight-board-instance", limit = 64 }
-    generator_execution_role   = { name = "${local.name}-flight-generator-execution", limit = 64 }
+    flight_board_function    = { name = "${local.name}-flight-board", limit = 64 }
+    flight_board_role        = { name = "${local.name}-flight-board", limit = 64 }
+    generator_execution_role = { name = "${local.name}-flight-generator-execution", limit = 64 }
   }
   names_too_long = [
     for item in values(local.limited_names) : "${item.name} (${length(item.name)} > ${item.limit})"
@@ -51,7 +48,7 @@ locals {
     APP_PASSWORD                           = random_password.app.result
   }
 
-  # NAME -> "<secret arn>:NAME::", the form App Runner and ECS use to read one JSON key.
+  # NAME -> "<secret arn>:NAME::", the form ECS uses to read one JSON key. The flight board reads the whole secret.
   setting_refs = {
     for key in keys(local.settings) : key => "${aws_secretsmanager_secret.settings.arn}:${key}::"
   }

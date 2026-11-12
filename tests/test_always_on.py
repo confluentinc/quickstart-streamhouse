@@ -17,20 +17,81 @@ def test_no_email_addresses_in_tracked_terraform():
     assert "@confluent.io" not in text
 
 
+def _block(text: str, address: str) -> str:
+    """The body of one `resource "type" "name"` block, up to the next top-level resource."""
+    kind, name = address.split(".")
+    start = text.index(f'resource "{kind}" "{name}"')
+    end = text.find("\nresource ", start + 1)
+    return text[start : end if end != -1 else len(text)]
+
+
 def test_generator_runs_continuous_and_app_runs_on_8000():
     aws = (TF / "aws.tf").read_text()
-    assert '"airport-datagen", "--continuous"' in aws and "8000" in aws
+    assert '"airport-datagen", "--continuous"' in aws
+    function = _block(aws, "aws_lambda_function.flight_board")
+    assert re.search(r'AWS_LWA_PORT\s*=\s*"8000"', function)
+    assert '"--port", "8000"' in function
+
+
+def test_no_app_runner_left():
+    text = "".join(p.read_text() for p in TF.glob("*.tf"))
+    assert "aws_apprunner_" not in text and "apprunner" not in text
+
+
+def test_flight_board_is_a_lambda_behind_a_public_function_url():
+    aws = (TF / "aws.tf").read_text()
+    function = _block(aws, "aws_lambda_function.flight_board")
+    # TCP, not HTTP: with APP_PASSWORD set every HTTP path answers 401, which would fail an HTTP readiness check.
+    assert re.search(r'AWS_LWA_READINESS_CHECK_PROTOCOL\s*=\s*"tcp"', function)
+    assert re.search(r"publish\s*=\s*true", function)
+    assert re.search(r'package_type\s*=\s*"Image"', function)
+    assert re.search(r"STREAMHOUSE_SETTINGS_SECRET_ARN\s*=\s*aws_secretsmanager_secret\.settings\.arn", function)
+    # A new secret version changes the configuration, so Lambda publishes a version the alias moves to.
+    assert re.search(r"STREAMHOUSE_SETTINGS_VERSION\s*=\s*aws_secretsmanager_secret_version\.settings", function)
+    # Run the console script, not `uv run`: Lambda's filesystem is read-only outside /tmp.
+    assert '"/app/.venv/bin/airport-app"' in function
+
+    url = _block(aws, "aws_lambda_function_url.flight_board")
+    assert re.search(r'authorization_type\s*=\s*"NONE"', url) and "aws_lambda_alias.live.name" in url
+
+    concurrency = _block(aws, "aws_lambda_provisioned_concurrency_config.flight_board")
+    assert re.search(r"provisioned_concurrent_executions\s*=\s*1\b", concurrency)
+    assert "aws_lambda_alias.live.name" in concurrency
+
+    # AWS needs both statements for a public URL: InvokeFunctionUrl (auth NONE) and InvokeFunction via the URL.
+    permissions = re.findall(r'resource "aws_lambda_permission" "\w+" \{.*?\n\}', aws, re.S)
+    actions = {re.search(r'action\s*=\s*"([^"]+)"', p).group(1): p for p in permissions}
+    assert set(actions) == {"lambda:InvokeFunctionUrl", "lambda:InvokeFunction"}
+    assert re.search(r'function_url_auth_type\s*=\s*"NONE"', actions["lambda:InvokeFunctionUrl"])
+    assert re.search(r"invoked_via_function_url\s*=\s*true", actions["lambda:InvokeFunction"])
+    for permission in permissions:
+        assert re.search(r'principal\s*=\s*"\*"', permission) and "aws_lambda_alias.live.name" in permission
+
+    role = _block(aws, "aws_iam_role.flight_board")
+    assert "lambda.amazonaws.com" in role
+    assert "AWSLambdaBasicExecutionRole" in aws
+    logs = _block(aws, "aws_cloudwatch_log_group.flight_board")
+    assert '"/aws/lambda/' in logs and re.search(r"retention_in_days\s*=\s*14", logs)
+
+
+def test_image_carries_the_lambda_web_adapter():
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    assert re.search(r"aws-lambda-adapter:\d+\.\d+\.\d+ /lambda-adapter /opt/extensions/lambda-adapter", dockerfile)
 
 
 def test_length_limited_names_are_checked_against_their_aws_limits():
     text = "".join(p.read_text() for p in TF.glob("*.tf"))
-    # App Runner auto-scaling configuration names are 4-32 characters, so "<name>-flight-board" is too long.
-    scaling = re.search(r"auto_scaling_configuration_name\s*=\s*(.+)", text).group(1)
-    assert "flight-board" not in scaling
-    assert re.search(r"flight_board_scaling\s*=\s*\{[^\n]*limit\s*=\s*32", text)
-    assert re.search(r"flight_board_service\s*=\s*\{[^\n]*limit\s*=\s*40", text)
+    assert re.search(r"flight_board_function\s*=\s*\{[^\n]*limit\s*=\s*64", text)
+    assert re.search(r"flight_board_role\s*=\s*\{[^\n]*limit\s*=\s*64", text)
     assert re.search(r"generator_execution_role\s*=\s*\{[^\n]*limit\s*=\s*64", text)
     assert "precondition" in text and "names_too_long" in text
+
+
+def test_outputs_name_the_function_and_its_logs():
+    outputs = (TF / "outputs.tf").read_text()
+    for name in ("app_url", "app_password", "app_function_name", "app_log_group", "ecs_cluster_name"):
+        assert f'output "{name}"' in outputs
+    assert 'trimsuffix(aws_lambda_function_url.flight_board.function_url, "/")' in outputs
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +123,7 @@ def _stub_finish(monkeypatch, tmp_path, calls):
     monkeypatch.setattr(deploy, "_push_image", lambda root, region: calls.append("image") or "repo:new")
     monkeypatch.setattr(deploy, "_always_on_outputs", lambda root: outputs)
     monkeypatch.setattr(deploy, "run_terraform", lambda path, **k: calls.append(("terraform", path.name, k)) or True)
-    monkeypatch.setattr(deploy, "_redeploy_services", lambda outputs, region: calls.append("redeploy"))
+    monkeypatch.setattr(deploy, "_redeploy_generator", lambda outputs, region: calls.append("redeploy"))
     monkeypatch.setattr(deploy, "_grant_demo_users", lambda env, emails: calls.append(("users", env, emails)) or [])
     monkeypatch.setattr(deploy, "_write_card", lambda root, outputs, emails: calls.append("card"))
     for key in ("TF_VAR_image_uri", "TF_VAR_rtce_api_key", "TF_VAR_rtce_api_secret"):
@@ -90,7 +151,7 @@ def test_always_on_finish_order(monkeypatch, tmp_path):
 
 
 def test_always_on_redeploys_when_the_image_is_unchanged(monkeypatch, tmp_path):
-    # A rotated secret doesn't restart App Runner or ECS on its own; a new image tag does.
+    # A rotated secret doesn't restart ECS on its own; a new image does. (Lambda publishes a new version itself.)
     calls = []
     _stub_finish(monkeypatch, tmp_path, calls)
     monkeypatch.setattr(deploy, "_push_image", lambda root, region: "repo:old")
@@ -380,3 +441,66 @@ def test_failed_agent_on_the_scripted_demo_suggests_the_generator(monkeypatch, t
 def test_card_is_readable_only_by_its_owner(tmp_path):
     path = deploy._write_card(tmp_path, {"app_url": "https://board", "app_password": "pw"}, ["a@x.io"])
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_redeploy_restarts_only_the_generator(monkeypatch):
+    runs = []
+    monkeypatch.setattr(deploy.subprocess, "run", lambda cmd, **k: runs.append(cmd) or _completed(cmd))
+    deploy._redeploy_generator({"ecs_cluster_name": "c", "generator_service_name": "g"}, "us-east-1")
+    assert [cmd[:3] for cmd in runs] == [["aws", "ecs", "update-service"]]
+
+
+def test_push_image_returns_the_pushed_digest(monkeypatch, tmp_path):
+    repo = "1.dkr.ecr.us-east-1.amazonaws.com/demo-images"
+    runs = []
+
+    def fake_run(cmd, **kwargs):
+        runs.append(cmd)
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            return _completed(cmd, json.dumps(["other@sha256:aa", f"{repo}@sha256:bb"]))
+        return _completed(cmd)
+
+    monkeypatch.setattr(deploy, "run_terraform", lambda *a, **k: True)
+    monkeypatch.setattr(deploy, "_ecr_repository_url", lambda path: repo)
+    monkeypatch.setattr(deploy, "_image_tag", lambda root: "abc123")
+    monkeypatch.setattr(deploy.subprocess, "run", fake_run)
+    monkeypatch.setenv("TF_VAR_image_uri", "x")
+    assert deploy._push_image(tmp_path, "us-east-1") == f"{repo}@sha256:bb"
+    build = next(cmd for cmd in runs if cmd[:2] == ["docker", "build"])
+    assert "--provenance=false" in build  # Lambda takes a plain image manifest, not a manifest list
+
+
+# ---------------------------------------------------------------------------
+# The flight board's settings on Lambda
+# ---------------------------------------------------------------------------
+
+
+def test_settings_secret_fills_the_environment_without_overwriting(monkeypatch):
+    from scripts import airport_app
+
+    requested = []
+
+    class FakeSecrets:
+        def get_secret_value(self, SecretId):
+            requested.append(SecretId)
+            return {"SecretString": json.dumps({"APP_PASSWORD": "from-secret", "STREAMHOUSE_REGION": "us-east-1"})}
+
+    fake_boto3 = type(sys)("boto3")
+    fake_boto3.client = lambda service: FakeSecrets() if service == "secretsmanager" else pytest.fail(service)
+    monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
+    monkeypatch.setenv("STREAMHOUSE_SETTINGS_SECRET_ARN", "arn:aws:secretsmanager:us-east-1:1:secret:demo")
+    monkeypatch.setenv("APP_PASSWORD", "already-set")
+    monkeypatch.setenv("STREAMHOUSE_REGION", "unset")
+    monkeypatch.delenv("STREAMHOUSE_REGION")
+    airport_app.load_settings_secret()
+    assert requested == ["arn:aws:secretsmanager:us-east-1:1:secret:demo"]
+    assert airport_app.os.environ["APP_PASSWORD"] == "already-set"
+    assert airport_app.os.environ["STREAMHOUSE_REGION"] == "us-east-1"
+
+
+def test_settings_secret_is_skipped_without_its_arn(monkeypatch):
+    from scripts import airport_app
+
+    monkeypatch.delenv("STREAMHOUSE_SETTINGS_SECRET_ARN", raising=False)
+    monkeypatch.setitem(sys.modules, "boto3", None)  # importing it would fail
+    airport_app.load_settings_secret()

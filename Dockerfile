@@ -1,7 +1,8 @@
-# One image for the always-on demo on AWS (terraform/always-on): App Runner runs the
-# default command (the flight board on port 8000) and ECS runs
-# `airport-datagen --continuous`. Settings and credentials arrive as environment
-# variables from Secrets Manager at run time; none are baked into any layer.
+# One image for the always-on demo on AWS (terraform/always-on): Lambda runs the
+# flight board on port 8000 (through the Lambda Web Adapter below) and ECS runs
+# `airport-datagen --continuous`. Settings and credentials come from Secrets Manager
+# at run time (ECS injects them; on Lambda the app reads the secret itself); none are
+# baked into any layer.
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 ENV UV_COMPILE_BYTECODE=1 \
@@ -16,6 +17,10 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY scripts/ ./scripts/
 RUN uv sync --frozen --no-dev
+
+# The Lambda Web Adapter turns Lambda invocations into HTTP requests to port 8000.
+# It is a Lambda extension, so it does nothing when ECS or `docker run` starts the image.
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt/extensions/lambda-adapter
 
 EXPOSE 8000
 ENTRYPOINT ["uv", "run", "--no-sync"]

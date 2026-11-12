@@ -42,7 +42,7 @@ Usage:
   uv run deploy --workshop    # the Flight Disruptions workshop without the lab question
   uv run deploy --automated   # bots: non-interactive from credentials.env, registers Claude Code
   uv run deploy --testing     # bots: non-interactive from credentials.env, no MCP registration
-  uv run deploy --always-on   # operators: the full demo running around the clock on AWS (App Runner + ECS)
+  uv run deploy --always-on   # operators: the full demo running around the clock on AWS (Lambda + ECS)
   uv run deploy --always-on --reset-data   # same, after tombstoning every generated key
 """
 
@@ -110,7 +110,7 @@ DEMO_USER_ROLE = "EnvironmentAdmin"
 ALWAYS_ON_CARD = "tmp/always-on-card.env"
 # Compacted, so a source feed keeps each flight's, passenger's, and hotel's latest row however long it runs.
 COMPACTED_TOPICS = ("flight_status", "passenger_itineraries", "hotel_inventory")
-# terraform/always-on creates the App Runner and ECS roles, so the operator must be able to.
+# terraform/always-on creates the Lambda and ECS roles, so the operator must be able to.
 ALWAYS_ON_IAM_ACTIONS = (
     "iam:CreateRole",
     "iam:PutRolePolicy",
@@ -793,7 +793,7 @@ def _run_datagen(root, agent: bool, history: bool = True, speed: float = 1.0, st
 
 
 # ---------------------------------------------------------------------------
-# --always-on: the flight board on App Runner and the generator on ECS Fargate (terraform/always-on)
+# --always-on: the flight board on Lambda and the generator on ECS Fargate (terraform/always-on)
 # ---------------------------------------------------------------------------
 
 
@@ -870,14 +870,14 @@ def _preflight_always_on(creds: dict) -> None:
     denied = [r.get("EvalActionName", "") for r in results if r.get("EvalDecision") != "allowed"]
     if denied:
         sys.exit(
-            f"{caller} can't {', '.join(denied)}, which terraform/always-on needs to create the App Runner and "
+            f"{caller} can't {', '.join(denied)}, which terraform/always-on needs to create the Lambda and "
             "ECS roles. Use AWS credentials with IAM permissions."
         )
     print(f"✓ AWS caller {caller} can create the always-on roles")
 
 
 def _finish_always_on(root, reset_data: bool = False) -> None:
-    """Publish the data once from here, then hand the stream to ECS and the flight board to App Runner.
+    """Publish the data once from here, then hand the stream to ECS and the flight board to Lambda.
 
     History goes out only on the first always-on deploy or with --reset-data: on a rerun it would overwrite the
     agent's offers and the customers' answers for D-30..D-2 with the generator's."""
@@ -916,8 +916,9 @@ def _finish_always_on(root, reset_data: bool = False) -> None:
         sys.exit("\nDeployment failed at always-on. Stopping.")
     outputs = _always_on_outputs(root)
     if previous == image:
-        # A new image tag redeploys both; a changed secret (rotated key or password) alone doesn't.
-        _redeploy_services(outputs, infra["region"])
+        # A new image redeploys the generator; a changed secret (rotated key or password) alone doesn't. The flight
+        # board needs nothing: a new secret version publishes a new Lambda version and moves its alias.
+        _redeploy_generator(outputs, infra["region"])
 
     print("\n=== Granting the demo users their environment role ===")
     emails = _demo_emails(creds)
@@ -998,7 +999,9 @@ def _ecr_repository_url(always_on) -> str:
 
 
 def _push_image(root, region: str) -> str:
-    """Create the ECR repository, then build and push the image tagged with the commit. Returns its URI."""
+    """Create the ECR repository, then build and push the image tagged with the commit.
+
+    Returns repository@digest, so a -dirty tag pushed again with new code still changes what both services run."""
     always_on = root / "terraform" / "always-on"
     # Every variable needs a value even for a targeted apply; the repository doesn't read image_uri.
     os.environ.setdefault("TF_VAR_image_uri", "bootstrap")
@@ -1017,45 +1020,44 @@ def _push_image(root, region: str) -> str:
             text=True,
             check=True,
         )
-        subprocess.run(["docker", "build", "--platform", "linux/amd64", "-t", image, str(root)], check=True)
+        # One plain image manifest: Lambda rejects the manifest list that build attestations would add.
+        build = ["docker", "build", "--platform", "linux/amd64", "--provenance=false", "-t", image, str(root)]
+        subprocess.run(build, check=True)
         subprocess.run(["docker", "push", image], check=True)
+        digests = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
     except subprocess.CalledProcessError as error:
         sys.exit(f"\n✗ `{' '.join(error.cmd[:3])}` failed{f': {error.stderr.strip()}' if error.stderr else ''}")
-    print(f"✓ Pushed {image}")
-    return image
+    pinned = next((d for d in json.loads(digests or "[]") if d.startswith(f"{repository}@")), None)
+    if not pinned:
+        sys.exit(f"\n✗ `docker push` gave {image} no digest in {repository}.")
+    print(f"✓ Pushed {image} ({pinned.split('@', 1)[1]})")
+    return pinned
 
 
-def _redeploy_services(outputs: dict, region: str) -> None:
-    """Restart the generator and the flight board so they read the current secret."""
-    commands = [
-        [
-            "aws",
-            "ecs",
-            "update-service",
-            "--cluster",
-            outputs.get("ecs_cluster_name", ""),
-            "--service",
-            outputs.get("generator_service_name", ""),
-            "--force-new-deployment",
-            "--region",
-            region,
-        ],
-        [
-            "aws",
-            "apprunner",
-            "start-deployment",
-            "--region",
-            region,
-            "--service-arn",
-            outputs.get("app_service_arn", ""),
-        ],
+def _redeploy_generator(outputs: dict, region: str) -> None:
+    """Restart the generator so it reads the current secret."""
+    cmd = [
+        "aws",
+        "ecs",
+        "update-service",
+        "--cluster",
+        outputs.get("ecs_cluster_name", ""),
+        "--service",
+        outputs.get("generator_service_name", ""),
+        "--force-new-deployment",
+        "--region",
+        region,
     ]
-    for cmd in commands:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        if result.returncode == 0:
-            print(f"✓ Redeployed with `{' '.join(cmd[:3])}`")
-        else:
-            print(f"⚠ Could not redeploy: {result.stderr.strip()}\n  Run it by hand: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if result.returncode == 0:
+        print("✓ Restarted the generator with `aws ecs update-service`")
+    else:
+        print(f"⚠ Could not restart the generator: {result.stderr.strip()}\n  Run it by hand: {' '.join(cmd)}")
 
 
 def _confluent_rows(*args: str) -> list[dict]:

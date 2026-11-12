@@ -8,43 +8,45 @@ resource "aws_ecr_repository" "images" {
 }
 
 # ---------------------------------------------------------------------------
-# Flight board: App Runner runs the image's default command (airport-app on port 8000).
+# Flight board: a Lambda function behind a public function URL. The Lambda Web Adapter in the image passes each
+# request to airport-app on port 8000. The app's Basic auth (APP_PASSWORD) is the only gate.
 # ---------------------------------------------------------------------------
 
-# Lets App Runner pull the image from ECR.
-resource "aws_iam_role" "flight_board_access" {
-  name = local.limited_names.flight_board_access_role.name
+# Created before the function, so Lambda writes to a log group with a retention instead of making its own.
+resource "aws_cloudwatch_log_group" "flight_board" {
+  name              = "/aws/lambda/${local.limited_names.flight_board_function.name}"
+  retention_in_days = 14
+}
+
+# The function's role: write its logs and read the settings secret, nothing else.
+resource "aws_iam_role" "flight_board" {
+  name = local.limited_names.flight_board_role.name
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = { Service = "build.apprunner.amazonaws.com" }
+      Principal = { Service = "lambda.amazonaws.com" }
       Action    = "sts:AssumeRole"
     }]
   })
+
+  # Checked here, the first flight board resource, so a long core name fails at plan with a clear message.
+  lifecycle {
+    precondition {
+      condition     = length(local.names_too_long) == 0
+      error_message = "These names are longer than AWS allows; shorten core's resource name: ${join(", ", local.names_too_long)}"
+    }
+  }
 }
 
-resource "aws_iam_role_policy_attachment" "flight_board_access" {
-  role       = aws_iam_role.flight_board_access.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess"
-}
-
-# The running service's role: it only reads the settings secret.
-resource "aws_iam_role" "flight_board_instance" {
-  name = local.limited_names.flight_board_instance_role.name
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "tasks.apprunner.amazonaws.com" }
-      Action    = "sts:AssumeRole"
-    }]
-  })
+resource "aws_iam_role_policy_attachment" "flight_board_logs" {
+  role       = aws_iam_role.flight_board.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 resource "aws_iam_role_policy" "flight_board_settings" {
   name = "read-settings"
-  role = aws_iam_role.flight_board_instance.id
+  role = aws_iam_role.flight_board.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -55,55 +57,77 @@ resource "aws_iam_role_policy" "flight_board_settings" {
   })
 }
 
-# Exactly one instance: the app keeps its view of the day in memory.
-resource "aws_apprunner_auto_scaling_configuration_version" "flight_board" {
-  auto_scaling_configuration_name = local.limited_names.flight_board_scaling.name
-  min_size                        = 1
-  max_size                        = 1
+resource "aws_lambda_function" "flight_board" {
+  function_name = local.limited_names.flight_board_function.name
+  role          = aws_iam_role.flight_board.arn
+  package_type  = "Image"
+  image_uri     = var.image_uri
+  architectures = ["x86_64"]
+  memory_size   = 1024
+  timeout       = 30
+  publish       = true # every image or setting change publishes a new version, and the live alias moves to it
 
-  # Checked here, the first App Runner resource, so a long core name fails at plan with a clear message.
-  lifecycle {
-    precondition {
-      condition     = length(local.names_too_long) == 0
-      error_message = "These names are longer than AWS allows; shorten core's resource name: ${join(", ", local.names_too_long)}"
+  # Lambda's filesystem is read-only outside /tmp, so run the app directly rather than through `uv run`.
+  image_config {
+    entry_point = ["/app/.venv/bin/airport-app"]
+    command     = ["--host", "0.0.0.0", "--port", "8000"]
+  }
+
+  environment {
+    variables = {
+      STREAMHOUSE_SETTINGS_SECRET_ARN = aws_secretsmanager_secret.settings.arn # the app reads the secret at startup
+      AWS_LWA_PORT                    = "8000"
+      # TCP, not HTTP: once APP_PASSWORD is set every HTTP path answers 401.
+      AWS_LWA_READINESS_CHECK_PROTOCOL = "tcp"
+      HOME                             = "/tmp"
+      # Lambda can't see a secret change, so a new secret version changes this and publishes a new function version.
+      STREAMHOUSE_SETTINGS_VERSION = aws_secretsmanager_secret_version.settings.version_id
     }
   }
-}
-
-resource "aws_apprunner_service" "flight_board" {
-  service_name                   = local.limited_names.flight_board_service.name
-  auto_scaling_configuration_arn = aws_apprunner_auto_scaling_configuration_version.flight_board.arn
-
-  source_configuration {
-    auto_deployments_enabled = false
-    authentication_configuration {
-      access_role_arn = aws_iam_role.flight_board_access.arn
-    }
-    image_repository {
-      image_identifier      = var.image_uri
-      image_repository_type = "ECR"
-      image_configuration {
-        port                        = "8000"
-        runtime_environment_secrets = local.setting_refs
-      }
-    }
-  }
-
-  instance_configuration {
-    instance_role_arn = aws_iam_role.flight_board_instance.arn
-  }
-
-  # TCP, not HTTP: once APP_PASSWORD is set every HTTP path answers 401.
-  health_check_configuration {
-    protocol = "TCP"
-  }
-
 
   depends_on = [
-    aws_iam_role_policy_attachment.flight_board_access,
+    aws_cloudwatch_log_group.flight_board,
+    aws_iam_role_policy_attachment.flight_board_logs,
     aws_iam_role_policy.flight_board_settings,
-    aws_secretsmanager_secret_version.settings,
   ]
+}
+
+resource "aws_lambda_alias" "live" {
+  name             = "live"
+  function_name    = aws_lambda_function.flight_board.function_name
+  function_version = aws_lambda_function.flight_board.version
+}
+
+# One environment kept warm, so the board never cold-starts in front of an audience.
+resource "aws_lambda_provisioned_concurrency_config" "flight_board" {
+  function_name                     = aws_lambda_alias.live.function_name
+  qualifier                         = aws_lambda_alias.live.name
+  provisioned_concurrent_executions = 1
+}
+
+resource "aws_lambda_function_url" "flight_board" {
+  function_name      = aws_lambda_alias.live.function_name
+  qualifier          = aws_lambda_alias.live.name
+  authorization_type = "NONE"
+}
+
+# A public function URL needs both statements: InvokeFunctionUrl, and InvokeFunction through the URL.
+resource "aws_lambda_permission" "flight_board_url" {
+  statement_id           = "public-function-url"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_alias.live.function_name
+  qualifier              = aws_lambda_alias.live.name
+  principal              = "*"
+  function_url_auth_type = "NONE"
+}
+
+resource "aws_lambda_permission" "flight_board_invoke" {
+  statement_id             = "public-function-url-invoke"
+  action                   = "lambda:InvokeFunction"
+  function_name            = aws_lambda_alias.live.function_name
+  qualifier                = aws_lambda_alias.live.name
+  principal                = "*"
+  invoked_via_function_url = true
 }
 
 # ---------------------------------------------------------------------------

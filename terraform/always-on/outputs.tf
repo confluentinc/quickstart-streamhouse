@@ -1,5 +1,5 @@
 output "app_url" {
-  value       = "https://${aws_apprunner_service.flight_board.service_url}"
+  value       = trimsuffix(aws_lambda_function_url.flight_board.function_url, "/")
   description = "The flight board"
 }
 
@@ -20,7 +20,7 @@ output "generator_log_group" {
 }
 
 # deploy compares this with the image it just pushed: an unchanged image means only a secret may have changed,
-# which App Runner and ECS don't pick up without a redeploy.
+# which ECS doesn't pick up without a redeploy. (The flight board publishes a new version on a secret change.)
 output "image_uri" {
   value       = var.image_uri
   description = "The image both services run"
@@ -36,7 +36,12 @@ output "generator_service_name" {
   description = "The generator's ECS service"
 }
 
-output "app_service_arn" {
-  value       = aws_apprunner_service.flight_board.arn
-  description = "The flight board's App Runner service"
+output "app_function_name" {
+  value       = aws_lambda_function.flight_board.function_name
+  description = "The flight board's Lambda function"
+}
+
+output "app_log_group" {
+  value       = aws_cloudwatch_log_group.flight_board.name
+  description = "CloudWatch log group for the flight board"
 }

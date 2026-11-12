@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import os
 import secrets
 from concurrent.futures import ThreadPoolExecutor
@@ -36,6 +37,9 @@ WINDOW_BEFORE = timedelta(hours=18)
 WINDOW_AFTER = timedelta(hours=6)
 DELAYED_MINUTES = 15
 STAGES = {"BOARDING": 1, "DEPARTED": 2, "LANDED": 2}  # how far along a flight's day is; earlier statuses are 0
+# On AWS Lambda (the always-on demo) the settings secret's ARN, since Lambda can't put a secret's keys in the
+# environment the way ECS does. Unset everywhere else.
+SETTINGS_SECRET_ARN = "STREAMHOUSE_SETTINGS_SECRET_ARN"
 
 
 class Deployment:
@@ -411,11 +415,24 @@ def index():
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
+def load_settings_secret() -> None:
+    """Put each key of the settings secret in the environment, keeping any already set. Never logs a value."""
+    arn = os.environ.get(SETTINGS_SECRET_ARN)
+    if not arn:
+        return
+    import boto3
+
+    secret = boto3.client("secretsmanager").get_secret_value(SecretId=arn)["SecretString"]
+    for key, value in json.loads(secret).items():
+        os.environ.setdefault(key, str(value))
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="uv run airport-app")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
+    load_settings_secret()
     ensure_port_free(args.host, args.port, "airport-app")
     import uvicorn
 
