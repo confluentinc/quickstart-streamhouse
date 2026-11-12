@@ -708,8 +708,10 @@ Examples:
         print(colorize("⚠️  SOME VALIDATION CHECKS FAILED", "yellow"))
         print("=" * 70)
         print("\nPlease review the warnings above and verify your configuration.")
-        print("You can still proceed with deployment if you believe the")
-        print("configuration is correct, but you may encounter issues later.")
+        print(
+            "You can still proceed with deployment if you believe the configuration is correct, "
+            "but you may encounter issues later."
+        )
         print("\nSetup guides:")
         print("  • MongoDB:    assets/pre-setup/MongoDB-Setup.md")
     print("=" * 70)

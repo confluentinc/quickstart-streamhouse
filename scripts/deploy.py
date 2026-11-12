@@ -46,6 +46,7 @@ Usage:
 
 import argparse
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -161,6 +162,40 @@ def _flush_pending_writes(creds_file) -> None:
                 raise ValueError(f"Read-back verification failed for {k}")
     except Exception as e:
         print(f"\n✗ Could not write credentials.env: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _check_writable(root) -> None:
+    """Stop before any prompt or Terraform run if the checkout can't be written to.
+
+    Without this, a read-only folder lets deploy run on in memory, then Terraform can't save its
+    state and later commands fail with "state not found".
+    """
+    problems = []
+    creds_file = root / "credentials.env"
+    if creds_file.exists() and not os.access(creds_file, os.W_OK):
+        problems.append(f"  - {creds_file}: not writable")
+    for folder in (root, root / "terraform" / "core", root / "terraform" / "airline-demo"):
+        if not folder.exists():
+            continue
+        probe = folder / ".write-check"
+        try:
+            probe.write_text("")
+            probe.unlink()
+        except OSError as e:
+            problems.append(f"  - {folder}: {e.strerror or e}")
+    if problems:
+        print("✗ Deploy needs to write credentials.env and Terraform state, but cannot write to:")
+        print("\n".join(problems))
+        quoted = shlex.quote(str(root))
+        print("\nTry this, then run `uv run deploy` again:")
+        print(f"  chmod -R u+w {quoted}")
+        print(
+            "If that says 'Operation not permitted' or the folder belongs to another user "
+            "(for example it was cloned with sudo), take ownership instead:"
+        )
+        print(f'  sudo chown -R "$(whoami)" {quoted}')
+        print("Or clone the repo into a folder you own, such as your home folder, and deploy from there.")
         sys.exit(1)
 
 
@@ -288,6 +323,7 @@ def main():
     print("=== Streamhouse Labs — Deploy ===\n")
     root = get_project_root()
     print(f"Project root: {root}")
+    _check_writable(root)
 
     # ---- Non-interactive -------------------------------------------------
     if args.automated or args.testing:
@@ -455,8 +491,7 @@ def _prompt_aws_credentials(creds_file, creds: dict) -> None:
     """
     print(
         "\nAWS credentials power the Tableflow S3/Glue analytics path (Demo 3)."
-        "\nThey're optional — without them, everything else still deploys, the"
-        "\nrecovery agent included."
+        "\nThey're optional — without them, everything else still deploys, the recovery agent included."
     )
     access_key = secret_key = token = ""
     ambient = _detect_ambient_aws_credentials()
@@ -478,11 +513,10 @@ def _prompt_aws_credentials(creds_file, creds: dict) -> None:
             )
             if access_key.startswith("ASIA"):
                 print(
-                    "Temporary credentials need a session token too — that's a long string"
-                    "\n(300-400 chars) that can freeze some terminals on paste. If it does,"
-                    "\nCtrl-C and re-run after `export AWS_SESSION_TOKEN=...` (and"
-                    "\nAWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY) in your shell, so this can"
-                    "\nauto-detect it instead of needing it pasted here."
+                    "Temporary credentials need a session token too — that's a long string (300-400 chars) "
+                    "that can freeze some terminals on paste. If it does, Ctrl-C and re-run after "
+                    "`export AWS_SESSION_TOKEN=...` (and AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY) in your shell, "
+                    "so this can auto-detect it instead of needing it pasted here."
                 )
                 token = prompt_with_default(
                     "AWS Session Token (temp creds)", creds.get("TF_VAR_aws_tableflow_session_token", ""), secret=True

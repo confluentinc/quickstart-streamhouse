@@ -52,8 +52,10 @@ def _hint_anomaly_fallback(filename: str) -> None:
     """
     if filename != ANOMALY_SQL_AI:
         return
-    print("    F1_ANOMALY_FN=ai selected AI_DETECT_ANOMALIES (Granite), which needs the")
-    print("    AI-functions Early Access Program. Unset it to use the GA ARIMA default:")
+    print(
+        "    F1_ANOMALY_FN=ai selected AI_DETECT_ANOMALIES (Granite), which needs the AI-functions Early Access "
+        "Program. Unset it to use the GA ARIMA default:"
+    )
     print("      unset F1_ANOMALY_FN && <the command you just ran>")
 
 
