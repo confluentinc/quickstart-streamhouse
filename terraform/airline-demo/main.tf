@@ -244,10 +244,8 @@ resource "confluent_flink_statement" "impacted_passengers" {
   }
 
   statement_name = "airport-agent-impacted-passengers"
-  statement = (var.continuous
-    ? replace(file("${path.module}/sql/27-staging-impacted-passengers.sql"), local.agent_flight_filter, "")
-  : file("${path.module}/sql/27-staging-impacted-passengers.sql"))
-  properties = local.sql_props
+  statement      = var.continuous ? replace(file("${path.module}/sql/27-staging-impacted-passengers.sql"), local.agent_flight_filter, "") : file("${path.module}/sql/27-staging-impacted-passengers.sql")
+  properties     = local.sql_props
   lifecycle { ignore_changes = [properties] }
 
   depends_on = [confluent_flink_statement.passenger_state_changes]
