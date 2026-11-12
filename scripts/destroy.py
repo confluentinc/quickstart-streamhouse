@@ -5,6 +5,8 @@ Uses credentials from credentials.env for destruction via Terraform.
 
     uv run destroy                             # both labs and the shared core environment
     uv run destroy --lab agentic-pit-decisions # one lab's objects; core and the other lab stay
+
+An always-on deployment (terraform/always-on) goes first, since its services read core's cluster.
 """
 
 import argparse
@@ -17,7 +19,16 @@ from pathlib import Path
 from dotenv import dotenv_values, unset_key
 
 from .credentials import load_or_create_credentials_file
-from .deploy import DEPLOY_LABS, LABS, WORKSHOP
+from .deploy import (
+    ALWAYS_ON,
+    ALWAYS_ON_CARD,
+    CONTINUOUS,
+    DEPLOY_LABS,
+    FLIGHT_DISRUPTIONS,
+    LABS,
+    WORKSHOP,
+    _export_aws_credentials,
+)
 from .login_checks import ensure_confluent_login
 from .terraform import get_project_root
 from .terraform_runner import run_terraform_destroy
@@ -135,11 +146,20 @@ def _cleanup_mcp(root: Path) -> None:
         print(f"⚠ MCP cleanup failed: {e}")
 
 
-def _envs_to_destroy(lab: str | None) -> list[str]:
-    """Terraform roots in reverse dependency order: every lab before core."""
+def _envs_to_destroy(lab: str | None, root: Path | None = None) -> list[str]:
+    """Terraform roots in reverse dependency order: always-on (when deployed), every lab, then core."""
+    always_on = ["always-on"] if root and (root / "terraform" / "always-on" / "terraform.tfstate").exists() else []
     if lab:
-        return [LABS[lab][1]]
-    return ["agentic-pit-decisions", "airline-demo", "core"]
+        return [*(always_on if lab == FLIGHT_DISRUPTIONS else []), LABS[lab][1]]
+    return [*always_on, "agentic-pit-decisions", "airline-demo", "core"]
+
+
+def _prepare_always_on_destroy(creds: dict) -> None:
+    """terraform/always-on's variables need values even to destroy, and its AWS provider needs credentials."""
+    _export_aws_credentials(creds)
+    os.environ.setdefault("TF_VAR_image_uri", "destroy")
+    os.environ.setdefault("TF_VAR_rtce_api_key", creds.get("CONFLUENT_RTCE_API_KEY") or "destroy")
+    os.environ.setdefault("TF_VAR_rtce_api_secret", creds.get("CONFLUENT_RTCE_API_SECRET") or "destroy")
 
 
 def _cleanup_pit_decisions(root: Path) -> None:
@@ -187,7 +207,7 @@ def main():
             sys.exit(1)
 
         creds = dotenv_values(str(creds_file))
-        envs_to_destroy = _envs_to_destroy(args.lab)
+        envs_to_destroy = _envs_to_destroy(args.lab, root)
 
         for key, value in creds.items():
             if value:
@@ -204,7 +224,7 @@ def main():
         ensure_confluent_login(env_creds, root / "credentials.env", interactive=True)
         print("✓ Confluent CLI logged in")
 
-        envs_to_destroy = _envs_to_destroy(args.lab)
+        envs_to_destroy = _envs_to_destroy(args.lab, root)
         print(f"✓ Will destroy: {', '.join(envs_to_destroy)}")
 
         # Load credentials file
@@ -225,6 +245,9 @@ def main():
             print("Destroy cancelled.")
             sys.exit(0)
 
+    if "always-on" in envs_to_destroy:
+        _prepare_always_on_destroy(creds)
+
     # Step 5: Destroy environments
     print("\n=== Starting Destroy ===")
     for env in envs_to_destroy:
@@ -243,6 +266,8 @@ def main():
         destroyed = run_terraform_destroy(env_path)
         if destroyed and env == "agentic-pit-decisions":
             _cleanup_pit_decisions(root)
+        if destroyed and env == "always-on":
+            (root / ALWAYS_ON_CARD).unlink(missing_ok=True)
         if not destroyed and env == "airline-demo" and release_provider_integration(env_path):
             destroyed = run_terraform_destroy(env_path)
 
@@ -270,7 +295,7 @@ def main():
     # With nothing deployed, the next deploy can be either kind again and asks which lab.
     creds_file = root / "credentials.env"
     saved = dotenv_values(str(creds_file)) if creds_file.exists() else {}
-    for key in (WORKSHOP, DEPLOY_LABS):
+    for key in (WORKSHOP, DEPLOY_LABS, ALWAYS_ON, CONTINUOUS):
         if saved.get(key):
             unset_key(str(creds_file), key)
 
