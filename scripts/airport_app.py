@@ -12,14 +12,16 @@ Run:
 from __future__ import annotations
 
 import argparse
+import base64
 import os
+import secrets
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -375,6 +377,30 @@ def book_offer(passenger_id: str, offer_id: str):
             offer["status"] = "CLOSED"
             _write_offer(offer)
     return chosen
+
+
+def _basic_auth_password(header: str | None) -> str | None:
+    """Return the password from an `Authorization: Basic` header, or None when it is missing or malformed."""
+    if not header or not header.lower().startswith("basic "):
+        return None
+    try:
+        decoded = base64.b64decode(header[len("basic ") :], validate=True).decode("utf-8")
+    except ValueError:
+        return None
+    _, colon, password = decoded.partition(":")
+    return password if colon else None
+
+
+@app.middleware("http")
+async def require_app_password(request: Request, call_next):
+    """When APP_PASSWORD is set, every path needs HTTP Basic auth (any username, that password)."""
+    expected = os.environ.get("APP_PASSWORD")
+    if not expected:
+        return await call_next(request)
+    supplied = _basic_auth_password(request.headers.get("Authorization"))
+    if supplied is not None and secrets.compare_digest(supplied.encode(), expected.encode()):
+        return await call_next(request)
+    return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="River Air"'})
 
 
 @app.get("/")

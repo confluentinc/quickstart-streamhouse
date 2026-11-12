@@ -1,3 +1,4 @@
+import base64
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -413,3 +414,29 @@ def test_app_reads_lightning_settings_from_env(monkeypatch):
     }.items():
         monkeypatch.setenv(name, value)
     assert Deployment().lightning_url == "https://sql.us-east-1.aws.confluent.cloud/query/v1alpha1"
+
+
+# --- optional shared password ------------------------------------------------
+
+
+def test_no_password_means_no_login(monkeypatch):
+    monkeypatch.delenv("APP_PASSWORD", raising=False)
+    assert TestClient(airport_app.app).get("/").status_code == 200
+
+
+def test_password_required_when_set(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    client = TestClient(airport_app.app)
+    assert client.get("/").status_code == 401
+    assert client.get("/", auth=("demo", "wrong")).status_code == 401
+    assert client.get("/", auth=("demo", "s3cret")).status_code == 200
+    assert client.get("/static/app.js").status_code == 401
+
+
+def test_malformed_authorization_header_gets_401(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    client = TestClient(airport_app.app)
+    for header in ["Basic !!!not-base64!!!", "Basic " + base64.b64encode(b"nocolonhere").decode(), "Bearer s3cret"]:
+        response = client.get("/", headers={"Authorization": header})
+        assert response.status_code == 401, header
+        assert response.headers["WWW-Authenticate"] == 'Basic realm="River Air"'
