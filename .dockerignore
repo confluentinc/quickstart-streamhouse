@@ -1,0 +1,16 @@
+# Keep credentials, state, and anything the image doesn't run out of the build context.
+credentials.env
+.env
+.env.*
+tmp/
+terraform/
+*.tfstate*
+.venv/
+.git/
+.github/
+.superpowers/
+docs/
+tests/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
