@@ -39,7 +39,7 @@ from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from itertools import pairwise
+from itertools import count, pairwise
 from operator import itemgetter
 
 import requests
@@ -84,6 +84,30 @@ DEPARTURE_MINUTES = (
 )
 LAST_BANK = 75
 
+# The around-the-clock template: 90 arrivals 16 minutes apart. Each destination's 6 departures run
+# 3 h 24 m apart with one 7-hour overnight gap, and the gaps start 96 minutes apart.
+CONTINUOUS_ARRIVAL_MINUTES = tuple(i * 16 for i in range(90))
+
+
+def _continuous_departure(i: int) -> int:
+    destination, k = i % 15, i // 15
+    return ((destination * 96 + 420) % 1440 + k * 204) % 1440
+
+
+CONTINUOUS_DEPARTURE_MINUTES = tuple(_continuous_departure(i) for i in range(90))
+
+
+@dataclass(frozen=True)
+class Schedule:
+    arrivals: tuple[int, ...]
+    departures: tuple[int, ...]
+    scripted: bool
+    variant: str
+
+
+SCRIPTED = Schedule(ARRIVAL_MINUTES, DEPARTURE_MINUTES, True, "")
+AROUND_THE_CLOCK = Schedule(CONTINUOUS_ARRIVAL_MINUTES, CONTINUOUS_DEPARTURE_MINUTES, False, "continuous")
+
 # Every flight's seat map, modeled after a two-class Boeing 737-900ER: First in rows 1-5
 # (A C | D F) and Economy in rows 6-32 (A B C | D E F), 182 seats.
 SEATS = tuple(f"{row}{letter}" for row in range(1, 33) for letter in ("ACDF" if row <= 5 else "ABCDEF"))
@@ -91,6 +115,7 @@ SEATS = tuple(f"{row}{letter}" for row in range(1, 33) for letter in ("ACDF" if 
 HERO_NUMBER = 417
 HERO_ORIGIN = "ORD"
 HERO_MINUTE = 21 * 60 + 40
+CONTINUOUS_HERO_MINUTES = tuple(40 + 180 * k for k in range(8))  # 00:40, 03:40, ... 21:40
 HERO_LEAD = timedelta(minutes=50)
 # From +5 to +25 minutes into the stream, each 30-second RA417 update adds to its delay, up to 115.
 HERO_RAMP = (timedelta(minutes=5), timedelta(minutes=25))
@@ -258,6 +283,7 @@ class Day:
     arrivals: list[Flight]
     departures: list[Flight]
     passengers: list[Passenger]
+    schedule: Schedule = SCRIPTED
 
     @property
     def flights(self) -> list[Flight]:
@@ -265,11 +291,22 @@ class Day:
 
     @property
     def hero(self) -> Flight:
+        if not self.schedule.scripted:
+            raise ValueError("an around-the-clock day has several RA417s; use heroes")
         return self.arrivals[ARRIVAL_MINUTES.index(HERO_MINUTE)]
+
+    @property
+    def heroes(self) -> list[Flight]:
+        """The RA417s: the one scripted flight, or the eight of an around-the-clock day."""
+        if self.schedule.scripted:
+            return [self.hero]
+        return [f for f in self.arrivals if f.number == HERO_NUMBER]
 
     @property
     def agent_flights(self) -> list[Flight]:
         """The live day's flights the recovery agent writes offers for: RA417, then AGENT_FLIGHTS."""
+        if not self.schedule.scripted:
+            return []
         return [self.hero, *(f for f in self.arrivals if f.number in AGENT_FLIGHTS)]
 
 
@@ -314,9 +351,10 @@ def _delays(flight: Flight, steps, climb: bool = False) -> None:
 
 
 def _assign_delays(day: Day, rng: random.Random) -> None:
-    hero = day.hero if day.live else None
-    scripted = {f.key: AGENT_FLIGHTS[f.number] for f in day.agent_flights[1:]} if day.live else {}
-    forced = {f.key for f in day.departures[LAST_BANK:]} if day.live else set()
+    story = day.live and day.schedule.scripted
+    hero = day.hero if story else None
+    scripted = {f.key: AGENT_FLIGHTS[f.number] for f in day.agent_flights[1:]} if story else {}
+    forced = {f.key for f in day.departures[LAST_BANK:]} if story else set()
     pool = [f for f in day.flights if f is not hero and f.key not in forced and f.key not in scripted]
     severe = {f.key for f in rng.sample(pool, SEVERE_PER_DAY - (1 if hero else 0))}
     # The live day streams its updates, so its delays climb the way RA417's does. History days
@@ -371,8 +409,9 @@ def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[P
     passengers = []
     open_seats = {d.key: seat_rng.sample(SEATS, len(SEATS)) for d in day.departures}
     for flight in day.arrivals:
-        hero = day.live and flight is day.hero
-        script = AGENT_FLIGHTS.get(flight.number) if day.live else None
+        story = day.live and day.schedule.scripted
+        hero = story and flight is day.hero
+        script = AGENT_FLIGHTS.get(flight.number) if story else None
         if hero:
             plan = [True] * HERO_CONNECTING + [False] * HERO_LOCAL
             rng.shuffle(plan)
@@ -392,7 +431,11 @@ def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[P
         ]
         seats = seat_rng.sample(SEATS, len(plan))
         for seq, (connects, seat) in enumerate(zip(plan, seats, strict=True), start=1):
-            passenger = Passenger(f"P-{day.service_date:%m%d}-{flight.number:03d}-{seq:03d}", flight, seat)
+            if flight.number == HERO_NUMBER and not day.schedule.scripted:
+                key = f"P-{day.service_date:%m%d}-417-{flight.scheduled:%H%M}-{seq:03d}"
+            else:
+                key = f"P-{day.service_date:%m%d}-{flight.number:03d}-{seq:03d}"
+            passenger = Passenger(key, flight, seat)
             if connects and candidates:
                 for onward in rng.sample(candidates, min(3, len(candidates))):
                     valid, flip = _risk_flip(flight, onward)
@@ -420,10 +463,8 @@ def _keeps_risk(inbound: Flight, onward, at: datetime, until: datetime, base: in
     return True
 
 
-def _revise_estimates(day: Day, rng: random.Random) -> None:
+def _revise_estimates(day: Day, rng: random.Random, start: datetime, end: datetime) -> None:
     """Live-stream arrival-time revisions that never change a status, map color, or connection's risk."""
-    start = day.hero.scheduled - HERO_LEAD
-    end = start + timedelta(minutes=STREAM_MINUTES)
     onward: dict[str, dict[str, Flight]] = {}
     for passenger in day.passengers:
         if passenger.connecting:
@@ -457,20 +498,36 @@ def _revise_estimates(day: Day, rng: random.Random) -> None:
 
 
 def build_day(
-    seed: int, service_date: date, midnight: datetime, live: bool = False, schedule_only: bool = False
+    seed: int,
+    service_date: date,
+    midnight: datetime,
+    live: bool = False,
+    schedule_only: bool = False,
+    schedule: Schedule = SCRIPTED,
 ) -> Day:
     """One service day. The same seed, date, and variant always produce the same keys and values."""
     variant = "live" if live else "schedule" if schedule_only else "history"
-    rng = random.Random(f"{seed}:{service_date.isoformat()}:{variant}")
+    rng = random.Random(f"{seed}:{service_date.isoformat()}:{schedule.variant or variant}")
     suffix = f"{service_date:%Y%m%d}"
-    numbers = iter(range(101, 101 + len(ARRIVAL_MINUTES)))
+    numbers = (n for n in count(101) if n != HERO_NUMBER)
+    if schedule.scripted:
+        hero_slots = {i: HERO_MINUTE for i, minute in enumerate(schedule.arrivals) if minute == HERO_MINUTE}
+    else:  # the arrival slot nearest each RA417 time becomes that RA417, scheduled exactly on it
+        hero_slots = {}
+        for target in CONTINUOUS_HERO_MINUTES:
+            free = (i for i in range(len(schedule.arrivals)) if i not in hero_slots)
+            hero_slots[min(free, key=lambda i: abs(schedule.arrivals[i] - target))] = target
     arrivals = []
-    for i, minute in enumerate(ARRIVAL_MINUTES):
-        hero = minute == HERO_MINUTE
+    for i, slot in enumerate(schedule.arrivals):
+        hero = i in hero_slots
+        minute = hero_slots[i] if hero else slot
         number = HERO_NUMBER if hero else next(numbers)
+        key = f"{AIRLINE}{number}-{suffix}"
+        if hero and not schedule.scripted:
+            key += f"-{minute // 60:02d}{minute % 60:02d}"
         arrivals.append(
             Flight(
-                f"{AIRLINE}{number}-{suffix}",
+                key,
                 number,
                 HERO_ORIGIN if hero else SPOKES[i % 15],
                 HUB,
@@ -487,9 +544,9 @@ def build_day(
             midnight + timedelta(minutes=minute),
             rng.randrange(60),
         )
-        for i, minute in enumerate(DEPARTURE_MINUTES)
+        for i, minute in enumerate(schedule.departures)
     ]
-    day = Day(service_date, live, arrivals, departures, [])
+    day = Day(service_date, live, arrivals, departures, [], schedule)
     if not schedule_only:
         _assign_delays(day, rng)
         # Seats draw from their own stream, so they never shift delays, connections, or offers.
@@ -553,7 +610,13 @@ def build_plan(start: datetime, seed: int = SEED, history: bool = True) -> Plan:
         for back in range(HISTORY_DAYS if history else 0, 0, -1)
     ]
     days.append(build_day(seed, today, midnight, live=True))
-    _revise_estimates(days[-1], random.Random(f"{seed}:{today.isoformat()}:live:revisions"))
+    window = days[-1].hero.scheduled - HERO_LEAD
+    _revise_estimates(
+        days[-1],
+        random.Random(f"{seed}:{today.isoformat()}:live:revisions"),
+        window,
+        window + timedelta(minutes=STREAM_MINUTES),
+    )
     tomorrow = build_day(seed, today + timedelta(days=1), midnight + timedelta(days=1), schedule_only=True)
     recoveries = []
     for day, next_day in zip(days, [*days[1:], tomorrow], strict=True):
