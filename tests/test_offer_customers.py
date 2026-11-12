@@ -1,10 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from confluent_kafka import TopicPartition
 
 from scripts.airport_datagen import GRAND_HYATT, OFFER_EXPIRY, OFFERS, rooms_at
-from scripts.offer_customers import OfferWatcher, decide
+from scripts.offer_customers import LONE_OFFER_GRACE, OfferWatcher, decide
 
 AT = datetime(2026, 11, 12, 10)
 
@@ -209,3 +209,102 @@ def test_catches_up_past_trailing_transaction_markers():
     # Two undelivered markers follow the last message, so the topic ends at start + 4.
     w = watcher(messages, ends={0: start + 4}, trailing=2)
     assert len(w.poll(0)) == 2
+
+
+class BrokenMessage(FakeMessage):
+    """A message with a missing key, an undecodable key, or a broker error."""
+
+    def __init__(self, key=None, value=b"x", error=None):
+        super().__init__("", value)
+        self._raw_key, self._error = key, error
+
+    def key(self):
+        return self._raw_key
+
+    def error(self):
+        return self._error
+
+
+def test_watcher_skips_records_it_cannot_read(caplog):
+    pid = "P-1112-101-010"
+
+    def deserializer(value, ctx):
+        if value == b"not avro":
+            raise ValueError("Unknown magic byte")
+        return value
+
+    messages = [
+        BrokenMessage(key=None),
+        BrokenMessage(key=b"\xff\xfe"),
+        BrokenMessage(key=f"{pid}-O9".encode(), value=b"not avro"),
+        BrokenMessage(key=b"k", error="broker error"),
+        FakeMessage(f"{pid}-O1", offer(pid, 1)),
+        FakeMessage(f"{pid}-O2", offer(pid, 2)),
+    ]
+    w = OfferWatcher.for_tests(42, FakeConsumer(messages), deserializer)
+    with caplog.at_level("WARNING"):
+        rows = w.poll(0)
+    assert {k for _, k, _ in rows} == {f"{pid}-O1", f"{pid}-O2"}
+    assert caplog.text.count("Skipping") == 4
+    assert "Unknown magic byte" in caplog.text and "not avro" not in caplog.text
+
+
+def clocked_watcher(messages, clock):
+    return OfferWatcher.for_tests(42, FakeConsumer(messages), lambda value, ctx: value, now=lambda: clock["now"])
+
+
+def test_lone_offer_is_decided_after_the_grace_period():
+    pid = "P-1112-101-011"
+    clock = {"now": AT + timedelta(minutes=1)}
+    w = clocked_watcher([FakeMessage(f"{pid}-O1", offer(pid, 1))], clock)
+    assert w.poll(0) == []
+    clock["now"] = AT + LONE_OFFER_GRACE
+    rows = w.poll(0)  # no new message: the pending lone offer is checked again
+    assert [k for _, k, _ in rows] == [f"{pid}-O1"]
+    assert w.still_open(pid)
+    assert w.poll(0) == []  # decided once
+
+
+def test_lone_offer_is_not_decided_before_the_grace_period():
+    pid = "P-1112-101-012"
+    clock = {"now": AT + LONE_OFFER_GRACE - timedelta(seconds=1)}
+    w = clocked_watcher([FakeMessage(f"{pid}-O1", offer(pid, 1))], clock)
+    assert w.poll(0) == [] and w.poll(0) == []
+    assert not w.still_open(pid)
+
+
+def test_second_offer_within_the_grace_period_decides_the_pair():
+    pid = "P-1112-101-013"
+    clock = {"now": AT + timedelta(seconds=30)}
+    w = clocked_watcher([FakeMessage(f"{pid}-O1", offer(pid, 1))], clock)
+    assert w.poll(0) == []
+    w.consumer.messages += [FakeMessage(f"{pid}-O2", offer(pid, 2))]
+    clock["now"] = AT + timedelta(minutes=5)
+    assert {k for _, k, _ in w.poll(0)} == {f"{pid}-O1", f"{pid}-O2"}
+    assert w.poll(0) == []
+
+
+def test_lone_offer_books_about_85_percent_and_the_rest_expire():
+    results = [decide(42, {f"P-1112-101-{i:03d}-O1": offer(f"P-1112-101-{i:03d}", 1)}) for i in range(1, 401)]
+    assert all(len(rows) == 1 for rows in results)
+    booked = sum(rows[0][2]["status"] == "BOOKED" for rows in results)
+    assert 300 <= booked <= 380
+    assert all(at == AT + OFFER_EXPIRY for rows in results for at, _, v in rows if v["status"] == "CLOSED")
+
+
+def test_lone_offer_with_a_sold_out_hotel_expires():
+    late = datetime(2026, 11, 12, 18, 30)
+    for i in range(1, 50):
+        pid = f"P-1112-101-{i:03d}"
+        [(at, _, value)] = decide(42, {f"{pid}-O1": offer(pid, 1, hotel=GRAND_HYATT, at=late)})
+        assert value["status"] == "CLOSED" and at == late + OFFER_EXPIRY
+
+
+def test_a_rewritten_offer_drops_the_simulated_answer():
+    # The app's sold-out path rewrites an offer with a new hotel and leaves it OFFERED: the answer is stale.
+    pid = "P-1112-101-014"
+    w = watcher([FakeMessage(f"{pid}-O1", offer(pid, 1, hotel=GRAND_HYATT)), FakeMessage(f"{pid}-O2", offer(pid, 2))])
+    assert len(w.poll(0)) == 2 and w.still_open(pid)
+    w.consumer.messages += [FakeMessage(f"{pid}-O1", offer(pid, 1, hotel="Hilton San Francisco Airport Bayfront"))]
+    w.poll(0)
+    assert not w.still_open(pid)

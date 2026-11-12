@@ -1168,8 +1168,9 @@ def _stream_continuous(seed: int, start: datetime, until: datetime | None, publi
     """Publish continuous_events after `start` (until `until`, or forever), plus the customers' answers to offers.
 
     `clock` returns the current UTC time; without one nothing waits. The watcher's rows join the pending heap.
-    Right before a customer's first row goes out, the watcher must still see both offers open: if someone
-    booked in the app first, every pending row for that passenger is dropped.
+    Right before a customer's first row goes out, the watcher must still see the offers it answered open and
+    unchanged: if someone booked in the app first, or the app rewrote an offer, every pending row for that
+    passenger is dropped.
     """
     pending: list[tuple[datetime, int, str, str, dict | None, str | None]] = []
     order = count()

@@ -3,6 +3,7 @@
 `decide` is pure and seeded per passenger. `OfferWatcher` feeds it from the offers topic.
 """
 
+import logging
 import random
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -12,17 +13,20 @@ from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroDeserializer
 from confluent_kafka.serialization import MessageField, SerializationContext
 
-from .airport_datagen import BOOKING_SHARE, DECISION_SECONDS, OFFER_EXPIRY, OFFERS, rooms_at
+from .airport_datagen import BOOKING_SHARE, DECISION_SECONDS, OFFER_EXPIRY, OFFERS, _wall_clock, rooms_at
 
 Row = tuple[datetime, str, dict]
 
 
-def decide(seed: int, offers: dict[str, dict]) -> list[Row]:
-    """The customer's answer to a passenger's two offers, as timed rows to publish.
+LONE_OFFER_GRACE = timedelta(minutes=2)  # how long the watcher waits for a second offer before deciding on one
 
-    Returns [] unless both offers are still OFFERED (a human got there first).
+
+def decide(seed: int, offers: dict[str, dict]) -> list[Row]:
+    """The customer's answer to a passenger's offers (two, or one when the agent found only one), as timed rows.
+
+    Returns [] unless every offer is still OFFERED (a human got there first).
     """
-    if len(offers) != 2 or any(v["status"] != "OFFERED" for v in offers.values()):
+    if len(offers) not in (1, 2) or any(v["status"] != "OFFERED" for v in offers.values()):
         return []
     keys = sorted(offers)
     passenger = offers[keys[0]]["passenger_id"]
@@ -34,7 +38,7 @@ def decide(seed: int, offers: dict[str, dict]) -> list[Row]:
     chosen = None
     if books:
         rooms = None
-        for index in (first, 1 - first):
+        for index in (first, 1 - first) if len(keys) == 2 else (0,):
             offer = offers[keys[index]]
             if offer["recommended_flight_id"] is None:
                 continue
@@ -97,20 +101,26 @@ class OfferWatcher:
         self._setup(seed, consumer, AvroDeserializer(registry), ends)
 
     @classmethod
-    def for_tests(cls, seed: int, consumer, deserializer, ends: dict[int, int] | None = None) -> "OfferWatcher":
+    def for_tests(
+        cls, seed: int, consumer, deserializer, ends: dict[int, int] | None = None, now=None
+    ) -> "OfferWatcher":
+        """A watcher on a fake consumer. Without `now`, its clock stays at datetime.min, so a lone offer never
+        waits out LONE_OFFER_GRACE and the tests decide only on pairs."""
         watcher = cls.__new__(cls)
-        watcher._setup(seed, consumer, deserializer, ends or {})
+        watcher._setup(seed, consumer, deserializer, ends or {}, now or (lambda: datetime.min))
         return watcher
 
-    def _setup(self, seed, consumer, deserializer, ends: dict[int, int]) -> None:
+    def _setup(self, seed, consumer, deserializer, ends: dict[int, int], now=None) -> None:
         self.ends = ends  # partition -> offset the topic ended at when we started
         self.caught = False
         self.pending: set[str] = set()
+        self.lone: set[str] = set()  # passengers with one open offer, waiting out LONE_OFFER_GRACE for a second
         self.seed = seed
         self.consumer = consumer
         self.deserializer = deserializer
+        self.now = now or _wall_clock  # naive UTC, like the offers' timestamps
         self.view: dict[str, dict[str, dict]] = {}
-        self.decided: set[str] = set()
+        self.decided: dict[str, dict[str, dict]] = {}  # passenger -> the offers as decide saw them
 
     def caught_up(self) -> bool:
         """True once the consumer's position has passed every startup end offset (and stays true).
@@ -125,9 +135,47 @@ class OfferWatcher:
         return self.caught
 
     def still_open(self, passenger_id: str) -> bool:
-        """True while the view has both of the passenger's offers and both are still OFFERED."""
+        """True while the passenger's offers are all OFFERED and are the ones the customer answers.
+
+        Before a decision that means both offers; after one, every offer decide saw must be unchanged (the app's
+        sold-out path can rewrite one with a new hotel and leave it OFFERED), which also covers a lone offer.
+        """
         offers = self.view.get(passenger_id, {})
-        return len(offers) == 2 and all(v["status"] == "OFFERED" for v in offers.values())
+        if not offers or any(v["status"] != "OFFERED" for v in offers.values()):
+            return False
+        seen = self.decided.get(passenger_id)
+        if seen is None:
+            return len(offers) == 2
+        return all(offers.get(key) == value for key, value in seen.items())
+
+    def _read(self, message) -> tuple[str, dict | None] | None:
+        """(key, value) of one offers record, or None, with a warning, for one that can't be read."""
+        where = f"{message.topic()} partition {message.partition()} offset {message.offset()}"
+        if message.error():
+            logging.warning("Skipping %s: %s", where, message.error())
+            return None
+        if message.key() is None:
+            logging.warning("Skipping %s: it has no key", where)
+            return None
+        try:
+            key = message.key().decode()
+            if message.value() is None:
+                return key, None
+            value = self.deserializer(message.value(), SerializationContext(message.topic(), MessageField.VALUE))
+            return key, _naive_utc(value)
+        except Exception as error:  # a bad record must not stop the generator, or it replays into it forever
+            logging.warning("Skipping %s: %s", where, error)
+            return None
+
+    def _ready(self, passenger: str) -> bool:
+        """Two open offers, or one that has waited LONE_OFFER_GRACE for a second."""
+        offers = self.view.get(passenger, {})
+        if len(offers) != 1:
+            return True
+        (offer,) = offers.values()
+        if offer["status"] != "OFFERED":
+            return True
+        return self.now() - offer["recommended_at"] >= LONE_OFFER_GRACE
 
     def poll(self, timeout: float, limit: int = 500) -> list[Row]:
         touched = []
@@ -135,26 +183,30 @@ class OfferWatcher:
             message = self.consumer.poll(timeout if not touched else 0)
             if message is None:
                 break
-            if message.error():
+            read = self._read(message)
+            if read is None:
                 continue
-            key = message.key().decode()
+            key, value = read
             passenger = key.rsplit("-O", 1)[0]
-            if message.value() is None:
+            if value is None:
                 self.view.get(passenger, {}).pop(key, None)
             else:
-                value = self.deserializer(message.value(), SerializationContext(message.topic(), MessageField.VALUE))
-                self.view.setdefault(passenger, {})[key] = _naive_utc(value)
+                self.view.setdefault(passenger, {})[key] = value
             touched.append(passenger)
         self.pending.update(touched)
         if not self.caught_up():
             return []
         rows = []
-        pending, self.pending = self.pending, set()
+        pending, self.pending, self.lone = self.pending | self.lone, set(), set()
         for passenger in sorted(pending):
             if passenger in self.decided:
                 continue
-            answer = decide(self.seed, self.view.get(passenger, {}))
+            if not self._ready(passenger):
+                self.lone.add(passenger)  # checked again on later polls, even with no new message for them
+                continue
+            offers = self.view.get(passenger, {})
+            answer = decide(self.seed, offers)
             if answer:
-                self.decided.add(passenger)
+                self.decided[passenger] = {key: dict(value) for key, value in offers.items()}
                 rows.extend(answer)
         return rows
