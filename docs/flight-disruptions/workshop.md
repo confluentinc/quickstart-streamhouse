@@ -11,6 +11,8 @@ That leaves River Air with two challenges:
 
 In this workshop, you deploy a **Streamhouse** architecture on Confluent Cloud that tackles both. You compute every passenger's connection risk with Flink and serve it through Lightning Tables to an always-on, always-current operations dashboard. Then you build a streaming agent that reads live flights and hotel rooms through the Real-Time Context Engine (RTCE) and offers every stranded passenger a new flight and, when needed, a hotel.
 
+▶️ **[Watch the demo video](https://www.youtube.com/watch?v=4pzIwuhAG2s)** to see the finished flight recovery demo before you build it.
+
 > [!NOTE]
 >
 > **This workshop takes about 60 minutes to complete.**
