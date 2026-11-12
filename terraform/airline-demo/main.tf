@@ -79,6 +79,13 @@ locals {
   # Workshop attendees create their own agent instead.
   agent_enabled = var.enable_recovery_agent && !var.workshop
 
+  # Always-on mode: the agent handles every flight, so sql/27's three-flight filter line is dropped
+  # at render time (the file stays as the workshop guide has it; tests keep this line in sync).
+  agent_flight_filter = "    AND SPLIT_INDEX(inbound_flight_id, '-', 0) IN ('RA417', 'RA183', 'RA185')\n"
+
+  # Always-on mode also syncs the offers to Iceberg, so the history includes recovery time.
+  tableflow_topics = var.continuous ? distinct(concat(var.tableflow_topics, ["passenger_recommendations"])) : var.tableflow_topics
+
   # The three source feeds, the recovery offers, and (outside the workshop) the webhook's landing table.
   tables = merge(
     {
@@ -237,8 +244,10 @@ resource "confluent_flink_statement" "impacted_passengers" {
   }
 
   statement_name = "airport-agent-impacted-passengers"
-  statement      = file("${path.module}/sql/27-staging-impacted-passengers.sql")
-  properties     = local.sql_props
+  statement = (var.continuous
+    ? replace(file("${path.module}/sql/27-staging-impacted-passengers.sql"), local.agent_flight_filter, "")
+  : file("${path.module}/sql/27-staging-impacted-passengers.sql"))
+  properties = local.sql_props
   lifecycle { ignore_changes = [properties] }
 
   depends_on = [confluent_flink_statement.passenger_state_changes]

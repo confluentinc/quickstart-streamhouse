@@ -144,3 +144,18 @@ def test_deploy_finishes_with_data_then_rtce_then_the_agent(monkeypatch, tmp_pat
     monkeypatch.setattr(deploy, "_print_env_name", lambda _: None)
     deploy._finish(tmp_path, "codex")
     assert calls == ["data", "rtce", "agent"]
+
+
+def test_continuous_mode_drops_exactly_the_agent_flight_filter():
+    main = (DEMO / "main.tf").read_text()
+    match = re.search(r'agent_flight_filter\s*=\s*"(.*)"', main)
+    assert match
+    line = match.group(1).encode().decode("unicode_escape")
+    assert line in _sql("27")  # the replace() can't silently match nothing
+    assert "var.continuous ? replace(" in main
+    assert 'output "continuous"' in (DEMO / "outputs.tf").read_text()
+
+
+def test_continuous_mode_turns_on_tableflow_for_both_topics():
+    tf = (DEMO / "analytics.tf").read_text() + (DEMO / "main.tf").read_text()
+    assert '["passenger_recommendations"]' in tf and "local.tableflow_topics" in tf
