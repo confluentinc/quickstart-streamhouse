@@ -46,7 +46,8 @@ def cleanup_terraform_artifacts(env_path: Path) -> None:
     - FLINK_SQL_COMMANDS.md (auto-generated summary)
     - mcp_commands.txt (legacy file)
 
-    Does NOT remove credentials.env (which is in project root, not env directories).
+    Does NOT remove credentials.env (which is in project root, not env directories);
+    main() asks about that separately.
 
     Args:
         env_path: Path to terraform environment directory
@@ -300,6 +301,15 @@ def main():
             unset_key(str(creds_file), key)
 
     print("\n✓ Destroy process completed!")
+
+    # Asked last so a failed destroy never costs the user the keys they need to rerun it.
+    if not args.testing and creds_file.exists():
+        answer = input("\nAlso delete saved credentials in credentials.env? (y/N): ").strip().lower()
+        if answer == "y":
+            creds_file.unlink()
+            print("✓ Deleted credentials.env")
+        else:
+            print("Kept credentials.env")
 
 
 if __name__ == "__main__":

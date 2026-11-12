@@ -125,6 +125,8 @@ def _find_credentials_file() -> Path:
         candidate = parent / "credentials.env"
         if candidate.exists():
             return candidate
+        if (parent / "pyproject.toml").exists():
+            break  # the checkout's root: never borrow a credentials.env from a folder above it
     return here / "credentials.env"
 
 
@@ -381,7 +383,7 @@ def _get_infra(creds_file: Path) -> dict[str, str]:
     cloud = outputs.get(_TF_CLOUD, "").strip().lower()
 
     if org_id and env_id and cluster_id and region:
-        print("\nAuto-detected infrastructure from terraform state:")
+        print(f"\nAuto-detected infrastructure from terraform state ({state_path}):")
         print(f"  Cloud:        {cloud or 'unknown'}")
         print(f"  Organization: {org_id}")
         print(f"  Environment:  {env_id}")
@@ -440,10 +442,11 @@ def _validate_rtce_support(infra: dict[str, str]) -> None:
         for r in sorted(_RTCE_SUPPORTED_AWS_REGIONS):
             print(f"  {r}")
         print()
-        print("This probably will not work UNLESS Confluent has already rolled out")
-        print("RTCE support for your region since this script was last updated.")
-        print("Check https://docs.confluent.io/cloud/current/clusters/regions.html")
-        print("for the current list.")
+        print(
+            "This probably will not work UNLESS Confluent has already rolled out RTCE support for your region "
+            "since this script was last updated."
+        )
+        print("Check https://docs.confluent.io/cloud/current/clusters/regions.html for the current list.")
         print("!" * 70)
         raw = input("\nContinue anyway? [y/N]: ").strip().lower()
         if raw != "y":

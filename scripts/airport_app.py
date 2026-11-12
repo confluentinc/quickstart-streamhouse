@@ -114,8 +114,10 @@ class Deployment:
                 timeout=15,
             )
         except requests.RequestException as exc:
+            print(f"Lightning request failed: {exc}", flush=True)
             raise HTTPException(status_code=502, detail=f"Lightning request failed: {exc}") from exc
         if resp.status_code != 200:
+            print(f"Lightning query returned HTTP {resp.status_code}: {resp.text[:300]}", flush=True)
             raise HTTPException(
                 status_code=502,
                 detail=f"Lightning query returned HTTP {resp.status_code}: {resp.text[:300]}",
