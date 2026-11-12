@@ -90,6 +90,10 @@ Then follow its guide: [Agentic Airline Operations](./docs/flight-disruptions/wo
 >
 > **Presenting a demo?** Run `uv run deploy --with-labs` to get everything prebuilt.
 
+## Always-on demo
+
+Operators can run the full demo around the clock on AWS (App Runner and ECS) for colleagues to explore: see the [always-on guide](./docs/flight-disruptions/always-on.md).
+
 ## Clean up
 
 Tear down everything deploy created (the environment, cluster, Flink pool, and both labs) and answer `y`:
