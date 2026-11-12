@@ -278,3 +278,45 @@ def test_customer_rows_drop_when_someone_booked_in_the_app():
     assert offers == [("P-B-O1", "CLOSED"), ("P-B-O2", "BOOKED")]
     assert sorted(set(watcher.checked)) == ["P-A", "P-B"]
     assert any(t == g.FLIGHTS for t, _, _ in published)
+
+
+class FlushingProducer:
+    """A producer whose flush rounds report the given pending counts in turn."""
+
+    def __init__(self, pending):
+        self.pending = list(pending)
+        self.rounds = []
+
+    def flush(self, timeout):
+        self.rounds.append(timeout)
+        return self.pending.pop(0) if len(self.pending) > 1 else self.pending[0]
+
+
+def flushing_publisher(pending):
+    publisher = g.Publisher(None, dry_run=True)
+    publisher.dry_run, publisher.producer = False, FlushingProducer(pending)
+    return publisher
+
+
+def test_flush_keeps_waiting_while_records_are_delivered(caplog):
+    publisher = flushing_publisher([46866, 30000, 12000, 1, 0])
+    with caplog.at_level("INFO"):
+        publisher.flush()
+    assert len(publisher.producer.rounds) == 5
+    assert "12000 records still to deliver" in caplog.text
+
+
+def test_flush_gives_up_when_delivery_stalls():
+    publisher = flushing_publisher([500, 500])
+    with pytest.raises(RuntimeError, match="500 records were not delivered"):
+        publisher.flush()
+    assert len(publisher.producer.rounds) == 1 + g.FLUSH_STALLED_ROUNDS
+
+
+def test_flush_gives_up_after_its_total_limit(monkeypatch):
+    clock = iter(range(0, 10_000, 300))  # each round seems to take five minutes
+    monkeypatch.setattr(g.time, "monotonic", lambda: next(clock))
+    publisher = flushing_publisher([1000 - n for n in range(100)])
+    with pytest.raises(RuntimeError, match="records were not delivered"):
+        publisher.flush()
+    assert len(publisher.producer.rounds) <= g.FLUSH_LIMIT.total_seconds() // 300 + 1

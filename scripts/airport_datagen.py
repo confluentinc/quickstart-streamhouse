@@ -905,6 +905,11 @@ def reset_keys(start: datetime, seed: int = SEED) -> dict[str, set[str]]:
     return keys
 
 
+FLUSH_ROUND_SECONDS = 30  # Publisher.flush waits this long per round
+FLUSH_STALLED_ROUNDS = 3  # ...and gives up after this many rounds in a row that deliver nothing
+FLUSH_LIMIT = timedelta(minutes=15)  # ...or after this long in all
+
+
 class Publisher:
     def __init__(self, credentials: dict | None, dry_run: bool):
         self.dry_run = dry_run
@@ -992,10 +997,23 @@ class Publisher:
             time.sleep(2**attempt)  # a retry can duplicate a record; hotel_inventory keeps only the latest
 
     def flush(self) -> None:
-        if not self.dry_run:
-            pending = self.producer.flush(60)
-            if pending:
+        """Wait until every record is delivered, for as long as delivery keeps making progress.
+
+        A month of history from a laptop takes minutes to drain. Give up only when FLUSH_STALLED_ROUNDS rounds in a
+        row deliver nothing, or after FLUSH_LIMIT in all."""
+        if self.dry_run:
+            return
+        deadline = time.monotonic() + FLUSH_LIMIT.total_seconds()
+        last, stalled = None, 0
+        while True:
+            pending = self.producer.flush(FLUSH_ROUND_SECONDS)
+            if not pending:
+                return
+            stalled = stalled + 1 if last is not None and pending >= last else 0
+            if stalled >= FLUSH_STALLED_ROUNDS or time.monotonic() >= deadline:
                 raise RuntimeError(f"{pending} records were not delivered")
+            logging.info("%d records still to deliver", pending)
+            last = pending
 
 
 def _pid_file():
