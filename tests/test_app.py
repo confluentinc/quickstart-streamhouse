@@ -427,8 +427,12 @@ def test_no_password_means_no_login(monkeypatch):
 def test_password_required_when_set(monkeypatch):
     monkeypatch.setenv("APP_PASSWORD", "s3cret")
     client = TestClient(airport_app.app)
-    assert client.get("/").status_code == 401
-    assert client.get("/", auth=("demo", "wrong")).status_code == 401
+    login = client.get("/")
+    assert login.status_code == 200 and 'action="/login"' in login.text and "<title>River Air sign in" in login.text
+    assert client.get("/api/state").status_code == 401
+    assert client.get("/", auth=("demo", "wrong")).status_code == 200  # wrong password: login page again
+    assert "Wrong" not in client.get("/", auth=("demo", "wrong")).text
+    assert client.get("/", auth=("demo", "wrong")).text == login.text
     assert client.get("/", auth=("demo", "s3cret")).status_code == 200
     assert client.get("/static/app.js").status_code == 401
 
@@ -437,6 +441,75 @@ def test_malformed_authorization_header_gets_401(monkeypatch):
     monkeypatch.setenv("APP_PASSWORD", "s3cret")
     client = TestClient(airport_app.app)
     for header in ["Basic !!!not-base64!!!", "Basic " + base64.b64encode(b"nocolonhere").decode(), "Bearer s3cret"]:
-        response = client.get("/", headers={"Authorization": header})
+        response = client.get("/static/app.js", headers={"Authorization": header})
         assert response.status_code == 401, header
         assert response.headers["WWW-Authenticate"] == 'Basic realm="River Air"'
+
+
+def _cookie_value(response):
+    return response.cookies.get("river_air_session")
+
+
+def test_login_sets_cookie_that_authorizes_everything(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    client = TestClient(airport_app.app, base_url="https://testserver")
+    response = client.post("/login", data={"password": "s3cret"}, follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/"
+    header = response.headers["set-cookie"].lower()
+    for attribute in ["httponly", "secure", "samesite=lax", "path=/", f"max-age={30 * 86400}"]:
+        assert attribute in header
+    assert "river_air_session=" in header
+    assert client.get("/").text.lstrip().lower().startswith("<!doctype html>")
+    assert 'action="/login"' not in client.get("/").text
+    assert client.get("/static/app.js").status_code == 200
+    assert client.get("/api/state").status_code != 401
+
+
+def test_login_page_logo_is_public_but_other_static_is_not(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    client = TestClient(airport_app.app)
+    assert client.get("/static/river-air-logo.svg").status_code == 200
+    assert client.get("/static/app.js").status_code == 401
+
+
+def test_api_without_sign_in_is_json_401(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    response = TestClient(airport_app.app).get("/api/state")
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Sign in"}
+    assert response.headers["WWW-Authenticate"] == 'Basic realm="River Air"'
+
+
+def test_wrong_login_password_shows_error_without_cookie(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    response = TestClient(airport_app.app).post("/login", data={"password": "nope"}, follow_redirects=False)
+    assert response.status_code == 401
+    assert "Wrong password" in response.text and 'action="/login"' in response.text
+    assert "set-cookie" not in response.headers
+
+
+def test_cookie_from_old_password_is_rejected_after_rotation(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "old")
+    client = TestClient(airport_app.app, base_url="https://testserver")
+    client.post("/login", data={"password": "old"}, follow_redirects=False)
+    assert client.get("/static/app.js").status_code == 200
+    monkeypatch.setenv("APP_PASSWORD", "new")
+    assert client.get("/static/app.js").status_code == 401
+    assert 'action="/login"' in client.get("/").text
+
+
+def test_logout_clears_cookie(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    client = TestClient(airport_app.app, base_url="https://testserver")
+    client.post("/login", data={"password": "s3cret"}, follow_redirects=False)
+    response = client.get("/logout", follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/"
+    assert "max-age=0" in response.headers["set-cookie"].lower()
+    assert client.get("/static/app.js").status_code == 401
+
+
+def test_no_password_mode_has_no_login_routes(monkeypatch):
+    monkeypatch.delenv("APP_PASSWORD", raising=False)
+    client = TestClient(airport_app.app)
+    assert 'action="/login"' not in client.get("/").text
+    assert client.get("/static/app.js").status_code == 200

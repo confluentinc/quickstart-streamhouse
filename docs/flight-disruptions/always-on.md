@@ -40,14 +40,14 @@ Last, deploy gives each demo user the `EnvironmentAdmin` role on the environment
 Deploy prints the card and writes it to `tmp/always-on-card.env` (gitignored):
 
 - `ALWAYS_ON_APP_URL`: the flight board.
-- `ALWAYS_ON_APP_PASSWORD`: the board takes any username with this password.
+- `ALWAYS_ON_APP_PASSWORD`: the board's sign-in page takes this password (scripts can use `curl -u any:<password>`).
 - `ALWAYS_ON_DEMO_USERS`: who has the environment role.
 
 Keep the card out of tracked files and share it only through a private channel.
 
 ### After deploying (operator checks)
 
-1. The app URL asks for the password, then shows flights.
+1. The app URL shows a sign-in page, then flights after the password.
 2. Within 15 minutes, `passenger_recommendations` has agent rows for flights other than RA417, RA183, and RA185.
 3. Within 2 hours, some agent offers turn BOOKED.
 4. `aws ecs update-service --force-new-deployment` (see [Logs](#logs-and-restarts) for the cluster and service names) leaves the board where it was: the generator derives every row from the seed and the wall clock.

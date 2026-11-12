@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -20,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import parse_qs
 
 import requests
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -395,16 +398,95 @@ def _basic_auth_password(header: str | None) -> str | None:
     return password if colon else None
 
 
+SESSION_COOKIE = "river_air_session"
+SESSION_DAYS = 30
+LOGIN_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>River Air sign in</title>
+<style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#050912;color:#eaf0fb;
+font:15px/1.45 Inter,ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+form{width:min(340px,calc(100vw - 32px));padding:28px;background:#0c1428;
+border:1px solid rgba(148,163,184,.24);border-radius:14px}
+img{height:40px;display:block;margin-bottom:14px}
+h1{font-size:20px;margin:0 0 18px}
+label{display:block;color:#93a1c0;margin-bottom:6px}
+input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid rgba(148,163,184,.24);
+background:#0a1122;color:#eaf0fb;font:inherit}
+button{width:100%;margin-top:16px;padding:10px;border:0;border-radius:8px;font:inherit;font-weight:600;color:#050912;
+cursor:pointer;background:linear-gradient(90deg,#22d3ee,#60a5fa 50%,#a78bfa)}
+.error{color:#fb7185;margin:0 0 12px}
+</style></head><body>
+<form method="post" action="/login">
+<img src="/static/river-air-logo.svg" alt="River Air">
+<h1>River Air flight board</h1>
+%ERROR%<label for="password">Password</label>
+<input id="password" name="password" type="password" autocomplete="current-password" autofocus required>
+<button type="submit">Sign in</button>
+</form></body></html>"""
+PUBLIC_PATHS = {"/static/river-air-logo.svg"}
+
+
+def _login_page(error: str = "") -> Response:
+    message = f'<p class="error">{error}</p>' if error else ""
+    return Response(
+        LOGIN_PAGE.replace("%ERROR%", message),
+        status_code=401 if error else 200,
+        media_type="text/html",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _session_token(password: str) -> str:
+    return hmac.new(password.encode(), b"river-air-flight-board", hashlib.sha256).hexdigest()
+
+
+def _same(supplied: str, expected: str) -> bool:
+    return secrets.compare_digest(supplied.encode(), expected.encode())
+
+
 @app.middleware("http")
 async def require_app_password(request: Request, call_next):
-    """When APP_PASSWORD is set, every path needs HTTP Basic auth (any username, that password)."""
+    """When APP_PASSWORD is set, every path needs HTTP Basic auth (any username, that password) or a sign-in cookie."""
     expected = os.environ.get("APP_PASSWORD")
     if not expected:
         return await call_next(request)
-    supplied = _basic_auth_password(request.headers.get("Authorization"))
-    if supplied is not None and secrets.compare_digest(supplied.encode(), expected.encode()):
+    path = request.url.path
+    if request.method == "POST" and path == "/login":
+        form = parse_qs((await request.body()).decode("utf-8", errors="replace"))
+        if _same(form.get("password", [""])[0], expected):
+            response = Response(status_code=303, headers={"Location": "/"})
+            response.set_cookie(
+                SESSION_COOKIE,
+                _session_token(expected),
+                max_age=SESSION_DAYS * 86400,
+                path="/",
+                httponly=True,
+                secure=True,
+                samesite="lax",
+            )
+            return response
+        return _login_page("Wrong password")
+    if path == "/logout":
+        response = Response(status_code=303, headers={"Location": "/"})
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return response
+    cookie = request.cookies.get(SESSION_COOKIE)
+    if cookie is not None and _same(cookie, _session_token(expected)):
         return await call_next(request)
-    return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="River Air"'})
+    supplied = _basic_auth_password(request.headers.get("Authorization"))
+    if supplied is not None and _same(supplied, expected):
+        return await call_next(request)
+    if request.method == "GET" and path in PUBLIC_PATHS:
+        return await call_next(request)
+    if request.method == "GET" and not path.startswith("/api/") and (
+        path == "/" or "text/html" in request.headers.get("accept", "")
+    ):
+        return _login_page()
+    headers = {"WWW-Authenticate": 'Basic realm="River Air"'}
+    if path.startswith("/api/"):
+        return Response('{"detail": "Sign in"}', status_code=401, media_type="application/json", headers=headers)
+    return Response(status_code=401, headers=headers)
 
 
 @app.get("/")
