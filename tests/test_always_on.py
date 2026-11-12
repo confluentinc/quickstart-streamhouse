@@ -117,7 +117,34 @@ def test_grant_demo_users_binds_only_missing_roles(monkeypatch):
         if cmd[:4] == ["confluent", "iam", "user", "list"]:
             return _completed(cmd, json.dumps([{"id": "u-1", "email": "A+1@x.io"}]))
         if cmd[:5] == ["confluent", "iam", "user", "invitation", "list"]:
-            return _completed(cmd, json.dumps([{"id": "i-2", "email": "a+2@x.io", "user": "u-2"}]))
+            return _completed(
+                cmd,
+                json.dumps(
+                    [
+                        {
+                            "id": "i-2",
+                            "email": "a+2@x.io",
+                            "name": "",
+                            "status": "INVITE_STATUS_SENT",
+                            "user_id": "u-2",
+                        },
+                        {
+                            "id": "i-1",
+                            "email": "a+1@x.io",
+                            "name": "",
+                            "status": "INVITE_STATUS_ACCEPTED",
+                            "user_id": "",
+                        },
+                        {
+                            "id": "i-9",
+                            "email": "a+9@x.io",
+                            "name": "",
+                            "status": "INVITE_STATUS_EXPIRED",
+                            "user_id": "u-9",
+                        },
+                    ]
+                ),
+            )
         if cmd[:5] == ["confluent", "iam", "rbac", "role-binding", "list"]:
             principal = cmd[cmd.index("--principal") + 1]
             rows = [{"principal": "User:u-1", "role": "EnvironmentAdmin"}] if principal == "User:u-1" else []
@@ -222,15 +249,57 @@ def test_always_on_saves_its_mode_and_implies_the_full_flight_demo(tmp_path):
     creds = {}
     assert deploy._always_on_mode(args, creds_file, creds)
     assert args.with_labs and args.lab == "flight-disruptions"
+    assert deploy.dotenv_values(str(creds_file)) == {}  # nothing saved until the deploy goes ahead
+    deploy._save_always_on(creds_file, creds)
     saved = deploy.dotenv_values(str(creds_file))
     assert saved["TF_VAR_always_on"] == saved["TF_VAR_continuous"] == "true"
     assert saved["TF_VAR_deployment_name"] == "river-air-demo"
     # Saved mode: a later plain run is always-on too, and an existing name is kept.
     creds_file.write_text("TF_VAR_always_on=true\nTF_VAR_deployment_name=mine\n")
     args = argparse_namespace()
-    assert deploy._always_on_mode(args, creds_file, deploy.dotenv_values(str(creds_file)))
+    creds = deploy.dotenv_values(str(creds_file))
+    assert deploy._always_on_mode(args, creds_file, creds)
+    deploy._save_always_on(creds_file, creds)
     assert deploy.dotenv_values(str(creds_file))["TF_VAR_deployment_name"] == "mine"
     assert not deploy._workshop_mode(False, args.with_labs, creds_file, {})
+
+
+def _interactive(monkeypatch, tmp_path, text, ready):
+    creds_file = tmp_path / "credentials.env"
+    creds_file.write_text(text)
+    monkeypatch.setattr(sys, "argv", ["deploy", "--always-on"])
+    monkeypatch.setattr(deploy, "get_project_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        deploy, "load_or_create_credentials_file", lambda root: (creds_file, deploy.dotenv_values(str(creds_file)))
+    )
+    monkeypatch.setattr(deploy, "ensure_confluent_login", lambda *a, **k: None)
+    monkeypatch.setattr(deploy, "prompt_with_default", lambda text, default="", **k: default or "x")
+    monkeypatch.setattr(deploy, "prompt_yes_no", lambda text, default=True: ready if "Ready" in text else False)
+    monkeypatch.setattr(deploy, "_prompt_aws_credentials", lambda *a: None)
+    monkeypatch.setattr(deploy, "_export_aws_credentials", lambda creds: None)
+    monkeypatch.setattr(deploy, "_preflight_always_on", lambda creds: None)
+    monkeypatch.setattr(deploy, "_deploy", lambda *a: pytest.fail("deployed"))
+    return creds_file
+
+
+LOGIN = "CONFLUENT_EMAIL=e\nCONFLUENT_PASSWORD=p\nDEMO_USER_EMAILS=a@x.io\n"
+
+
+def test_always_on_on_a_workshop_checkout_saves_nothing(monkeypatch, tmp_path):
+    creds_file = _interactive(monkeypatch, tmp_path, LOGIN + "TF_VAR_workshop=true\n", ready=True)
+    with pytest.raises(SystemExit, match="workshop"):
+        deploy.main()
+    saved = deploy.dotenv_values(str(creds_file))
+    assert not {"TF_VAR_always_on", "TF_VAR_continuous", "TF_VAR_deployment_name"} & set(saved)
+
+
+def test_cancelling_always_on_at_the_confirmation_saves_nothing(monkeypatch, tmp_path):
+    creds_file = _interactive(monkeypatch, tmp_path, LOGIN, ready=False)
+    with pytest.raises(SystemExit) as stopped:
+        deploy.main()
+    assert stopped.value.code == 0
+    saved = deploy.dotenv_values(str(creds_file))
+    assert not {"TF_VAR_always_on", "TF_VAR_continuous", "TF_VAR_deployment_name"} & set(saved)
 
 
 def test_saved_always_on_rejects_workshop(tmp_path):

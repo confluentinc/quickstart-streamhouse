@@ -240,16 +240,26 @@ def _workshop_saved(args, creds: dict) -> bool:
 
 def _always_on_mode(args, creds_file, creds: dict) -> bool:
     """True for --always-on, now or on an earlier run. It implies the full Flight Disruptions demo (--with-labs
-    --lab flight-disruptions) and saves the mode, var.continuous, and a fixed deployment name."""
+    --lab flight-disruptions). Nothing is saved here: _save_always_on runs once the deploy goes ahead."""
     if not (args.always_on or creds.get(ALWAYS_ON) == "true"):
         if args.reset_data:
             sys.exit("--reset-data only applies with --always-on.")
         return False
     if args.workshop or args.video_2:
         sys.exit("This checkout runs the always-on demo, the full demo; drop --workshop and --video-2.")
+    if creds.get(WORKSHOP) == "true":
+        sys.exit(
+            "This checkout has the workshop, which --always-on would partly destroy. "
+            "Run `uv run destroy` first, or deploy the always-on demo from another clone."
+        )
     if args.lab not in (None, FLIGHT_DISRUPTIONS):
         sys.exit("--always-on deploys the Flight Disruptions lab; drop --lab or pick flight-disruptions.")
     args.with_labs, args.lab = True, FLIGHT_DISRUPTIONS
+    return True
+
+
+def _save_always_on(creds_file, creds: dict) -> None:
+    """Save the mode, var.continuous, and a fixed deployment name, so later plain runs stay always-on."""
     for key in (ALWAYS_ON, CONTINUOUS):
         _save_env_safe(creds_file, key, "true")
         creds[key] = "true"
@@ -260,7 +270,7 @@ def _always_on_mode(args, creds_file, creds: dict) -> bool:
         else:
             _save_env_safe(creds_file, "TF_VAR_deployment_name", ALWAYS_ON_NAME)
             creds["TF_VAR_deployment_name"] = ALWAYS_ON_NAME
-    return True
+    _flush_pending_writes(creds_file)
 
 
 def _demo_emails(creds: dict) -> list[str]:
@@ -394,6 +404,8 @@ def main():
         workshop = FLIGHT_DISRUPTIONS in labs and _workshop_mode(
             args.workshop, args.with_labs or args.video_2, creds_file, creds, default=False
         )
+        if always_on:
+            _save_always_on(creds_file, creds)
         _flush_pending_writes(creds_file)
         if always_on:
             _export_aws_credentials(creds)
@@ -514,6 +526,8 @@ def main():
     if not prompt_yes_no("Ready to deploy?"):
         print("Deployment cancelled.")
         sys.exit(0)
+    if always_on:
+        _save_always_on(creds_file, final_creds)
 
     write_tfvars_for_deployment(root, region, final_creds, resource_prefix=prefix)
     for key, value in final_creds.items():
@@ -1058,12 +1072,15 @@ def _field(row: dict, name: str) -> str:
 def _grant_demo_users(env_id: str, emails: list[str]) -> list[str]:
     """Bind EnvironmentAdmin on the environment for each demo user who lacks it. Returns the emails not found."""
     ids = {}
-    for row in _confluent_rows("iam", "user", "invitation", "list"):  # not accepted yet; an accepted user wins below
-        if _field(row, "email") and _field(row, "user"):
-            ids[_field(row, "email").lower()] = _field(row, "user")
     for row in _confluent_rows("iam", "user", "list"):
         if _field(row, "email") and _field(row, "id"):
             ids[_field(row, "email").lower()] = _field(row, "id")
+    # Invitations not accepted yet: `id` is the invitation (i-...), `user_id` the user it made (u-...).
+    for row in _confluent_rows("iam", "user", "invitation", "list"):
+        email, user = _field(row, "email").lower(), _field(row, "user_id") or _field(row, "user")
+        status = _field(row, "status").lower()
+        if email and user and email not in ids and not any(word in status for word in ("declin", "expir")):
+            ids[email] = user
 
     missing = []
     for email in emails:
