@@ -7,7 +7,7 @@ import random
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from confluent_kafka import Consumer
+from confluent_kafka import Consumer, TopicPartition
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroDeserializer
 from confluent_kafka.serialization import MessageField, SerializationContext
@@ -83,21 +83,42 @@ class OfferWatcher:
                 "enable.auto.commit": False,
             }
         )
-        consumer.subscribe([OFFERS])
-        self._setup(seed, consumer, AvroDeserializer(registry))
+        # Read every partition from the start, and note where each ends now: until the watcher gets there it is
+        # replaying history, and a passenger's settled rows may still be ahead of their OFFERED ones.
+        partitions = [
+            TopicPartition(OFFERS, p) for p in consumer.list_topics(OFFERS, timeout=30).topics[OFFERS].partitions
+        ]
+        ends = {}
+        for partition in partitions:
+            low, high = consumer.get_watermark_offsets(partition, timeout=30)
+            if high > low:
+                ends[partition.partition] = high
+        consumer.assign(partitions)
+        self._setup(seed, consumer, AvroDeserializer(registry), ends)
 
     @classmethod
-    def for_tests(cls, seed: int, consumer, deserializer) -> "OfferWatcher":
+    def for_tests(cls, seed: int, consumer, deserializer, ends: dict[int, int] | None = None) -> "OfferWatcher":
         watcher = cls.__new__(cls)
-        watcher._setup(seed, consumer, deserializer)
+        watcher._setup(seed, consumer, deserializer, ends or {})
         return watcher
 
-    def _setup(self, seed, consumer, deserializer) -> None:
+    def _setup(self, seed, consumer, deserializer, ends: dict[int, int]) -> None:
+        self.ends = ends  # partition -> offset the topic ended at when we started
+        self.consumed: dict[int, int] = {}  # partition -> next offset to read
+        self.pending: set[str] = set()
         self.seed = seed
         self.consumer = consumer
         self.deserializer = deserializer
         self.view: dict[str, dict[str, dict]] = {}
         self.decided: set[str] = set()
+
+    def caught_up(self) -> bool:
+        return all(self.consumed.get(partition, 0) >= end for partition, end in self.ends.items())
+
+    def still_open(self, passenger_id: str) -> bool:
+        """True while the view has both of the passenger's offers and both are still OFFERED."""
+        offers = self.view.get(passenger_id, {})
+        return len(offers) == 2 and all(v["status"] == "OFFERED" for v in offers.values())
 
     def poll(self, timeout: float, limit: int = 500) -> list[Row]:
         touched = []
@@ -107,6 +128,7 @@ class OfferWatcher:
                 break
             if message.error():
                 continue
+            self.consumed[message.partition()] = message.offset() + 1
             key = message.key().decode()
             passenger = key.rsplit("-O", 1)[0]
             if message.value() is None:
@@ -115,8 +137,12 @@ class OfferWatcher:
                 value = self.deserializer(message.value(), SerializationContext(message.topic(), MessageField.VALUE))
                 self.view.setdefault(passenger, {})[key] = _naive_utc(value)
             touched.append(passenger)
+        self.pending.update(touched)
+        if not self.caught_up():
+            return []
         rows = []
-        for passenger in dict.fromkeys(touched):
+        pending, self.pending = self.pending, set()
+        for passenger in sorted(pending):
             if passenger in self.decided:
                 continue
             answer = decide(self.seed, self.view.get(passenger, {}))
