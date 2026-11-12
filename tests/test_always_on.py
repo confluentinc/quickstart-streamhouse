@@ -50,6 +50,7 @@ def test_flight_board_is_a_lambda_behind_a_public_function_url():
     assert re.search(r"STREAMHOUSE_SETTINGS_VERSION\s*=\s*aws_secretsmanager_secret_version\.settings", function)
     # Run the console script, not `uv run`: Lambda's filesystem is read-only outside /tmp.
     assert '"/app/.venv/bin/airport-app"' in function
+    assert re.search(r"timeout\s*=\s*120\b", function)  # App Runner's request timeout
 
     url = _block(aws, "aws_lambda_function_url.flight_board")
     assert re.search(r'authorization_type\s*=\s*"NONE"', url) and "aws_lambda_alias.live.name" in url
@@ -467,6 +468,7 @@ def test_push_image_returns_the_pushed_digest(monkeypatch, tmp_path):
     monkeypatch.setenv("TF_VAR_image_uri", "x")
     assert deploy._push_image(tmp_path, "us-east-1") == f"{repo}@sha256:bb"
     build = next(cmd for cmd in runs if cmd[:2] == ["docker", "build"])
+    assert "--sbom=false" in build
     assert "--provenance=false" in build  # Lambda takes a plain image manifest, not a manifest list
 
 

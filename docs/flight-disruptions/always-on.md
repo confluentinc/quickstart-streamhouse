@@ -29,7 +29,7 @@ Then [`terraform/always-on/`](../../terraform/always-on/) creates, on AWS:
 
 - an Amazon ECR repository for the image deploy builds and pushes;
 - a Secrets Manager secret holding the settings both services read, including a generated flight board password;
-- an AWS Lambda function for the flight board, run from the same image through the Lambda Web Adapter, with a public function URL (the board's own password is the only gate), one provisioned instance on its `live` alias so it never cold-starts, and a CloudWatch log group for it;
+- an AWS Lambda function for the flight board, run from the same image through the Lambda Web Adapter, with a public function URL (the board's own password is the only gate), one instance kept warm on its `live` alias, and a CloudWatch log group for it. Extra concurrent requests (one open board already makes a few in parallel) use on-demand instances, which can take a few seconds to start the first time; raise the provisioned concurrency in `terraform/always-on/aws.tf` to 2–3 if the board feels slow;
 - an ECS Fargate cluster and service for the continuous generator (`uv run airport-datagen --continuous`), and a CloudWatch log group for it;
 - the IAM roles those need.
 
@@ -56,7 +56,7 @@ Keep the card out of tracked files and share it only through a private channel.
 
 ## Cost
 
-On AWS the steady costs are the flight board's Lambda provisioned concurrency (one 1 GB instance kept warm around the clock, billed whether or not anyone opens the board), the generator's Fargate task, and Secrets Manager, ECR, and CloudWatch logs. Leave it running for 2 days, then read the daily cost in the Confluent Cloud Console (**Billing & payment** → **Cost**) and in AWS Cost Explorer (filtered to the region). Record both as monthly projections here, and share the card only after the cost is accepted.
+On AWS the steady costs are the flight board's Lambda provisioned concurrency (one 1 GB instance kept warm around the clock, billed whether or not anyone opens the board, plus on-demand Lambda time for the extra instances open boards use), the generator's Fargate task, and Secrets Manager, ECR, and CloudWatch logs. Leave it running for 2 days, then read the daily cost in the Confluent Cloud Console (**Billing & payment** → **Cost**) and in AWS Cost Explorer (filtered to the region). Record both as monthly projections here, and share the card only after the cost is accepted.
 
 > TODO(operator): measured monthly cost, Confluent Cloud: ______ ; AWS: ______ (measured over 2 days, date: ______).
 

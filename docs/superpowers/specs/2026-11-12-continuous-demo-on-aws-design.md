@@ -129,8 +129,10 @@ Flink SQL, Lightning queries, and the agent statements.
 - **AWS shape.** One AWS account, in the same region as the Confluent cluster (default `us-east-1`).
   - **Image:** one container image built from the repo and pushed to ECR, used for both services.
   - **App:** an AWS Lambda function (container image, with the AWS Lambda Web Adapter passing requests
-    to the FastAPI app) behind a public function URL, with one provisioned instance on a `live` alias so
-    demos never hit a cold start. The function URL gives an HTTPS URL with no domain or certificate to
+    to the FastAPI app) behind a public function URL, with one instance kept warm on a `live` alias.
+    Extra concurrent requests (one open board already makes a few in parallel) use on-demand instances,
+    which can take a few seconds to start the first time; raise provisioned concurrency to 2–3 if the
+    board feels slow. The function URL gives an HTTPS URL with no domain or certificate to
     manage. The first design used App Runner, but AWS closed App Runner to new customers and rejected it
     for this account, so the board moved to Lambda; the image, secret, and generator are unchanged.
   - **Generator:** an ECS Fargate service with one task and no load balancer. ECS restarts it if it exits.

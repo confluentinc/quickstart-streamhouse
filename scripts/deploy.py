@@ -1021,7 +1021,17 @@ def _push_image(root, region: str) -> str:
             check=True,
         )
         # One plain image manifest: Lambda rejects the manifest list that build attestations would add.
-        build = ["docker", "build", "--platform", "linux/amd64", "--provenance=false", "-t", image, str(root)]
+        build = [
+            "docker",
+            "build",
+            "--platform",
+            "linux/amd64",
+            "--provenance=false",
+            "--sbom=false",
+            "-t",
+            image,
+            str(root),
+        ]
         subprocess.run(build, check=True)
         subprocess.run(["docker", "push", image], check=True)
         digests = subprocess.run(

@@ -64,7 +64,7 @@ resource "aws_lambda_function" "flight_board" {
   image_uri     = var.image_uri
   architectures = ["x86_64"]
   memory_size   = 1024
-  timeout       = 30
+  timeout       = 120  # App Runner's request timeout: /api/state pages Lightning in turn, 15 s a call
   publish       = true # every image or setting change publishes a new version, and the live alias moves to it
 
   # Lambda's filesystem is read-only outside /tmp, so run the app directly rather than through `uv run`.
@@ -98,7 +98,8 @@ resource "aws_lambda_alias" "live" {
   function_version = aws_lambda_function.flight_board.version
 }
 
-# One environment kept warm, so the board never cold-starts in front of an audience.
+# One instance kept warm. Extra concurrent requests (one open board already makes a few in parallel) use on-demand
+# instances, which can take a few seconds to start the first time; raise this to 2-3 if the board feels slow.
 resource "aws_lambda_provisioned_concurrency_config" "flight_board" {
   function_name                     = aws_lambda_alias.live.function_name
   qualifier                         = aws_lambda_alias.live.name
