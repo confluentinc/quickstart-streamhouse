@@ -39,6 +39,7 @@ from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from functools import lru_cache
 from itertools import count, pairwise
 from operator import itemgetter
 
@@ -123,6 +124,8 @@ HERO_DELAY = 115
 HERO_CONNECTING = 150
 HERO_LOCAL = 20
 HERO_BUFFER = (50, 110)
+# On an around-the-clock day each RA417's delay climbs from 75 to 25 minutes before its scheduled arrival.
+CONTINUOUS_HERO_RAMP = (timedelta(minutes=-75), timedelta(minutes=-25))
 
 
 # Two later arrivals the recovery agent also handles (sql/27-staging-impacted-passengers.sql), so its
@@ -148,6 +151,7 @@ CONNECTING_SHARE = 0.3
 CONNECTION_BUFFER = (60, 180)
 PASSENGERS_PER_FLIGHT = (120, 180)
 SEVERE_PER_DAY = 10
+CONTINUOUS_SEVERE_PER_DAY = 14  # an around-the-clock day has no forced last bank, so it needs more to strand as many
 SEVERE_DELAY = (90, 240)
 MODERATE_SHARE = 0.25
 MODERATE_DELAY = (15, 60)
@@ -355,8 +359,13 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
     hero = day.hero if story else None
     scripted = {f.key: AGENT_FLIGHTS[f.number] for f in day.agent_flights[1:]} if story else {}
     forced = {f.key for f in day.departures[LAST_BANK:]} if story else set()
-    pool = [f for f in day.flights if f is not hero and f.key not in forced and f.key not in scripted]
-    severe = {f.key for f in rng.sample(pool, SEVERE_PER_DAY - (1 if hero else 0))}
+    # An around-the-clock live day climbs each of its eight RA417s the same way, relative to its own schedule.
+    ramps = {id(f) for f in day.heroes} if day.live and not day.schedule.scripted else set()
+    pool = [
+        f for f in day.flights if f is not hero and id(f) not in ramps and f.key not in forced and f.key not in scripted
+    ]
+    severe_count = CONTINUOUS_SEVERE_PER_DAY if ramps else SEVERE_PER_DAY - (1 if hero else 0)
+    severe = {f.key for f in rng.sample(pool, severe_count)}
     # The live day streams its updates, so its delays climb the way RA417's does. History days
     # publish only their final rows, so they keep their two or three notices and the
     # historical answers stay the same.
@@ -365,6 +374,9 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
         if flight is hero:
             start, (first, last) = flight.scheduled - HERO_LEAD, HERO_RAMP
             flight.reveals = _climb(start + first, start + last, HERO_DELAY)
+        elif id(flight) in ramps:
+            first, last = CONTINUOUS_HERO_RAMP
+            flight.reveals = _climb(flight.scheduled + first, flight.scheduled + last, HERO_DELAY)
         elif flight.key in scripted:
             # On the minute, like RA417, so its passengers turn HIGH at the same stream minutes every day.
             script, flight.offset, start = scripted[flight.key], 0, hero.scheduled - HERO_LEAD
@@ -408,11 +420,12 @@ def _risk_flip(inbound: Flight, onward: Flight) -> tuple[bool, datetime | None]:
 def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[Passenger]:
     passengers = []
     open_seats = {d.key: seat_rng.sample(SEATS, len(SEATS)) for d in day.departures}
+    story = day.live and day.schedule.scripted
+    ramps = {id(f) for f in day.heroes} if day.live and not day.schedule.scripted else set()
     for flight in day.arrivals:
-        story = day.live and day.schedule.scripted
         hero = story and flight is day.hero
         script = AGENT_FLIGHTS.get(flight.number) if story else None
-        if hero:
+        if hero or id(flight) in ramps:
             plan = [True] * HERO_CONNECTING + [False] * HERO_LOCAL
             rng.shuffle(plan)
             low, high = HERO_BUFFER
@@ -437,9 +450,11 @@ def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[P
                 key = f"P-{day.service_date:%m%d}-{flight.number:03d}-{seq:03d}"
             passenger = Passenger(key, flight, seat)
             if connects and candidates:
-                for onward in rng.sample(candidates, min(3, len(candidates))):
+                # An around-the-clock RA417 tries every onward flight, so each of its connections turns HIGH.
+                tries = len(candidates) if id(flight) in ramps else min(3, len(candidates))
+                for onward in rng.sample(candidates, tries):
                     valid, flip = _risk_flip(flight, onward)
-                    if valid:
+                    if valid and open_seats[onward.key]:
                         passenger.connecting, passenger.impacted_at = onward, flip
                         passenger.connecting_seat = open_seats[onward.key].pop()
                         break
@@ -469,7 +484,7 @@ def _revise_estimates(day: Day, rng: random.Random, start: datetime, end: dateti
     for passenger in day.passengers:
         if passenger.connecting:
             onward.setdefault(passenger.inbound.key, {})[passenger.connecting.key] = passenger.connecting
-    scripted = {f.key for f in day.agent_flights}
+    scripted = {f.key for f in day.agent_flights + day.heroes}
     for flight in day.arrivals:
         updates = list(flight.ticks(start, flight.estimated_at() - SETTLE_BEFORE))
         if flight.key in scripted or len(updates) < 2:
@@ -551,6 +566,20 @@ def build_day(
         _assign_delays(day, rng)
         # Seats draw from their own stream, so they never shift delays, connections, or offers.
         day.passengers = _passengers(day, rng, random.Random(f"{seed}:{service_date.isoformat()}:{variant}:seats"))
+    return day
+
+
+@lru_cache(maxsize=8)
+def continuous_day(seed: int, service_date: date) -> Day:
+    """One around-the-clock service day (UTC), streamed live the way today's scripted day is."""
+    midnight = datetime.combine(service_date, datetime.min.time())
+    day = build_day(seed, service_date, midnight, live=True, schedule=AROUND_THE_CLOCK)
+    _revise_estimates(
+        day,
+        random.Random(f"{seed}:{service_date.isoformat()}:continuous:revisions"),
+        midnight - ACTIVE_BEFORE,
+        midnight + timedelta(days=1),
+    )
     return day
 
 
