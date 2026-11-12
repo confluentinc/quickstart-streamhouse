@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from confluent_kafka import TopicPartition
+
 from scripts.airport_datagen import GRAND_HYATT, OFFER_EXPIRY, OFFERS, rooms_at
 from scripts.offer_customers import OfferWatcher, decide
 
@@ -123,16 +125,26 @@ class FakeMessage:
 
 
 class FakeConsumer:
-    def __init__(self, messages):
+    def __init__(self, messages, trailing=0):
         self.messages = list(messages)
+        self.next_offset = 0
+        self.trailing = trailing  # offsets after the last message that are never delivered (markers, gaps)
 
     def poll(self, timeout):
-        return self.messages.pop(0) if self.messages else None
+        if not self.messages:
+            return None
+        message = self.messages.pop(0)
+        self.next_offset = message.offset() + 1
+        return message
+
+    def position(self, partitions):
+        offset = self.next_offset + (0 if self.messages else self.trailing)
+        return [TopicPartition(p.topic, p.partition, offset) for p in partitions]
 
 
-def watcher(messages, ends=None):
+def watcher(messages, ends=None, trailing=0):
     # The fake "bytes" are the offer dicts themselves, and the deserializer passes them through.
-    return OfferWatcher.for_tests(42, FakeConsumer(messages), lambda value, ctx: value, ends)
+    return OfferWatcher.for_tests(42, FakeConsumer(messages, trailing), lambda value, ctx: value, ends)
 
 
 def test_watcher_decides_once_when_both_offers_arrive():
@@ -187,4 +199,13 @@ def test_replay_does_not_decide_on_a_stale_view():
     assert w.poll(0) == []  # caught up, and the passenger is settled
     fresh = "P-1112-101-005"
     w.consumer.messages += [FakeMessage(f"{fresh}-O1", offer(fresh, 1)), FakeMessage(f"{fresh}-O2", offer(fresh, 2))]
+    assert len(w.poll(0)) == 2
+
+
+def test_catches_up_past_trailing_transaction_markers():
+    pid = "P-1112-101-006"
+    start = FakeMessage.count
+    messages = [FakeMessage(f"{pid}-O1", offer(pid, 1)), FakeMessage(f"{pid}-O2", offer(pid, 2))]
+    # Two undelivered markers follow the last message, so the topic ends at start + 4.
+    w = watcher(messages, ends={0: start + 4}, trailing=2)
     assert len(w.poll(0)) == 2

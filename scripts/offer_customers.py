@@ -104,7 +104,7 @@ class OfferWatcher:
 
     def _setup(self, seed, consumer, deserializer, ends: dict[int, int]) -> None:
         self.ends = ends  # partition -> offset the topic ended at when we started
-        self.consumed: dict[int, int] = {}  # partition -> next offset to read
+        self.caught = False
         self.pending: set[str] = set()
         self.seed = seed
         self.consumer = consumer
@@ -113,7 +113,16 @@ class OfferWatcher:
         self.decided: set[str] = set()
 
     def caught_up(self) -> bool:
-        return all(self.consumed.get(partition, 0) >= end for partition, end in self.ends.items())
+        """True once the consumer's position has passed every startup end offset (and stays true).
+
+        Position, not the last message offset: the topic can end in transaction markers or compaction gaps
+        that are never delivered as messages.
+        """
+        if not self.caught:
+            partitions = [TopicPartition(OFFERS, p) for p in self.ends]
+            positions = {tp.partition: tp.offset for tp in self.consumer.position(partitions)} if partitions else {}
+            self.caught = all(positions.get(p, 0) >= end for p, end in self.ends.items())
+        return self.caught
 
     def still_open(self, passenger_id: str) -> bool:
         """True while the view has both of the passenger's offers and both are still OFFERED."""
@@ -128,7 +137,6 @@ class OfferWatcher:
                 break
             if message.error():
                 continue
-            self.consumed[message.partition()] = message.offset() + 1
             key = message.key().decode()
             passenger = key.rsplit("-O", 1)[0]
             if message.value() is None:
