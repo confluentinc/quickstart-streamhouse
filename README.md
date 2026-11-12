@@ -92,7 +92,7 @@ Then follow its guide: [Agentic Airline Operations](./docs/flight-disruptions/wo
 
 ## Always-on demo
 
-Operators can run the full demo around the clock on AWS (App Runner and ECS) for colleagues to explore: see the [always-on guide](./docs/flight-disruptions/always-on.md).
+Operators can run the full demo around the clock on AWS (Lambda and ECS) for colleagues to explore: see the [always-on guide](./docs/flight-disruptions/always-on.md).
 
 ## Clean up
 

@@ -109,9 +109,8 @@ Flink SQL, Lightning queries, and the agent statements.
   "passenger_recommendations"]`, so Iceberg collects both from day one. `--always-on` requires AWS
   credentials, so Tableflow can't be skipped by accident. The scripted demo keeps its on-screen step of
   enabling `passenger_recommendations`.
-- **IAM preflight.** The deployment creates four IAM roles and no users: Tableflow's
-  (`analytics.tf`), App Runner's ECR access role, App Runner's instance role, and the ECS task execution
-  role. Before creating anything, deploy checks that the AWS credentials can create IAM roles and
+- **IAM preflight.** The deployment creates three IAM roles and no users: Tableflow's
+  (`analytics.tf`), the flight board's Lambda execution role, and the ECS task execution role. Before creating anything, deploy checks that the AWS credentials can create IAM roles and
   policies, and stops with a clear message if they can't.
 - **Deploy command.** The operator runs `uv run deploy --always-on` once. It deploys the full demo
   (`--with-labs` behavior) with continuous mode, Tableflow (it needs AWS credentials), `setup-rtce`, the
@@ -129,12 +128,16 @@ Flink SQL, Lightning queries, and the agent statements.
   A shared remote backend is out of scope.
 - **AWS shape.** One AWS account, in the same region as the Confluent cluster (default `us-east-1`).
   - **Image:** one container image built from the repo and pushed to ECR, used for both services.
-  - **App:** AWS App Runner, one instance always provisioned. App Runner gives an HTTPS URL with no domain
-    or certificate to manage.
+  - **App:** an AWS Lambda function (container image, with the AWS Lambda Web Adapter passing requests
+    to the FastAPI app) behind a public function URL, with one provisioned instance on a `live` alias so
+    demos never hit a cold start. The function URL gives an HTTPS URL with no domain or certificate to
+    manage. The first design used App Runner, but AWS closed App Runner to new customers and rejected it
+    for this account, so the board moved to Lambda; the image, secret, and generator are unchanged.
   - **Generator:** an ECS Fargate service with one task and no load balancer. ECS restarts it if it exits.
   - **Credentials:** the Kafka, Schema Registry, and Lightning/RTCE keys, and the app password, are
-    stored in AWS Secrets Manager and passed to both services as environment variables.
-- **Password check in the app.** App Runner has no built-in login, so the FastAPI app gets HTTP Basic
+    stored in AWS Secrets Manager. ECS passes them to the generator as environment variables; Lambda
+    can't, so the app reads the secret at startup when `STREAMHOUSE_SETTINGS_SECRET_ARN` is set.
+- **Password check in the app.** The public function URL has no login of its own, so the FastAPI app gets HTTP Basic
   auth, turned on when an `APP_PASSWORD` variable is set. Locally it stays off, as today. Deploy
   generates the password, prints the URL and password, and writes them to a gitignored card,
   `tmp/always-on-card.env`.
@@ -185,7 +188,7 @@ Flink SQL, Lightning queries, and the agent statements.
 - How continuous mode is spelled on the command line (for example `uv run airport-datagen --continuous`).
 - How delays and hotel sellouts are spread through a 24-hour day, so the board always shows a few
   delayed flights.
-- The Dockerfile, the ECR repository, the names of the App Runner and ECS resources (business-readable),
+- The Dockerfile, the ECR repository, the names of the Lambda and ECS resources (business-readable),
   the container sizes, and the logging (CloudWatch).
 - The tests: continuous mode is deterministic for a given seed and clock, a restart produces the same
   state, the agent filter renders both ways, and basic auth is on only when `APP_PASSWORD` is set.

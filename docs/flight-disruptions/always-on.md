@@ -29,7 +29,7 @@ Then [`terraform/always-on/`](../../terraform/always-on/) creates, on AWS:
 
 - an Amazon ECR repository for the image deploy builds and pushes;
 - a Secrets Manager secret holding the settings both services read, including a generated flight board password;
-- an App Runner service for the flight board (one instance, since the app keeps its view of the day in memory);
+- an AWS Lambda function for the flight board, run from the same image through the Lambda Web Adapter, with a public function URL (the board's own password is the only gate), one provisioned instance on its `live` alias so it never cold-starts, and a CloudWatch log group for it;
 - an ECS Fargate cluster and service for the continuous generator (`uv run airport-datagen --continuous`), and a CloudWatch log group for it;
 - the IAM roles those need.
 
@@ -56,7 +56,7 @@ Keep the card out of tracked files and share it only through a private channel.
 
 ## Cost
 
-Leave it running for 2 days, then read the daily cost in the Confluent Cloud Console (**Billing & payment** → **Cost**) and in AWS Cost Explorer (filtered to the region). Record both as monthly projections here, and share the card only after the cost is accepted.
+On AWS the steady costs are the flight board's Lambda provisioned concurrency (one 1 GB instance kept warm around the clock, billed whether or not anyone opens the board), the generator's Fargate task, and Secrets Manager, ECR, and CloudWatch logs. Leave it running for 2 days, then read the daily cost in the Confluent Cloud Console (**Billing & payment** → **Cost**) and in AWS Cost Explorer (filtered to the region). Record both as monthly projections here, and share the card only after the cost is accepted.
 
 > TODO(operator): measured monthly cost, Confluent Cloud: ______ ; AWS: ______ (measured over 2 days, date: ______).
 
@@ -78,7 +78,7 @@ confluent iam user delete <user-id>
 
 ## Rotating the password
 
-Mark the generated password for replacement, then rerun deploy. Deploy applies the new secret, then restarts the generator and the flight board so they read it (it does so whenever the image is unchanged; a new image redeploys both anyway). Then give colleagues the new card.
+Mark the generated password for replacement, then rerun deploy. Deploy applies the new secret. The flight board picks it up on its own: a new secret version publishes a new Lambda version and moves the `live` alias to it. Deploy then restarts the generator so it reads the secret too (whenever the image is unchanged; a new image redeploys it anyway). Then give colleagues the new card.
 
 ```bash
 terraform -chdir=terraform/always-on taint random_password.app
@@ -98,8 +98,9 @@ Flink keeps each passenger's first HIGH-risk state, so passengers already impact
 ## Logs and restarts
 
 - Generator: the CloudWatch log group `/ecs/<deployment name>-flight-generator` (Terraform output `generator_log_group`).
-- Flight board: the App Runner service's logs in the AWS Console (**App Runner** → the flight board service → **Logs**), or CloudWatch.
-- Restart the generator or the board: rerun `uv run deploy --always-on`, or use `aws ecs update-service --cluster <ecs_cluster_name> --service <generator_service_name> --force-new-deployment` and `aws apprunner start-deployment --service-arn <app_service_arn>`. The names are Terraform outputs of `terraform/always-on`.
+- Flight board: the CloudWatch log group `/aws/lambda/<deployment name>-flight-board` (Terraform output `app_log_group`; the function is `app_function_name`).
+- Restart the generator: rerun `uv run deploy --always-on`, or use `aws ecs update-service --cluster <ecs_cluster_name> --service <generator_service_name> --force-new-deployment`. The names are Terraform outputs of `terraform/always-on`.
+- Restart the board: rerun `uv run deploy --always-on`. A new image or setting publishes a new function version and the `live` alias moves to it; otherwise nothing needs restarting, since Lambda replaces a failed instance on the next request.
 
 ## Tearing down
 
