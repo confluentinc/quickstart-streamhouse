@@ -400,3 +400,16 @@ def test_departure_shows_passengers_connecting_onto_it(fake):
         ("P-0928-5", "6F"),
         ("P-0928-1", "2F"),
     ]
+
+
+def test_app_reads_lightning_settings_from_env(monkeypatch):
+    monkeypatch.setattr(airport_app.rtce, "_find_credentials_file", lambda: pytest.fail("read a file"))
+    for name, value in {
+        "STREAMHOUSE_ENVIRONMENT_ID": "env-1",
+        "STREAMHOUSE_CLUSTER_ID": "lkc-1",
+        "STREAMHOUSE_REGION": "us-east-1",
+        "CONFLUENT_RTCE_API_KEY": "k",
+        "CONFLUENT_RTCE_API_SECRET": "s",
+    }.items():
+        monkeypatch.setenv(name, value)
+    assert Deployment().lightning_url == "https://sql.us-east-1.aws.confluent.cloud/query/v1alpha1"

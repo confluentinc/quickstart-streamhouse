@@ -12,6 +12,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -49,6 +50,15 @@ class Deployment:
 
     def _load_rtce(self) -> None:
         if self._infra is not None:
+            return
+        env_id = os.environ.get("STREAMHOUSE_ENVIRONMENT_ID")
+        cluster_id = os.environ.get("STREAMHOUSE_CLUSTER_ID")
+        region = os.environ.get("STREAMHOUSE_REGION")
+        key = os.environ.get(rtce._CRED_KEY)
+        secret = os.environ.get(rtce._CRED_SECRET)
+        if env_id and cluster_id and region and key and secret:  # running on AWS: no credentials.env
+            self._rtce_key, self._rtce_secret = key, secret
+            self._infra = {"cloud": "aws", "env_id": env_id, "cluster_id": cluster_id, "region": region, "org_id": ""}
             return
         creds_file = rtce._find_credentials_file()
         creds = rtce._load_env_file(creds_file)

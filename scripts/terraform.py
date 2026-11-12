@@ -9,6 +9,7 @@ Provides cross-platform functions for:
 
 import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -76,6 +77,33 @@ def find_state_files(cloud_provider: str, base_dir: Path) -> tuple[Path, Path]:
     return core_state, local_state
 
 
+# On AWS the app and generator get their settings from the environment, with no credentials.env or state.
+ENV_CREDENTIALS = {
+    "bootstrap_servers": "STREAMHOUSE_BOOTSTRAP_SERVERS",
+    "kafka_api_key": "STREAMHOUSE_KAFKA_API_KEY",
+    "kafka_api_secret": "STREAMHOUSE_KAFKA_API_SECRET",
+    "schema_registry_url": "STREAMHOUSE_SCHEMA_REGISTRY_URL",
+    "schema_registry_api_key": "STREAMHOUSE_SCHEMA_REGISTRY_API_KEY",
+    "schema_registry_api_secret": "STREAMHOUSE_SCHEMA_REGISTRY_API_SECRET",
+}
+
+
+def credentials_from_env() -> dict[str, str] | None:
+    """Return the credentials when every STREAMHOUSE_* variable is set, otherwise None."""
+    values = {key: os.environ.get(name, "") for key, name in ENV_CREDENTIALS.items()}
+    if not all(values.values()):
+        return None
+    return {
+        "environment_name": "",
+        "cluster_name": "",
+        "environment_id": os.environ.get("STREAMHOUSE_ENVIRONMENT_ID", ""),
+        "cluster_id": os.environ.get("STREAMHOUSE_CLUSTER_ID", ""),
+        "compute_pool_id": "",
+        "service_account_id": "",
+        **values,
+    }
+
+
 def extract_kafka_credentials(cloud_provider: str, project_root: Path | None = None) -> dict[str, str]:
     """
     Extract Kafka and Schema Registry credentials from terraform state.
@@ -94,6 +122,11 @@ def extract_kafka_credentials(cloud_provider: str, project_root: Path | None = N
     """
     if cloud_provider not in ["aws", "azure", "terraform"]:
         raise ValueError(f"Unsupported cloud provider: {cloud_provider}")
+
+    env_credentials = credentials_from_env()
+    if env_credentials is not None:
+        logger.info("Using Kafka and Schema Registry credentials from environment variables")
+        return env_credentials
 
     if project_root is None:
         project_root = Path(__file__).parent.parent
