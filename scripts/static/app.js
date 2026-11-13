@@ -171,7 +171,10 @@ function render() {
 
   bindFlights();
   $("map-show-all").classList.toggle("hidden", !openFlight);
-  FlightMap.renderFlightMap("#flight-map", current.flights, { highlightKey: impactKey, focusedKey: openFlight, onSelect: selectFlight });
+  FlightMap.renderFlightMap("#flight-map", current.flights, {
+    highlightKey: impactKey, focusedKey: openFlight, onSelect: selectFlight,
+    telemetry: current.telemetry, serverNowMs: utcMs(current.now), receivedAtMs: lastUpdated,
+  });
 }
 
 // The list starts 18 hours back, so put the first flight scheduled from 30 minutes ago at the top.

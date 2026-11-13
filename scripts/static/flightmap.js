@@ -1,15 +1,19 @@
 "use strict";
 
-// Live flight map: approximates each plane's position along its route.
+// Live flight map: draws each plane from its streamed telemetry.
+//
+// The generator publishes a reading per airborne flight every 5 seconds to
+// the flight_telemetry topic (position, altitude, speeds, heading, stage,
+// distance to go; see flight_profile.py), and /api/state returns each
+// flight's latest one, read through Lightning. Between polls the browser
+// flies the plane on from that reading (planeState). The readings are
+// synthetic, not real tracking data.
 //
 // flight_status only carries ONE meaningful timestamp per flight (see
 // airport_datagen.py Flight.estimated_at): the arrival time for a flight
-// landing at the SFO hub, or the departure time for a flight leaving it.
-// There is no real position feed. So this estimates the missing endpoint's
-// time from the real distance between the two airports at a plausible
-// cruise speed, then flies the plane along its route on a climb, cruise, and
-// descent profile for "now" (planePosition). It's an honest approximation,
-// not real tracking data.
+// landing at the SFO hub, or the departure time for a flight leaving it. The
+// info box's other times come from the real distance between the two
+// airports at a plausible cruise speed (estimateDurationMs).
 
 const HUB = "SFO";
 const CRUISE_KMH = 850; // typical narrow-body cruise speed
@@ -130,82 +134,33 @@ function bezierTangentAngle(x0, y0, cx, cy, x1, y1, t) {
   return Math.atan2(dy, dx) * (180 / Math.PI);
 }
 
-// --- Flight profile ----------------------------------------------------------
-// Every plane takes off at RUNWAY_KT, speeds up to cruise over its CLIMB_MIN
-// climb, cruises, and slows back to RUNWAY_KT over the DESCENT_MIN to
-// touchdown. The map places the plane by the distance this profile has flown
-// along its route, and the info box reads the same profile's speed and
-// altitude, so the two always agree.
+// --- Flight placement --------------------------------------------------------
+// Where a plane is comes from its latest flight_telemetry reading (streamed by
+// the generator, read through Lightning in /api/state). Between polls the
+// plane flies on from that reading at its ground speed and heading, and climbs
+// or descends at its vertical speed, for at most FRESH_MS. A flight with no
+// reading, or a LANDED one, sits at its origin or destination.
 
-const CLIMB_MIN = 20; // takeoff to cruise
-const DESCENT_MIN = 25; // top of descent to landing
-const RUNWAY_KT = 160; // ground speed at takeoff and touchdown
-const HOLD_LAP_MIN = 4; // about one lap of the circle a late arrival flies before its descent
-const ROUTE_SAMPLES = 48; // points along each route curve, for measuring distance on it
-const KM_PER_NM = 1.852;
 // Map units per nautical mile. The projection is true to scale north-south,
 // and east-west too near SFO's latitude, where the holding circles are.
 const NM_PX = MAP_H / (BOUNDS.latMax - BOUNDS.latMin) / 60;
-// Each plane surges ±GUST_NM along its path, so its ground speed drifts a few
-// knots like a real feed while still being exactly the rate it moves.
-const GUST_NM = 0.02, GUST_S = 13;
-const routeCache = new Map(); // "ORD-SFO" -> the route's curve and the distance along it
+// How long a reading carries the plane on before it stops and the box's live
+// dot goes stale. The generator sends one every 5 seconds.
+const FRESH_MS = 15000;
+const clampAge = (ms) => Math.max(0, Math.min(FRESH_MS, ms));
 
-// A steady 0..1 value per flight, so each keeps its own cruise level and gusts.
-function flightSeed(key) {
-  let hash = 0;
-  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return hash / 2 ** 32;
-}
-
-// The route's curve (routeCurve) and the ground distance from the origin to
-// each of ROUTE_SAMPLES points along it, measured once per route.
-function routeGeometry(origin, destination) {
-  const id = `${origin}-${destination}`;
-  if (!routeCache.has(id)) {
-    const [x0, y0] = project(AIRPORTS[origin]), [x1, y1] = project(AIRPORTS[destination]);
-    const { cx, cy } = routeCurve(x0, y0, x1, y1);
-    const points = Array.from({ length: ROUTE_SAMPLES + 1 }, (_, i) =>
-      unproject(...bezierPoint(x0, y0, cx, cy, x1, y1, i / ROUTE_SAMPLES)));
-    const nm = [0];
-    for (let i = 1; i <= ROUTE_SAMPLES; i++) nm.push(nm[i - 1] + haversineKm(points[i - 1], points[i]) / KM_PER_NM);
-    routeCache.set(id, { x0, y0, cx, cy, x1, y1, nm, lengthNm: nm[ROUTE_SAMPLES] });
-  }
-  return routeCache.get(id);
-}
-
-// The point `alongNm` from the origin, and the direction of travel there.
-function pointAlong(route, alongNm) {
-  const { x0, y0, cx, cy, x1, y1, nm } = route;
-  let i = 1;
-  while (i < ROUTE_SAMPLES && nm[i] < alongNm) i++;
-  const t = Math.max(0, Math.min(1, (i - 1 + (alongNm - nm[i - 1]) / (nm[i] - nm[i - 1])) / ROUTE_SAMPLES));
-  const [x, y] = bezierPoint(x0, y0, cx, cy, x1, y1, t);
-  return { x, y, angleDeg: bezierTangentAngle(x0, y0, cx, cy, x1, y1, t) };
-}
-
-// Returns null if the flight can't be placed (unknown airport code), else the
-// full timing/position picture for "now": where to draw the plane (x, y,
-// angleDeg, phase — "waiting" at the gate, "enroute", or "done"), where it is
-// on the flight profile (stage — "climb", "cruise", "hold", or "descent" —
-// knots, level, toGoNm), and the three moments the info box shows. Only the
+// The route's curve and the three moments the info box shows. Only the
 // departure OR arrival instant is real data (see file header); the other two
 // are derived from the estimated duration, so they're approximations, not
-// authoritative times.
-//
-// A late arrival keeps its scheduled takeoff and circles at the top of its
-// descent until it can land at its estimated time. flight_status announces an
-// arrival's delay while the plane would already be in the air, so moving its
-// takeoff later instead would slide it backward along its route each time
-// the delay grew.
-function planePosition(row, nowMs) {
+// authoritative times. A late arrival keeps its scheduled takeoff and circles
+// until it can land at its estimated time, the same rule the generator flies.
+function flightTimes(row) {
   const a = AIRPORTS[row.origin], b = AIRPORTS[row.destination];
   if (!a || !b) return null;
   const duration = estimateDurationMs(row.origin, row.destination);
-  if (duration == null) return null;
-  const isArrival = row.destination === HUB;
   const known = parseTsMs(row.scheduled_time);
   if (known == null) return null;
+  const isArrival = row.destination === HUB;
   const delayMs = (Number(row.delay_minutes) || 0) * 60000;
 
   let departureMs, scheduledArrivalMs, estimatedArrivalMs;
@@ -218,55 +173,74 @@ function planePosition(row, nowMs) {
     scheduledArrivalMs = known + duration;
     estimatedArrivalMs = departureMs + duration;
   }
+  const [x0, y0] = project(a), [x1, y1] = project(b);
+  const { cx, cy } = routeCurve(x0, y0, x1, y1);
+  return { isArrival, x0, y0, cx, cy, x1, y1, departureMs, scheduledArrivalMs, estimatedArrivalMs };
+}
 
-  let phase = "enroute";
-  if (isArrival && row.status === "LANDED") phase = "done";
-  else if (!isArrival && nowMs >= estimatedArrivalMs) phase = "done";
-  else if (!isArrival && row.status !== "DEPARTED") phase = "waiting";
+// "waiting" at the gate, "enroute", or "done", from flight_status alone.
+function groundPhase(row, times, nowMs) {
+  if (times.isArrival && row.status === "LANDED") return "done";
+  if (!times.isArrival && nowMs >= times.estimatedArrivalMs) return "done";
+  if (!times.isArrival && row.status !== "DEPARTED") return "waiting";
+  return "enroute";
+}
 
-  // Minutes since takeoff, out of the flight time plus any hold.
-  const route = routeGeometry(row.origin, row.destination);
-  const flightMin = duration / 60000, totalMin = (estimatedArrivalMs - departureMs) / 60000;
-  const minutes = phase === "done" ? totalMin
-    : phase === "waiting" ? 0 : Math.max(0, Math.min(totalMin, (nowMs - departureMs) / 60000));
-  const toLand = totalMin - minutes;
-  // The cruise speed that covers the route in flightMin around the slower climb and descent.
-  const ramps = (CLIMB_MIN + DESCENT_MIN) / 2;
-  const cruiseKt = (route.lengthNm * 60 - RUNWAY_KT * ramps) / (flightMin - ramps);
-  // Distance (nm) covered `m` minutes into a climb, or in the last `m` minutes of a descent, and the speed there.
-  const rampNm = (m, rampMin) => (RUNWAY_KT * m + ((cruiseKt - RUNWAY_KT) * m * m) / (2 * rampMin)) / 60;
-  const rampKt = (m, rampMin) => RUNWAY_KT + ((cruiseKt - RUNWAY_KT) * m) / rampMin;
-  const holdNm = (cruiseKt * (totalMin - flightMin)) / 60;
-  let stage = minutes < CLIMB_MIN ? "climb" : toLand < DESCENT_MIN ? "descent" : "cruise";
-  let flownNm = stage === "climb" ? rampNm(minutes, CLIMB_MIN)
-    : stage === "descent" ? route.lengthNm + holdNm - rampNm(toLand, DESCENT_MIN)
-    : rampNm(CLIMB_MIN, CLIMB_MIN) + (cruiseKt * (minutes - CLIMB_MIN)) / 60;
-  let knots = stage === "climb" ? rampKt(minutes, CLIMB_MIN)
-    : stage === "descent" ? rampKt(toLand, DESCENT_MIN) : cruiseKt;
-  const level = Math.max(0, Math.min(1, minutes / CLIMB_MIN, toLand / DESCENT_MIN)); // share of cruise altitude
-  const gust = nowMs / 1000 / GUST_S + flightSeed(row.key) * 2 * Math.PI;
-  flownNm += GUST_NM * Math.sin(gust) * level;
-  knots += (GUST_NM / GUST_S) * 3600 * Math.cos(gust) * level;
+// A reading as the browser keeps it: the row plus when it was taken and how
+// old it was when it arrived. `as_of` can run ahead of the server's clock
+// (the generator's --speed), so the age is clamped at 0 rather than going
+// negative and flying the plane backward.
+function telemetrySample(reading, serverNowMs, receivedAtMs) {
+  const asOfMs = parseTsMs(reading.as_of);
+  return { reading, asOfMs, ageAtPollMs: clampAge((serverNowMs ?? receivedAtMs) - asOfMs), receivedAtMs };
+}
 
-  // The hold: whole laps, turning right as holds are flown, from the top of
-  // descent, so the plane leaves the circle where it joined it.
-  const holdAtNm = route.lengthNm - rampNm(DESCENT_MIN, DESCENT_MIN);
-  const holding = flownNm > holdAtNm && flownNm < holdAtNm + holdNm;
-  const alongNm = holding ? holdAtNm : flownNm > holdAtNm ? flownNm - holdNm : flownNm;
-  let { x, y, angleDeg } = pointAlong(route, alongNm);
-  if (holding) {
-    const laps = Math.max(1, Math.round((totalMin - flightMin) / HOLD_LAP_MIN));
-    const radius = holdNm / laps / (2 * Math.PI);
-    const entry = (angleDeg * Math.PI) / 180, heading = entry + (flownNm - holdAtNm) / radius;
-    x += radius * NM_PX * (Math.sin(heading) - Math.sin(entry));
-    y += radius * NM_PX * (Math.cos(entry) - Math.cos(heading));
-    angleDeg = ((((heading * 180) / Math.PI) % 360) + 540) % 360 - 180;
-    stage = "hold";
+// Returns null if the flight can't be placed (unknown airport code), else
+// everything the map and the info box draw for "now": where the plane is
+// (x, y, angleDeg, phase, onGround), how it is flying (stage, knots, altitudeFt,
+// verticalFpm, headingDeg, toGoNm, holdEndMs), whether its reading has gone
+// stale, the clock the box counts down on (frozen with the plane), and the
+// flight's times and route curve.
+function planeState(row, sample, nowMs) {
+  const times = flightTimes(row);
+  if (!times) return null;
+  const reading = sample && sample.reading;
+  const stage = reading ? String(reading.stage) : null;
+
+  // flight_status saying it's down outranks a reading that hasn't caught up.
+  let phase = groundPhase(row, times, nowMs);
+  if (!reading || stage === "LANDED" || phase === "done") {
+    if (stage === "LANDED") phase = "done";
+    const atDestination = phase === "done" || nowMs >= times.estimatedArrivalMs;
+    const t = atDestination ? 1 : 0;
+    const [x, y] = atDestination ? [times.x1, times.y1] : [times.x0, times.y0];
+    return {
+      ...times, x, y, phase, onGround: true, stale: false, clockMs: nowMs,
+      angleDeg: bezierTangentAngle(times.x0, times.y0, times.cx, times.cy, times.x1, times.y1, t),
+    };
   }
+
+  // Seconds flown since the reading, stopping at FRESH_MS.
+  const sinceMs = sample.ageAtPollMs + Math.max(0, nowMs - sample.receivedAtMs);
+  const elapsedS = Math.min(FRESH_MS, sinceMs) / 1000;
+  const knots = Number(reading.ground_speed_kt);
+  const verticalFpm = Number(reading.vertical_speed_fpm);
+  const headingDeg = Number(reading.heading_deg);
+  const angleDeg = headingDeg - 90;
+  const angle = (angleDeg * Math.PI) / 180;
+  const movedNm = (knots * elapsedS) / 3600;
+  const [rx, ry] = project([Number(reading.latitude), Number(reading.longitude)]);
   return {
-    x, y, angleDeg, phase, stage, knots, level, toGoNm: route.lengthNm - alongNm,
-    x0: route.x0, y0: route.y0, x1: route.x1, y1: route.y1, cx: route.cx, cy: route.cy,
-    departureMs, scheduledArrivalMs, estimatedArrivalMs, holdEndMs: estimatedArrivalMs - DESCENT_MIN * 60000,
+    ...times,
+    x: rx + movedNm * NM_PX * Math.cos(angle),
+    y: ry + movedNm * NM_PX * Math.sin(angle),
+    angleDeg, phase: "enroute", onGround: false, stage, knots, verticalFpm, headingDeg,
+    altitudeFt: Math.max(0, Number(reading.altitude_ft) + (verticalFpm / 60) * elapsedS),
+    // A hold circles beside the route, so it doesn't bring the plane closer.
+    toGoNm: Math.max(0, Number(reading.distance_to_go_nm) - (stage === "HOLDING" ? 0 : movedNm)),
+    holdEndMs: parseTsMs(reading.hold_ends_at),
+    stale: sinceMs >= FRESH_MS,
+    clockMs: nowMs - Math.max(0, sinceMs - FRESH_MS),
   };
 }
 
@@ -280,8 +254,8 @@ function statusColorClass(row, phase) {
 // The same color class for callers outside the map (the Operations table's
 // status pills), so a flight's status reads the same color in both places.
 function flightColorClass(row, nowMs = Date.now()) {
-  const pos = planePosition(row, nowMs);
-  return statusColorClass(row, pos ? pos.phase : "enroute");
+  const times = flightTimes(row);
+  return statusColorClass(row, times ? groundPhase(row, times, nowMs) : "enroute");
 }
 
 // Simplified top-down airplane silhouette (nose points "up", i.e. -y, before
@@ -340,20 +314,18 @@ function animatePlaneTo(g, key, target, duration = 2200) {
   })(start);
 }
 
-// Same curve planePosition() moves the plane along (routeCurve), so the
-// dashed line and the plane never diverge, apart from a late arrival's
+// The same curve the generator flies the plane along (flight_profile.py), so
+// the dashed line and the plane never diverge, apart from a late arrival's
 // holding circle a few miles beside it.
 function trajectoryPath(x0, y0, cx, cy, x1, y1) {
   return `M${x0.toFixed(1)},${y0.toFixed(1)} Q${cx.toFixed(1)},${cy.toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
 }
 
-// --- Simulated telemetry for the focused flight's info box -----------------
-// There is no position feed (see the file header), so the readings come from
-// the flight profile planePosition flies the plane on, refreshed every second
-// (tickTelemetry): ground speed is how fast the plane moves on the map, and
-// vertical speed is how fast its altitude changes.
+// --- Live telemetry for the focused flight's info box ------------------------
+// The values come from the flight's flight_telemetry reading, flown on to
+// "now" by planeState and refreshed every second (tickTelemetry). After
+// FRESH_MS without a new reading they stop, and the live dot goes stale.
 
-const SWAY_FT = 20, SWAY_S = 10; // at cruise the altitude drifts ±SWAY_FT, about once a minute
 const MI_PER_NM = 1.15078;
 
 function el(className, text) {
@@ -374,46 +346,39 @@ function signed(value, unit) {
   return `${rounded > 0 ? "+" : rounded < 0 ? "−" : ""}${Math.abs(rounded).toLocaleString("en-US")} ${unit}`;
 }
 
-// [label, value, fullWidth] rows for the focused flight at `nowMs`.
-function telemetry(row, nowMs) {
-  const pos = planePosition(row, nowMs);
+// [label, value, fullWidth] rows for the focused flight, from planeState.
+function telemetry(pos) {
   if (!pos) return [];
-  // On the ground once past its estimated arrival: an arrival's LANDED update
-  // can trail that by up to a minute, and never comes if the stream stops first.
-  if (pos.phase === "done" || nowMs >= pos.estimatedArrivalMs) {
-    return [["Altitude", "0 ft"], ["Ground speed", "0 kt"], ["Arrived", hhmmUTC(pos.estimatedArrivalMs), true]];
-  }
-  if (pos.phase === "waiting" || nowMs < pos.departureMs) {
+  const nowMs = pos.clockMs;
+  if (pos.onGround) {
+    // On the ground once landed or past its estimated arrival: an arrival's
+    // LANDED update can trail that by up to a minute, and never comes if the
+    // stream stops first.
+    if (pos.phase === "done" || nowMs >= pos.estimatedArrivalMs) {
+      return [["Altitude", "0 ft"], ["Ground speed", "0 kt"], ["Arrived", hhmmUTC(pos.estimatedArrivalMs), true]];
+    }
     return [["Altitude", "0 ft"], ["Ground speed", "0 kt"], ["Departs in", countdown(pos.departureMs - nowMs), true]];
   }
-  const seed = flightSeed(row.key);
-  const cruiseFt = [33000, 35000, 37000, 39000][Math.floor(seed * 4)];
-  const sway = nowMs / 1000 / SWAY_S + seed * 2 * Math.PI;
-  const cruising = pos.stage === "cruise" || pos.stage === "hold";
-  const altitude = cruiseFt * pos.level + (cruising ? SWAY_FT * Math.sin(sway) : 0);
-  // ft/min: steady in the climb and descent, and the sway's own rate at cruise.
-  const climbRate = cruising ? (SWAY_FT / SWAY_S) * 60 * Math.cos(sway)
-    : pos.stage === "climb" ? cruiseFt / CLIMB_MIN : -cruiseFt / DESCENT_MIN;
   const [lat, lon] = unproject(pos.x, pos.y);
   const rows = [
-    ["Altitude", `${(Math.round(altitude / 10) * 10).toLocaleString("en-US")} ft`],
+    ["Altitude", `${(Math.round(pos.altitudeFt / 10) * 10).toLocaleString("en-US")} ft`],
     ["Ground speed", `${Math.round(pos.knots)} kt`],
-    ["Vertical speed", signed(climbRate, "ft/min")],
-    ["Heading", `${String((((Math.round(pos.angleDeg) + 90) % 360) + 360) % 360).padStart(3, "0")}°`],
+    ["Vertical speed", signed(pos.verticalFpm, "ft/min")],
+    ["Heading", `${String(((Math.round(pos.headingDeg) % 360) + 360) % 360).padStart(3, "0")}°`],
     ["Position", `${lat.toFixed(2)}° N, ${Math.abs(lon).toFixed(2)}° W`, true],
     ["To go", `${Math.round(pos.toGoNm * MI_PER_NM).toLocaleString("en-US")} mi`],
     ["Arrives in", countdown(pos.estimatedArrivalMs - nowMs)],
   ];
-  if (pos.stage === "hold") rows.push(["Holding for", countdown(pos.holdEndMs - nowMs), true]);
+  if (pos.stage === "HOLDING" && pos.holdEndMs != null) rows.push(["Holding for", countdown(pos.holdEndMs - nowMs), true]);
   return rows;
 }
 
-function telemetryBlock(row, nowMs) {
-  const rows = telemetry(row, nowMs);
+function telemetryBlock(pos) {
+  const rows = telemetry(pos);
   const block = el("infobox-telemetry");
   block.dataset.labels = rows.map(([label]) => label).join("|");
   const head = el("infobox-telemetry-head", "Live telemetry");
-  head.prepend(el("live-dot"));
+  head.prepend(el(`live-dot${pos && pos.stale ? " stale" : ""}`));
   block.appendChild(head);
   for (const [label, value, fullWidth] of rows) {
     const cell = el(`infobox-tm${fullWidth ? " wide" : ""}`);
@@ -428,12 +393,15 @@ function telemetryBlock(row, nowMs) {
 // rebuilds only when the set of readings changes (takeoff, a hold, landing).
 function tickTelemetry(svg) {
   const block = document.querySelector("#map-infobox:not(.hidden) .infobox-telemetry");
-  if (!block || !svg.__lastFocused) return;
-  const rows = telemetry(svg.__lastFocused.row, Date.now());
+  const focused = svg.__lastFocused;
+  if (!block || !focused) return;
+  const pos = planeState(focused.row, focused.sample, Date.now());
+  const rows = telemetry(pos);
   if (block.dataset.labels !== rows.map(([label]) => label).join("|")) {
-    block.replaceWith(telemetryBlock(svg.__lastFocused.row, Date.now()));
+    block.replaceWith(telemetryBlock(pos));
     return;
   }
+  block.querySelector(".live-dot").classList.toggle("stale", pos.stale);
   block.querySelectorAll(".infobox-value").forEach((value, i) => { value.textContent = rows[i][1]; });
 }
 
@@ -476,7 +444,7 @@ function renderInfoBox(svg, row, pos) {
     line.appendChild(el(`infobox-value ${valueClass}`.trim(), hhmmUTC(ms)));
     box.appendChild(line);
   }
-  box.appendChild(telemetryBlock(row, Date.now()));
+  box.appendChild(telemetryBlock(planeState(row, svg.__lastFocused.sample, Date.now())));
   box.classList.remove("hidden");
 
   // Measure the box now that it has real content, then take the first spot
@@ -506,7 +474,26 @@ function renderInfoBox(svg, row, pos) {
 // returns) into the <svg> at `svgSelector`. Safe to call on every poll —
 // markers are keyed by flight id and glide to their new position/heading.
 // opts.focusedKey, when set, hides every other plane and draws that one
-// flight's trajectory + info box instead.
+// flight's trajectory + info box instead. opts.telemetry is /api/state's
+// latest reading per flight, opts.serverNowMs its `now`, and opts.receivedAtMs
+// when the browser got it.
+// The reading each flight is drawn from. A reading already seen on an
+// earlier poll keeps the time it first arrived, so a stopped stream lets the
+// plane run out of FRESH_MS and freeze. When /api/state stops returning a
+// flight's reading (it keeps two minutes), the last one stays, frozen, until
+// the flight lands.
+const samples = new Map(); // key -> telemetrySample
+
+function latestSample(key, reading, serverNowMs, receivedAtMs) {
+  const kept = samples.get(key);
+  if (reading && (!kept || parseTsMs(reading.as_of) !== kept.asOfMs)) {
+    samples.set(key, telemetrySample(reading, serverNowMs, receivedAtMs));
+  } else if (!reading && kept && String(kept.reading.stage) === "LANDED") {
+    samples.delete(key);
+  }
+  return samples.get(key) || null;
+}
+
 function renderFlightMap(svgSelector, flights, opts = {}) {
   const svg = document.querySelector(svgSelector);
   if (!svg) return;
@@ -515,10 +502,13 @@ function renderFlightMap(svgSelector, flights, opts = {}) {
   const seen = new Set();
   const highlightKey = opts.highlightKey;
   const focusedKey = opts.focusedKey;
+  const readings = opts.telemetry || {};
+  const receivedAtMs = opts.receivedAtMs ?? nowMs;
   let focusedPos = null;
 
   for (const row of flights) {
-    const pos = planePosition(row, nowMs);
+    const sample = latestSample(row.key, readings[row.key], opts.serverNowMs, receivedAtMs);
+    const pos = planeState(row, sample, nowMs);
     if (!pos) continue;
     seen.add(row.key);
     const g = ensurePlaneEl(layer, row.key, opts.onSelect);
@@ -537,11 +527,12 @@ function renderFlightMap(svgSelector, flights, opts = {}) {
       hidden ? "plane-hidden" : "",
     ].join(" "));
     g.setAttribute("data-title", `${row.key}: ${row.origin} → ${row.destination} · ${row.status}`);
-    if (row.key === focusedKey) focusedPos = { row, pos };
+    if (row.key === focusedKey) focusedPos = { row, sample, pos };
   }
   layer.querySelectorAll("[data-plane]").forEach((g) => {
     if (!seen.has(g.dataset.plane)) { planeAnim.delete(g.dataset.plane); g.remove(); }
   });
+  for (const key of samples.keys()) if (!seen.has(key)) samples.delete(key);
 
   const trajectory = svg.querySelector("#map-trajectory");
   const infobox = document.getElementById("map-infobox");
