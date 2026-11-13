@@ -21,9 +21,9 @@ Flight Disruptions runs, in order:
 
 Both labs deploy their attendee starting point by default and prebuild the rest with
 --with-labs. Flight Disruptions' starting point is the workshop: steps 1 and 2 build only
-the three source feeds, passenger_recommendations, and the agent's hosted model, and deploy
-stops after the Global API key. Attendees publish the data, build passenger_state, flight_impact,
-and the recovery agent, and turn on Lightning Tables and RTCE themselves
+the source feeds (flights, itineraries, hotels, flight telemetry), passenger_recommendations,
+and the agent's hosted model, and deploy stops after the Global API key. Attendees publish the
+data, build passenger_state, flight_impact, and the recovery agent, and turn on Lightning Tables and RTCE themselves
 (docs/flight-disruptions/workshop.md). Steps 1 to 4 above are the full demo, which
 --with-labs, --video-2, and the bots deploy. The choice is saved to credentials.env, so
 later runs stay in workshop mode, and a checkout that already has the full demo keeps it.
@@ -661,6 +661,7 @@ def _run_datagen(root, agent: bool, history: bool = True, speed: float = 1.0, st
         "flight_status-value",
         "passenger_itineraries-value",
         "hotel_inventory-value",
+        "flight_telemetry-value",
         "passenger_recommendations-value",
     )
     for attempt in range(30):

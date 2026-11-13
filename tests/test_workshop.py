@@ -112,7 +112,7 @@ def test_workshop_terraform_builds_only_the_source_tables():
         assert block.lstrip().startswith("count = var.workshop ? 0 : 1")
     tables = re.search(r"tables = merge\((.*?)\n  \)", main, re.S).group(1)
     always, unless_workshop = tables.split("var.workshop ? {} :")
-    assert set(re.findall(r"sql/(\d+)-", always)) == {"20", "21", "22", "23"}
+    assert set(re.findall(r"sql/(\d+)-", always)) == {"20", "21", "22", "23", "35"}
     assert set(re.findall(r"sql/(\d+)-", unless_workshop)) == {"33"}
 
 

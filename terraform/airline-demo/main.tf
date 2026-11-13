@@ -79,12 +79,13 @@ locals {
   # Workshop attendees create their own agent instead.
   agent_enabled = var.enable_recovery_agent && !var.workshop
 
-  # The three source feeds, the recovery offers, and (outside the workshop) the webhook's landing table.
+  # The source feeds (flights, itineraries, hotels, telemetry), the recovery offers, and (outside the workshop) the webhook's landing table.
   tables = merge(
     {
       flight_status             = "sql/20-source-flight-status.sql"
       passenger_itineraries     = "sql/21-source-passenger-itineraries.sql"
       hotel_inventory           = "sql/22-source-hotel-inventory.sql"
+      flight_telemetry          = "sql/35-source-flight-telemetry.sql"
       passenger_recommendations = "sql/23-serving-passenger-recommendations.sql"
     },
     var.workshop ? {} : { hotel_availability_updates = "sql/33-staging-hotel-availability-updates.sql" },
@@ -96,9 +97,9 @@ locals {
   }
 }
 
-# --- Tables (three source feeds + recovery offers) --------------------------
+# --- Tables (source feeds + recovery offers) --------------------------
 # No interdependencies, created in parallel. The datagen publishes into the
-# three sources and writes passenger_recommendations rows directly. Statement
+# source feeds and writes passenger_recommendations rows directly. Statement
 # names use "airport-table-*" so they don't collide with the "airport-create-*"
 # statements an older deployment may still have running.
 resource "confluent_flink_statement" "tables" {

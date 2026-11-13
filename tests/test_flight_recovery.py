@@ -280,7 +280,6 @@ def test_airborne_flights_report_every_5_seconds_until_they_land(plan):
     assert all(len(by_key[key]) > 1 or by_key[key][0][0] > START + g.TELEMETRY_EVERY for key in landed)
 
 
-@pytest.mark.xfail(strict=True, reason="sql/35 arrives in Task 3")
 def test_telemetry_rows_match_the_source_table_columns(plan):
     sql = (
         Path(__file__).parent.parent / "terraform" / "airline-demo" / "sql" / "35-source-flight-telemetry.sql"
