@@ -55,25 +55,23 @@ def test_hero_flight_strands_150_of_170_passengers(plan):
     assert sum(p.connecting is None for p in passengers) == 20
     impacted = [p for p in passengers if p.impacted_at]
     assert len(impacted) == 150
-    first, last = g.HERO_RAMP
-    assert all(START + first < p.impacted_at <= START + last for p in impacted)
-    assert len({p.impacted_at for p in impacted}) == 11  # one wave per destination
-    steps = (last - first) // g.UPDATE_EVERY
-    assert [when for when, _ in hero.reveals] == [START + first + g.UPDATE_EVERY * k for k in range(1, steps + 1)]
+    assert all(START + timedelta(minutes=5) < p.impacted_at <= START + timedelta(minutes=30) for p in impacted)
+    assert len({p.connecting.key for p in impacted}) == 11  # one wave per destination
+    assert len({p.impacted_at for p in impacted}) >= 9  # the fast start can flip two in one update
+    times = [when for when, _ in hero.reveals]
+    assert times == [START + timedelta(minutes=5) + g.UPDATE_EVERY * k for k in range(1, len(times) + 1)]
     delays = [delay for _, delay in hero.reveals]
     assert delays == sorted(delays) and delays[-1] == g.HERO_DELAY == 115
 
 
-def test_hero_is_red_and_in_biggest_delays_ten_minutes_in(plan):
-    hero, at = plan.live.hero, START + timedelta(minutes=10)
-    assert hero.delay_at(at) >= g.MAP_AT_RISK  # red on the map
-    others = [
-        f.delay_at(at)
-        for day in [*plan.days, plan.tomorrow]
-        for f in day.flights
-        if f is not hero and START - timedelta(hours=18) <= f.scheduled < START + timedelta(hours=6)
-    ]
-    assert hero.delay_at(at) > sorted(others, reverse=True)[9]  # in the app's top-10 Biggest delays
+def test_hero_turns_red_by_minute_8_and_strands_everyone_by_minute_30(plan):
+    hero = plan.live.hero
+    assert hero.delay_at(START + timedelta(minutes=8)) >= g.MAP_AT_RISK  # red on the map
+    impacted = sorted(p.impacted_at for p in plan.live.passengers if p.inbound is hero and p.impacted_at)
+    assert impacted[-1] <= START + timedelta(minutes=30)
+    # The count keeps rising after it turns red: several waves land between +9 and +30.
+    later = {when for when in impacted if when > START + timedelta(minutes=9)}
+    assert len(later) >= 4 and max(b - a for a, b in pairwise(sorted(later))) <= timedelta(minutes=8)
 
 
 def test_every_passenger_has_a_unique_seat_on_each_flight(plan, records):
@@ -130,8 +128,8 @@ def test_live_delays_climb_with_each_update_and_history_keeps_its_notices(plan):
         delays = [delay for _, delay in flight.reveals]
         if max(delays, default=0) >= g.DELAYED_AT:
             climbing += 1
-            # RA417 climbs faster, so it's red and in Biggest delays ten minutes in.
-            step = 7 if flight is plan.live.hero else 3
+            # RA417 climbs fast to red at +8, then slowly so its passengers keep turning HIGH until +30.
+            step = 8 if flight is plan.live.hero else 3
             assert all(abs(later - earlier) <= step for earlier, later in pairwise([0, *delays]))
     assert climbing >= 20
     for day in plan.days[:-1]:

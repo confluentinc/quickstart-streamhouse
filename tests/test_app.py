@@ -302,10 +302,22 @@ def test_state_counts_and_delays(fake):
     assert "RA100-20260928" not in keys and "RA420-20260928" not in keys
     assert body["counts"] == {"affected": 275, "booked": 205, "flights": 15, "delayed": 2}
     assert body["flights"][0]["delay_minutes"] == 0 and isinstance(body["flights"][0]["affected_passengers"], int)
-    assert [row["key"] for row in body["delays"][:3]] == ["RA417-20260928", "RA418-20260928", "RA419-20260928"]
+    # Most passengers at risk first, then the longest delay.
+    assert [row["key"] for row in body["delays"][:3]] == ["RA417-20260928", "RA418-20260928", "RA500-20260928"]
     assert len(body["delays"]) == 10
     for topic in ("flight_status", "flight_impact"):
         assert next(call for call in fake.calls if call["topic"] == topic)["order_by"] == ("scheduled_time", "ASC")
+
+
+def test_biggest_delays_puts_a_flight_with_passengers_at_risk_above_a_longer_delay(fake):
+    _set_flights(
+        fake,
+        _flight(417, "2026-09-28 11:00:00.000000", 45, 95, "DELAYED"),
+        _flight(155, "2026-09-28 10:00:00.000000", 235, 53, "DELAYED"),
+        _flight(673, "2026-09-28 10:30:00.000000", 124, 0, "DELAYED"),
+    )
+    body = TestClient(airport_app.app).get("/api/state").json()
+    assert [row["key"] for row in body["delays"]] == ["RA417-20260928", "RA155-20260928", "RA673-20260928"]
 
 
 def test_flights_show_live_status_and_delay_with_flinks_at_risk_count(fake):

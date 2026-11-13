@@ -26,8 +26,8 @@ and the [data model](./data-model.md) explains every field.
 90-minute live stream in the background (log: `tmp/datagen.log`), enables Lightning Tables and RTCE,
 and offers to start the app at http://127.0.0.1:8000.
 
-RA417 is scheduled 50 minutes after the stream starts. From +5 to +14 minutes its delay grows every
-30 seconds (red on the map from about +8:30, in Biggest delays from +10), and the Grand Hyatt at SFO sells out at +40. To restart the scene, run `uv run airport-datagen`; it
+RA417 is scheduled 50 minutes after the stream starts. From +5 minutes its delay grows every
+30 seconds (red on the map and top of Biggest delays by +8, all 150 connections at risk by +30), and the Grand Hyatt at SFO sells out at +40. To restart the scene, run `uv run airport-datagen`; it
 stops any stream already running, republishes the data, and streams for another 90 minutes. For a
 quicker rehearsal, add `--skip-history`, and `--speed 5` plays the stream five times faster (the 90 minutes take 18). `--dry-run` prints the records without publishing, and
 `--reset` writes tombstones for every generated key.

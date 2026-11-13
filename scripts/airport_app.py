@@ -311,7 +311,10 @@ def state():
     flights = _flights(window=(now - WINDOW_BEFORE, now + WINDOW_AFTER))
     booked = booked.result()
     telemetry, notice = telemetry.result()
-    delays = sorted(flights, key=lambda row: (-row["delay_minutes"], row.get("key") or ""))[:10]
+    # Most passengers at risk first, then the longest delay, so a flight stranding connections leads the list.
+    delays = sorted(
+        flights, key=lambda row: (-row["affected_passengers"], -row["delay_minutes"], row.get("key") or "")
+    )[:10]
     return {
         "now": now,
         "flights": flights,
