@@ -640,7 +640,12 @@ def telemetry_row(flight: Flight, at: datetime) -> dict | None:
 
 
 def _telemetry_events(flight: Flight, after: datetime, until: datetime):
-    """(time, row) every TELEMETRY_EVERY in (after, until] while airborne, ending with the first LANDED reading."""
+    """(time, row) every TELEMETRY_EVERY in (after, until] while airborne, ending with the first LANDED reading.
+
+    A flight already down at `after` publishes nothing.
+    """
+    if (down := telemetry_row(flight, after)) and down["stage"] == "LANDED":
+        return
     tick = after + timedelta(seconds=flight.offset % 5 or 5)
     while tick <= until:
         if row := telemetry_row(flight, tick):

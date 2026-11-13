@@ -254,6 +254,16 @@ def test_stream_updates_flights_every_30_seconds_and_hotels_every_15(plan):
     assert sum(value["passenger_id"].startswith("P-0928-417-") for value in offers) == 300
 
 
+def test_flights_down_before_the_stream_starts_publish_no_telemetry(plan, records):
+    airborne = {key for topic, key, _ in records if topic == g.TELEMETRY}
+    first = {}
+    for _, topic, key, value in g.stream_events(plan, g.STREAM_MINUTES):
+        if topic == g.TELEMETRY:
+            first.setdefault(key, value)
+    assert first
+    assert all(value["stage"] != "LANDED" or key in airborne for key, value in first.items())
+
+
 def test_airborne_flights_report_every_5_seconds_until_they_land(plan):
     events = [e for e in g.stream_events(plan, g.STREAM_MINUTES) if e[1] == g.TELEMETRY]
     live = {f.key for f in plan.live.flights}
@@ -265,7 +275,9 @@ def test_airborne_flights_report_every_5_seconds_until_they_land(plan):
         assert all(later - earlier == g.TELEMETRY_EVERY for (earlier, _), (later, _) in pairwise(rows))
         assert all(value["stage"] != "LANDED" for _, value in rows[:-1])
         assert all(value["as_of"] == at for at, value in rows)
-    assert any(rows[-1][1]["stage"] == "LANDED" for rows in by_key.values())
+    landed = [key for key, rows in by_key.items() if rows[-1][1]["stage"] == "LANDED"]
+    assert landed
+    assert all(len(by_key[key]) > 1 or by_key[key][0][0] > START + g.TELEMETRY_EVERY for key in landed)
 
 
 @pytest.mark.xfail(strict=True, reason="sql/35 arrives in Task 3")
