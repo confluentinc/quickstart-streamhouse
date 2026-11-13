@@ -170,7 +170,7 @@ credit is used first, so you typically won't be charged during the workshop.
 
 River Air's data comes from different systems: itineraries from ticketing, flight status from the airports' operational databases, and hotel rooms from a partner. Let's look at them as they arrive.
 
-1. Open **[Topics](https://confluent.cloud/go/topics)** and select your **environment** (`streamhouse-…-env`) and **cluster** (`streamhouse-…-cluster`). You see the four topics deploy created: `flight_status`, `passenger_itineraries`, `hotel_inventory`, and `passenger_recommendations`.
+1. Open **[Topics](https://confluent.cloud/go/topics)** and select your **environment** (`streamhouse-…-env`) and **cluster** (`streamhouse-…-cluster`). You see the five topics deploy created: `flight_status`, `passenger_itineraries`, `hotel_inventory`, `flight_telemetry`, and `passenger_recommendations`.
 
 <img src="../images/flight-disruptions/topics-view.png" alt="The cluster&#x27;s Topics list with the four demo topics: flight_status, hotel_inventory, passenger_itineraries, and passenger_recommendations" width="750">
 
@@ -207,6 +207,7 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
     | `flight_status` | One row per flight: route, scheduled and estimated time, status |
     | `passenger_itineraries` | One row per passenger: inbound flight and seat, connecting flight and seat (null when the trip ends at SFO) |
     | `hotel_inventory` | One row per hotel: rooms left and nightly rate |
+    | `flight_telemetry` | One row per airborne flight: position, altitude, speeds, and heading, refreshed every 5 seconds. Only the live flight map uses it |
     | `passenger_recommendations` | The rebooking offers. The generator writes most flights', and in Lab 4 we'll create the agent that writes them for RA417 and two later delayed flights, RA183 and RA185 |
 
     <img src="../images/flight-disruptions/show-tables.png" alt="SHOW TABLES results: flight_status, hotel_inventory, passenger_itineraries, and passenger_recommendations" width="750">
@@ -347,13 +348,13 @@ One click per topic does it. Enabling a topic's **Lightning Table** keeps a low-
 
     <img src="../images/flight-disruptions/lightning-tables-panel.png" alt="The Enable a Lightning Table for flight_status? panel" width="750">
 
-4. Repeat for `passenger_itineraries`, `passenger_state`, `flight_impact`, `passenger_recommendations`, and `hotel_inventory`.
+4. Repeat for `passenger_itineraries`, `passenger_state`, `flight_impact`, `passenger_recommendations`, `hotel_inventory`, and `flight_telemetry`.
 
     <img src="../images/flight-disruptions/lightning-tables-active.png" alt="The Topics list with all six Lightning Tables Active" width="750">
 
 > [!NOTE]
 >
-> Each topic shows **Provisioning** while Confluent loads its rows, then **Active**. Wait until all six show **Active** before you continue.
+> Each topic shows **Provisioning** while Confluent loads its rows, then **Active**. Wait until all seven show **Active** before you continue.
 
 5. Run your first Lightning Query. **In a terminal window, run**:
 
@@ -383,7 +384,7 @@ One click per topic does it. Enabling a topic's **Lightning Table** keeps a low-
     - **Operations** lists today's flights. Status and delay come straight from `flight_status`, so they change within seconds; **At risk** comes from Flink's `flight_impact`.
     - **Biggest delays** lists the ten latest flights. RA417 (ORD → SFO, up to 115 minutes late) is the one tagged **Biggest impact**.
     - Click **RA417-…**. The seat map colors every seat red (at risk), green (not at risk), or grey (open). Hover a seat to see that passenger's itinerary. The table below lists RA417's passengers, `HIGH` first.
-    - The flight's box on the map also shows **Live telemetry** that updates every second: altitude, speed, heading, position, and time to arrival.
+    - The flight's box on the map also shows **Live telemetry** that updates every second: altitude, speed, heading, position, and time to arrival. The generator streams it to `flight_telemetry` every 5 seconds, and the dashboard reads it through Lightning.
 
     <img src="../images/flight-disruptions/dashboard-live-telemetry.png" alt="RA417&#x27;s box on the live flight map with Live telemetry: altitude, ground speed, vertical speed, heading, position, miles to go, and time to arrival" width="750">
 

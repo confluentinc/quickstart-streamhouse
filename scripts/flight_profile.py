@@ -1,12 +1,11 @@
 """The flight profile behind the live map: where a flight is and how it is flying.
 
-A Python port of the profile in static/flightmap.js (routeGeometry, pointAlong,
-planePosition and the altitude and vertical speed of telemetry), so the generator
-can stream the same readings the browser used to simulate. Each plane takes off at
+The only copy of the profile (it used to live in the browser): the generator streams
+its readings to the flight_telemetry topic, and the live map draws from them. Each plane takes off at
 RUNWAY_KT, speeds up to cruise over CLIMB_MIN, cruises, and slows back to RUNWAY_KT
 over the last DESCENT_MIN. A late arrival circles at the top of its descent until it
-can land at its estimated time. Keep the numbers in step with flightmap.js;
-tests/test_flight_profile.py compares them against a fixture captured from it.
+can land at its estimated time. tests/test_flight_profile.py compares the readings
+against a fixture captured from the original browser profile.
 """
 
 import math

@@ -39,7 +39,7 @@ With the default seed, the generator produces roughly 1,600 delayed flights, 8,6
 
 ## Source topics
 
-Three source feeds carry the facts shown on screen. The deployed Flink tables call each business ID column `key` because of the raw-key Kafka convention; it is the `flight_id`, `passenger_id`, `hotel_name`, or `offer_id` for that table. All IDs and events are synthetic.
+Four source feeds carry the facts shown on screen. The deployed Flink tables call each business ID column `key` because of the raw-key Kafka convention; it is the `flight_id`, `passenger_id`, `hotel_name`, or `offer_id` for that table (for `flight_telemetry`, the `flight_id`). All IDs and events are synthetic.
 
 ### `flight_status` (6 columns)
 
@@ -74,6 +74,26 @@ No names, contact details, or preferences: the join and the risk rule don't need
 | `available_rooms` | INT | Zero forces a different choice. |
 | `nightly_rate` | DECIMAL(10,2) | $329 (Grand Hyatt), $229 (Marriott), and $249 (Hilton); the hotel cost of an overnight rebooking. |
 
+### `flight_telemetry` (11 columns)
+
+Scene 1's live flight map draws each plane from its latest reading, and the map's "Live telemetry" box shows the same values. Nothing else reads it.
+
+| Column | Type | Purpose |
+| --- | --- | --- |
+| `flight_id` | STRING, key | The dated flight, as in `flight_status`. |
+| `as_of` | TIMESTAMP | When the reading was taken. |
+| `stage` | STRING | `CLIMBING`, `CRUISING`, `HOLDING`, `DESCENDING`, or `LANDED`. |
+| `latitude` | DOUBLE | Position on screen. |
+| `longitude` | DOUBLE | Position on screen. |
+| `altitude_ft` | INT | Shown in the telemetry box. |
+| `ground_speed_kt` | DOUBLE | Shown in the telemetry box; the map flies the plane on between readings at this speed. |
+| `vertical_speed_fpm` | INT | Shown in the telemetry box. |
+| `heading_deg` | DOUBLE | Points the plane icon and shows in the box. |
+| `distance_to_go_nm` | DOUBLE | Miles to go to the destination. |
+| `hold_ends_at` | TIMESTAMP, nullable | While `HOLDING`, when the late arrival can land. |
+
+Only the latest reading per flight is kept. The final reading is `LANDED`.
+
 ## Computed data products
 
 | Topic | Key | Columns | Producer and use |
@@ -97,6 +117,7 @@ erDiagram
     passenger_state }o--|| flight_impact : "HIGH counted per inbound flight"
     passenger_state ||--o{ passenger_recommendations : "HIGH triggers 2 offers"
     hotel_inventory |o--o{ passenger_recommendations : "overnight hotel"
+    flight_status ||--o| flight_telemetry : "live position while airborne"
 
     flight_status {
         string flight_id PK
@@ -117,6 +138,19 @@ erDiagram
         string hotel_name PK
         int available_rooms
         decimal nightly_rate
+    }
+    flight_telemetry {
+        string flight_id PK
+        timestamp as_of
+        string stage
+        double latitude
+        double longitude
+        int altitude_ft
+        double ground_speed_kt
+        int vertical_speed_fpm
+        double heading_deg
+        double distance_to_go_nm
+        timestamp hold_ends_at "nullable"
     }
     passenger_state {
         string passenger_id PK
@@ -177,7 +211,7 @@ uv run airport-datagen --reset         # tombstone every generated key
 
 **One aircraft.** Every River Air flight uses the same seat map, modeled after a two-class Boeing 737-900ER: First in rows 1–5 (seats A, C, D, F) and Economy in rows 6–32 (A–F), 182 seats in all. Each passenger gets a random open seat on their inbound flight and, when they connect, on their departure. A departure seats only its connecting passengers, about 40 on average, because the generator doesn't model trips that start at SFO. Seats are drawn from their own random stream, so they never change delays, connections, or offers.
 
-**Realistic updates.** An active flight publishes its current row every 30 seconds, from three hours before departure or arrival until it has departed or landed. Announced delays only grow. On the live day, a delay of 15 minutes or more climbs a little with every update, the way RA417's does: a severe one from two hours before the scheduled time to 40 minutes before, a moderate one from 90 to 45 minutes before. History days publish only each flight's final row, so they reveal a severe delay in steps instead, at about 30%, 65%, then 100% of its final length. Near landing, a severely delayed arrival may make up at most three minutes. Status only moves forward. The generator rejects any connection whose risk would change more than once, so a passenger never flips from HIGH back to OK. During the live stream, en-route arrivals also revise their estimate by a minute or two about once a minute, the way arrival-time feeds do, and hold the announced delay again from 10 minutes before landing. A revision never changes a flight's status or map color, or any connection's risk.
+**Realistic updates.** An active flight publishes its current row every 30 seconds, from three hours before departure or arrival until it has departed or landed. Announced delays only grow. On the live day, a delay of 15 minutes or more climbs a little with every update, the way RA417's does: a severe one from two hours before the scheduled time to 40 minutes before, a moderate one from 90 to 45 minutes before. History days publish only each flight's final row, so they reveal a severe delay in steps instead, at about 30%, 65%, then 100% of its final length. Near landing, a severely delayed arrival may make up at most three minutes. Status only moves forward. The generator rejects any connection whose risk would change more than once, so a passenger never flips from HIGH back to OK. During the live stream, en-route arrivals also revise their estimate by a minute or two about once a minute, the way arrival-time feeds do, and hold the announced delay again from 10 minutes before landing. A revision never changes a flight's status or map color, or any connection's risk. On the live day, every airborne flight also publishes a `flight_telemetry` reading every 5 seconds, staggered across the flights, from takeoff through one final `LANDED` reading at touchdown; flights already landed or still at the gate when the stream starts publish none, and history days and tomorrow publish none.
 
 **The live day** is shifted so RA417 from Chicago O'Hare is scheduled 50 minutes after the stream starts (template time 21:40). RA417 carries 170 passengers, leaving 12 of its 182 seats open: 150 connect to last-bank departures with 50–110 minutes to spare, and 20 end their trip at SFO. From +5 to +25 minutes, each of RA417's updates adds to its delay, up to 115 minutes. Its passengers turn HIGH one destination at a time, about once a minute from +6 to +16:30, until all 150 are at risk. Those passengers can only be rebooked onto tomorrow morning's flights, so each gets two overnight offers: the first with the Grand Hyatt at SFO ($329) and the second with the SFO Airport Marriott Waterfront ($229). All three hotels publish their rooms every 15 seconds as guests book and cancel: the Grand Hyatt drifts down about a room a minute and sells out exactly 40 minutes into the stream, and the Marriott and the Hilton ($249) move by a room here and there. After the sellout the agent offers the Marriott and the Hilton instead. Two later arrivals are scripted the same way for the agent: RA183 from Boston, due at +61, whose delay climbs to 75 minutes from +21 to +36, and RA185 from Las Vegas, due at +84, whose delay climbs to 60 minutes from +49 to +59. Each carries 160 passengers, and its connecting ones, 40 on RA183 and 30 on RA185, all miss their last-bank connections. RA183's turn HIGH from +26 to +32, before the sellout, so they get the Grand Hyatt and the Marriott; RA185's turn HIGH from +52:30 to +54:30 and get the Marriott and the Hilton. The three flights' offers stay `OFFERED` for the presenter; when the passenger selects a sold-out hotel, the app replaces it with the cheapest other hotel that has rooms, usually the Hilton, and the passenger chooses again.
 
