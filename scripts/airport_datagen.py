@@ -11,7 +11,8 @@ and on the live day each growing delay climbs a little with every update, as RA4
 En-route arrivals revise their estimate by a minute or two along the way, and the three
 hotels publish their rooms every 15 seconds. Announced delays only grow (a severe delay may
 shrink by at most three minutes near landing), so a flight never goes from hours late back
-to on time.
+to on time. Every airborne live-day flight also publishes its position, altitude and speed to
+flight_telemetry every 5 seconds, from takeoff through its first LANDED reading.
 
 The generator writes two rebooking offers a few seconds after a connection becomes HIGH
 risk. Past bookings are completed the way customers would complete them; the offers for
@@ -48,6 +49,7 @@ from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroSerializer
 from confluent_kafka.serialization import MessageField, SerializationContext, StringSerializer
 
+from . import flight_profile
 from .logging_utils import setup_logging
 from .terraform import extract_kafka_credentials, get_project_root
 
@@ -56,6 +58,8 @@ ITINERARIES = "passenger_itineraries"
 HOTELS = "hotel_inventory"  # fed by the hotel webhook when deploy created one
 WEBHOOK_ATTEMPTS = 5
 OFFERS = "passenger_recommendations"
+TELEMETRY = "flight_telemetry"
+TELEMETRY_EVERY = timedelta(seconds=5)  # how often an airborne flight publishes its position
 
 AIRLINE = "RA"
 HUB = "SFO"
@@ -613,6 +617,39 @@ def hotel_warmup(plan: Plan, updates: int = 200):
             yield HOTELS, name, _hotel(name, step[name])
 
 
+def telemetry_row(flight: Flight, at: datetime) -> dict | None:
+    """The flight's reading at `at` in the flight_telemetry column order, or None while it is at the gate."""
+    status = flight.row(at)
+    found = flight_profile.reading(
+        flight.key, flight.origin, flight.destination, flight.scheduled, status["estimated_time"], status["status"], at
+    )
+    if found is None:
+        return None
+    return dict(
+        as_of=at,
+        stage=found.stage,
+        latitude=found.latitude,
+        longitude=found.longitude,
+        altitude_ft=found.altitude_ft,
+        ground_speed_kt=found.ground_speed_kt,
+        vertical_speed_fpm=found.vertical_speed_fpm,
+        heading_deg=found.heading_deg,
+        distance_to_go_nm=found.distance_to_go_nm,
+        hold_ends_at=found.hold_ends_at,
+    )
+
+
+def _telemetry_events(flight: Flight, after: datetime, until: datetime):
+    """(time, row) every TELEMETRY_EVERY in (after, until] while airborne, ending with the first LANDED reading."""
+    tick = after + timedelta(seconds=flight.offset % 5 or 5)
+    while tick <= until:
+        if row := telemetry_row(flight, tick):
+            yield tick, row
+            if row["stage"] == "LANDED":
+                return
+        tick += TELEMETRY_EVERY
+
+
 def initial_records(plan: Plan):
     """Every row as of the stream start: history final state, the live day so far, tomorrow's schedule."""
     at = plan.start
@@ -635,17 +672,22 @@ def initial_records(plan: Plan):
                         connecting_seat=passenger.connecting_seat,
                     ),
                 )
+    for flight in plan.live.flights:
+        row = telemetry_row(flight, at)
+        if row and row["stage"] != "LANDED":
+            yield TELEMETRY, flight.key, row
     for recovery in plan.recoveries:
         for key, value in recovery.rows(at):
             yield OFFERS, key, value
 
 
 def stream_events(plan: Plan, minutes: int) -> list[tuple[datetime, str, str, dict]]:
-    """Timed live updates after the stream start: flights, hotel rooms, and offers."""
+    """Timed live updates after the stream start: flights, their telemetry, hotel rooms, and offers."""
     start, end = plan.start, plan.start + timedelta(minutes=minutes)
     events = []
     for flight in plan.live.flights:
         events += [(tick, FLIGHTS, flight.key, flight.row(tick)) for tick in flight.ticks(start, end)]
+        events += [(tick, TELEMETRY, flight.key, row) for tick, row in _telemetry_events(flight, start, end)]
     events += [(at, HOTELS, hotel, _hotel(hotel, rooms)) for at, hotel, rooms in _hotel_rooms(plan, end)]
     for recovery in plan.recoveries:
         if recovery.passenger.inbound not in plan.live.arrivals:
@@ -660,12 +702,14 @@ def stream_events(plan: Plan, minutes: int) -> list[tuple[datetime, str, str, di
 
 def reset_keys(start: datetime, seed: int = SEED) -> dict[str, set[str]]:
     """Every key a run near `start` could have written, with a few days of margin either side."""
-    keys = {FLIGHTS: set(), ITINERARIES: set(), HOTELS: set(HOTEL_RATES), OFFERS: set()}
+    keys = {FLIGHTS: set(), ITINERARIES: set(), HOTELS: set(HOTEL_RATES), OFFERS: set(), TELEMETRY: set()}
     for back in range(-3, HISTORY_DAYS + 4):
         service_date = start.date() - timedelta(days=back)
         for live in (True, False):
             day = build_day(seed, service_date, start, live=live)
             keys[FLIGHTS].update(f.key for f in day.flights)
+            if live:
+                keys[TELEMETRY].update(f.key for f in day.flights)
             for passenger in day.passengers:
                 keys[ITINERARIES].add(passenger.key)
                 if passenger.impacted_at:
