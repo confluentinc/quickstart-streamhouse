@@ -238,9 +238,14 @@ function planeState(row, sample, nowMs) {
   };
 }
 
+// A flight is at risk (red) when it's 45+ minutes late or strands more than
+// AT_RISK_PASSENGERS connections (airport_datagen.py AT_RISK_PASSENGERS).
+const AT_RISK_PASSENGERS = 10;
+
 function statusColorClass(row, phase) {
   if (phase === "done") return "plane-done";
   if (phase === "waiting") return "plane-waiting";
+  if ((Number(row.affected_passengers) || 0) > AT_RISK_PASSENGERS) return "plane-miss";
   if (row.status === "DELAYED") return (row.delay_minutes ?? 0) >= 45 ? "plane-miss" : "plane-tight";
   return "plane-ok";
 }

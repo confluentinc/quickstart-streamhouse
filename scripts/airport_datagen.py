@@ -4,8 +4,8 @@ Each service day has 180 flights: 90 arrivals into SFO and 90 departures from it
 flight uses one 182-seat layout, modeled after a two-class Boeing 737-900ER, and each
 passenger has a seat on each of their flights.
 The live day is shifted so flight RA417 from Chicago is scheduled 50 minutes after the
-stream starts. Its delay grows every 30 seconds from +5 minutes: to 45 by +8, 66 by +30, and
-115 by +40. 150 of its 170 passengers miss their connection, the last of them by +30. RA183
+stream starts. It's 10 minutes late from the start, holds there until +8, then grows every 30
+seconds: 66 by +30, 115 by +40. 150 of its 170 passengers miss their connection, the last by +30. RA183
 from Boston and RA185 from Las Vegas follow the same script later in the stream
 (AGENT_FLIGHTS). Every active flight publishes its status every 30 seconds, and on the live
 day each growing delay climbs a little with every update, as RA417's does.
@@ -98,19 +98,20 @@ HERO_NUMBER = 417
 HERO_ORIGIN = "ORD"
 HERO_MINUTE = 21 * 60 + 40
 HERO_LEAD = timedelta(minutes=50)
-# RA417's delay in stream minutes: on time until +5, then each 30-second update adds to it. It climbs fast
-# to 45 by +8, so it's red on the map, then slowly to 66 by +30, so its last passengers turn HIGH by +30
-# (their connections have up to 110 minutes to spare), then on to 115.
+# RA417's delay in stream minutes, as (minutes in, delay) points it climbs between on each 30-second update.
+# It's already 10 minutes late when the stream starts, with nobody at risk yet (HERO_BUFFER). It holds at
+# 10-11 until +8; then it climbs steadily to 66 by +30, stranding another destination's passengers every
+# 2-3 minutes from +8:30 until all 150 are at risk, then on to 115.
 HERO_CLIMB = (
-    (timedelta(minutes=5), 0),
-    (timedelta(minutes=8), 45),
+    (timedelta(minutes=0), 10),
+    (timedelta(minutes=8), 11),
     (timedelta(minutes=30), 66),
     (timedelta(minutes=40), 115),
 )
 HERO_DELAY = HERO_CLIMB[-1][1]
 HERO_CONNECTING = 150
 HERO_LOCAL = 20
-HERO_BUFFER = (50, 110)
+HERO_BUFFER = (56, 110)  # minutes RA417's connections have to spare: none at risk until it's 12 late
 
 
 # Two later arrivals the recovery agent also handles (sql/27-staging-impacted-passengers.sql), so its
@@ -141,6 +142,7 @@ MODERATE_SHARE = 0.25
 MODERATE_DELAY = (15, 60)
 DELAYED_AT = 15
 MAP_AT_RISK = 45  # the dashboard's flight map colors a flight this many minutes late as at risk
+AT_RISK_PASSENGERS = 10  # ... or with more than this many passengers at risk (flightmap.js)
 ACTIVE_BEFORE = timedelta(minutes=180)
 UPDATE_EVERY = timedelta(seconds=30)  # how often an active flight publishes its status
 BOARDING = timedelta(minutes=30)
@@ -339,7 +341,7 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
     for flight in day.flights:
         if flight is hero:
             start = flight.scheduled - HERO_LEAD
-            flight.reveals = [
+            flight.reveals = [(start + HERO_CLIMB[0][0], HERO_CLIMB[0][1])] + [
                 (when, base + delay)
                 for (first, base), (last, peak) in pairwise(HERO_CLIMB)
                 for when, delay in _climb(start + first, start + last, peak - base)
