@@ -330,6 +330,26 @@ def state():
     }
 
 
+def _live_passengers(rows: list[dict]) -> list[dict]:
+    """One passenger_state row per passenger.
+
+    Like flight_status, Lightning can keep a frozen copy of a passenger_state row beside the live one. Delays
+    only grow, so the live copy has the later inbound estimate; with the same inbound estimate, the larger
+    connection time reflects the onward flight's later estimate.
+    """
+
+    def progress(row: dict):
+        minutes = row.get("connection_minutes")
+        return (_timestamp(row.get("inbound_estimated_time")) or datetime.min, _int(minutes) if minutes else -1)
+
+    latest: dict[str, dict] = {}
+    for row in rows:
+        kept = latest.get(row["key"])
+        if kept is None or progress(row) > progress(kept):
+            latest[row["key"]] = row
+    return list(latest.values())
+
+
 @app.get("/api/flight/{flight_id}")
 def flight(flight_id: str):
     rows = _flights(key=flight_id)
@@ -339,7 +359,9 @@ def flight(flight_id: str):
     row["arrival"] = row.get("destination") == HUB
     # An arrival carries its passengers' inbound leg; a departure carries the ones connecting onto it.
     leg = "inbound" if row["arrival"] else "connecting"
-    passengers = deployment.lightning_scan("passenger_state", where=[(f"{leg}_flight_id", "=", flight_id)])
+    passengers = _live_passengers(
+        deployment.lightning_scan("passenger_state", where=[(f"{leg}_flight_id", "=", flight_id)])
+    )
     for passenger in passengers:
         passenger["seat"] = passenger.get(f"{leg}_seat")
     passengers.sort(key=lambda row: (row.get("risk") != "HIGH", row.get("key") or ""))
@@ -348,7 +370,7 @@ def flight(flight_id: str):
 
 @app.get("/api/passenger/{passenger_id}")
 def passenger(passenger_id: str):
-    rows = _rows("passenger_state", key=passenger_id, limit=1)
+    rows = _live_passengers(_rows("passenger_state", key=passenger_id, limit=10))
     if not rows:
         raise HTTPException(status_code=404, detail="Passenger not found")
     return {"passenger": rows[0], "offers": _passenger_offers(passenger_id), "hotels": _hotel_options()}

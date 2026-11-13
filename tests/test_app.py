@@ -402,6 +402,28 @@ def test_flight_passengers_high_risk_first(fake):
     assert client.get("/api/passenger/P-missing").status_code == 404
 
 
+def test_a_stale_passenger_state_copy_never_hides_a_high_risk_seat(fake):
+    # Lightning can keep a frozen copy of a passenger_state row beside the live one; the live one has the
+    # later inbound estimate, since delays only grow.
+    _set_flights(fake, _flight(417, "2026-09-28 11:00:00.000000", 40, 1, "DELAYED", origin="ORD", destination="SFO"))
+    live = {
+        "key": "P-0928-417-001",
+        "inbound_flight_id": "RA417-20260928",
+        "inbound_seat": "3A",
+        "connecting_flight_id": "RA681-20260928",
+        "risk": "HIGH",
+        "connection_minutes": "30",
+        "inbound_estimated_time": "2026-09-28 11:40:00.000000",
+    }
+    stale = {**live, "risk": "OK", "connection_minutes": "60", "inbound_estimated_time": "2026-09-28 11:10:00.000000"}
+    fake.tables["passenger_state"] = [live, stale]
+    client = TestClient(airport_app.app)
+    rows = client.get("/api/flight/RA417-20260928").json()["passengers"]
+    assert [(row["key"], row["risk"]) for row in rows] == [("P-0928-417-001", "HIGH")]
+    fake.tables["passenger_state"] = [stale, live]
+    assert client.get("/api/passenger/P-0928-417-001").json()["passenger"]["risk"] == "HIGH"
+
+
 def test_departure_shows_passengers_connecting_onto_it(fake):
     _set_flights(fake, _flight(680, "2026-09-28 12:30:00.000000", 0, 0, destination="PHX"))
     fake.tables["passenger_state"] = PASSENGERS
