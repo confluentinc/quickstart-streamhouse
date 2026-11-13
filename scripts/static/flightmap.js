@@ -119,14 +119,6 @@ function routeCurve(x0, y0, x1, y1) {
   return { cx: (x0 + x1) / 2 + px * bulge, cy: (y0 + y1) / 2 + py * bulge };
 }
 
-function bezierPoint(x0, y0, cx, cy, x1, y1, t) {
-  const mt = 1 - t;
-  return [
-    mt * mt * x0 + 2 * mt * t * cx + t * t * x1,
-    mt * mt * y0 + 2 * mt * t * cy + t * t * y1,
-  ];
-}
-
 function bezierTangentAngle(x0, y0, cx, cy, x1, y1, t) {
   const mt = 1 - t;
   const dx = 2 * mt * (cx - x0) + 2 * t * (x1 - cx);
@@ -209,7 +201,7 @@ function planeState(row, sample, nowMs) {
 
   // flight_status saying it's down outranks a reading that hasn't caught up.
   let phase = groundPhase(row, times, nowMs);
-  if (!reading || stage === "LANDED" || phase === "done") {
+  if (!reading || stage === "LANDED" || phase === "done" || nowMs >= times.estimatedArrivalMs) {
     if (stage === "LANDED") phase = "done";
     const atDestination = phase === "done" || nowMs >= times.estimatedArrivalMs;
     const t = atDestination ? 1 : 0;

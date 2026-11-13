@@ -90,7 +90,7 @@ Scene 1's live flight map draws each plane from its latest reading, and the map'
 | `vertical_speed_fpm` | INT | Shown in the telemetry box. |
 | `heading_deg` | DOUBLE | Points the plane icon and shows in the box. |
 | `distance_to_go_nm` | DOUBLE | Miles to go to the destination. |
-| `hold_ends_at` | TIMESTAMP, nullable | While `HOLDING`, when the late arrival can land. |
+| `hold_ends_at` | TIMESTAMP, nullable | While `HOLDING`, when the plane leaves the hold and starts its descent (estimated arrival minus the descent time). |
 
 Only the latest reading per flight is kept. The final reading is `LANDED`.
 

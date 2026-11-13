@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 import requests
+from confluent_kafka.schema_registry.error import SchemaRegistryError
 
 from scripts import airport_datagen as g
 
@@ -410,6 +411,17 @@ def test_a_rejected_hotel_update_raises_after_the_retries(monkeypatch):
     with pytest.raises(RuntimeError, match="401"):
         publisher.publish(g.HOTELS, "Hilton", dict(available_rooms=1, nightly_rate=Decimal("1.00")))
     assert len(calls) == g.WEBHOOK_ATTEMPTS
+
+
+def test_a_missing_topic_schema_tells_people_to_redeploy(monkeypatch):
+    publisher, _ = _webhook_publisher(monkeypatch, [200])
+
+    def missing(subject):
+        raise SchemaRegistryError(404, 40401, f"Subject '{subject}' not found.")
+
+    monkeypatch.setattr(publisher.schema_registry, "get_latest_version", missing)
+    with pytest.raises(RuntimeError, match="uv run deploy"):
+        publisher.publish(g.TELEMETRY, "RA417-20260928", {"stage": "CRUISING"})
 
 
 def test_hotel_warmup_sends_at_least_200_updates_and_ends_at_the_starting_rooms():

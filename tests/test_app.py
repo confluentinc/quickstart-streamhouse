@@ -404,14 +404,14 @@ def test_departure_shows_passengers_connecting_onto_it(fake):
 
 def _reading(key, seconds_ago, **extra):
     as_of = (NOW - timedelta(seconds=seconds_ago)).strftime("%Y-%m-%d %H:%M:%S.%f")
-    return {"key": key, "as_of": as_of, "stage": "CRUISE", "latitude": "40.1", **extra}
+    return {"key": key, "as_of": as_of, "stage": "CRUISING", "latitude": "40.1", **extra}
 
 
 def test_state_returns_each_airborne_flights_latest_reading(fake):
     fake.tables["flight_telemetry"] = [_reading("RA417-20260928", 10), _reading("RA100-20260928", 300)]
     telemetry = airport_app.state()["telemetry"]
     assert list(telemetry) == ["RA417-20260928"]
-    assert telemetry["RA417-20260928"]["stage"] == "CRUISE"
+    assert telemetry["RA417-20260928"]["stage"] == "CRUISING"
     assert telemetry["RA417-20260928"]["latitude"] == "40.1"
 
 
@@ -426,3 +426,24 @@ def test_state_keeps_the_newest_telemetry_copy(fake):
 def test_state_pages_telemetry_past_the_200_row_cap(fake):
     fake.tables["flight_telemetry"] = [_reading(f"RA{n:03d}-20260928", 5) for n in range(250)]
     assert len(airport_app.state()["telemetry"]) == 250
+
+
+def test_state_survives_a_failed_telemetry_read(fake, monkeypatch):
+    fake.tables["flight_status"] = [
+        {
+            "key": "RA417-20260928",
+            "scheduled_time": "2026-09-28 11:00:00.000",
+            "estimated_time": "2026-09-28 11:00:00.000",
+        }
+    ]
+    healthy = fake.query
+
+    def query(topic, *args, **kwargs):
+        if topic == "flight_telemetry":
+            raise airport_app.HTTPException(status_code=502, detail="no Lightning Table")
+        return healthy(topic, *args, **kwargs)
+
+    monkeypatch.setattr(Deployment, "lightning_query", lambda _self, *args, **kwargs: query(*args, **kwargs))
+    result = airport_app.state()
+    assert [flight["key"] for flight in result["flights"]] == ["RA417-20260928"]
+    assert result["telemetry"] == {}

@@ -118,6 +118,10 @@ uv run deploy --with-labs
 > git-ignored `credentials.env`. It's the key the app and Lightning queries authenticate with —
 > keep it out of screenshots and recordings.
 
+### Updating an existing deployment
+
+After you pull a change that adds a topic (the `flight_telemetry` feed, for example), run `uv run deploy` again before `uv run airport-datagen`. Deploy creates the new topic and its schema; until then the generator stops with a "No schema" error. If you deployed the workshop starting point or the full demo, rerun it the same way (`--workshop` or `--with-labs`).
+
 ### Fixed resource names
 
 Resource names get a random suffix so workshop deployments can share an org. For a recording, add `TF_VAR_deployment_name=RIVER-AIR-PROD` to `credentials.env` before deploying to get fixed names: `RIVER-AIR-PROD-ENV`, `RIVER-AIR-PROD-CLUSTER`, and so on. Service account names must be unique across the org, so a second fixed deployment needs its own `TF_VAR_deployment_name`. To still show `RIVER-AIR-PROD` on screen, set `TF_VAR_environment_name=RIVER-AIR-PROD`, which renames only the environment, cluster, and compute pool.

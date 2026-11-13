@@ -270,9 +270,21 @@ def _flights(key: str | None = None, window: tuple[datetime, datetime] | None = 
     ]
 
 
+_telemetry_failure: list[str | None] = [None]  # last logged failure, so a 2.5 s poll logs it once
+
+
 def _telemetry(now: datetime) -> dict[str, dict]:
     """The latest reading of each flight heard from in the last two minutes, keyed by flight."""
-    rows = deployment.lightning_scan(TELEMETRY, [("as_of", ">=", now - timedelta(minutes=2))])
+    try:
+        rows = deployment.lightning_scan(TELEMETRY, [("as_of", ">=", now - timedelta(minutes=2))])
+    except HTTPException as exc:
+        # Without telemetry the map places planes from flight_status, so the rest of the dashboard still works.
+        message = f"Telemetry unavailable, placing planes from flight_status: {exc.detail}"
+        if message != _telemetry_failure[0]:
+            _telemetry_failure[0] = message
+            print(message, flush=True)
+        return {}
+    _telemetry_failure[0] = None
     latest: dict[str, dict] = {}
     for row in rows:
         kept = latest.get(row["key"])

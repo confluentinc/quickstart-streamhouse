@@ -47,6 +47,7 @@ import requests
 from confluent_kafka import Producer
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroSerializer
+from confluent_kafka.schema_registry.error import SchemaRegistryError
 from confluent_kafka.serialization import MessageField, SerializationContext, StringSerializer
 
 from . import flight_profile
@@ -763,7 +764,15 @@ class Publisher:
             self._post_hotel(key, value)
             return
         if topic not in self.serializers:
-            registered = self.schema_registry.get_latest_version(f"{topic}-value")
+            try:
+                registered = self.schema_registry.get_latest_version(f"{topic}-value")
+            except SchemaRegistryError as exc:
+                if exc.http_status_code != 404:
+                    raise
+                raise RuntimeError(
+                    f"No schema for {topic} in Schema Registry. If this deployment predates the {topic} topic, "
+                    "run `uv run deploy` again to create it."
+                ) from exc
             schema = json.loads(registered.schema.schema_str)
             self.serializers[topic] = (
                 AvroSerializer(
