@@ -4,7 +4,7 @@ Each service day has 180 flights: 90 arrivals into SFO and 90 departures from it
 flight uses one 182-seat layout, modeled after a two-class Boeing 737-900ER, and each
 passenger has a seat on each of their flights.
 The live day is shifted so flight RA417 from Chicago is scheduled 50 minutes after the
-stream starts. Its delay grows every 30 seconds from +5 to +25 minutes, and 150 of its 170
+stream starts. Its delay grows every 30 seconds from +5 to +14 minutes, and 150 of its 170
 passengers miss their connection. RA183 from Boston and RA185 from Las Vegas follow the same
 script later in the stream (AGENT_FLIGHTS). Every active flight publishes its status every 30 seconds,
 and on the live day each growing delay climbs a little with every update, as RA417's does.
@@ -97,8 +97,9 @@ HERO_NUMBER = 417
 HERO_ORIGIN = "ORD"
 HERO_MINUTE = 21 * 60 + 40
 HERO_LEAD = timedelta(minutes=50)
-# From +5 to +25 minutes into the stream, each 30-second RA417 update adds to its delay, up to 115.
-HERO_RAMP = (timedelta(minutes=5), timedelta(minutes=25))
+# From +5 to +14 minutes into the stream, each 30-second RA417 update adds to its delay, up to 115, so it
+# turns red on the map (45) at about +8.5 and passes the 10th-biggest delay (about 60) by +10.
+HERO_RAMP = (timedelta(minutes=5), timedelta(minutes=14))
 HERO_DELAY = 115
 HERO_CONNECTING = 150
 HERO_LOCAL = 20
@@ -106,7 +107,7 @@ HERO_BUFFER = (50, 110)
 
 
 # Two later arrivals the recovery agent also handles (sql/27-staging-impacted-passengers.sql), so its
-# offers come in three waves. Like RA417's, each delay climbs over a window of stream minutes that
+# offers come in three waves. Like RA417's, each delay climbs over a window of stream minutes; theirs
 # ends about 25 minutes before the flight is due, where the map starts its descent, and it breaks every
 # connection onto the on-time last bank. RA183's passengers turn HIGH before the Grand Hyatt sells
 # out, RA185's after.

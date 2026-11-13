@@ -58,9 +58,22 @@ def test_hero_flight_strands_150_of_170_passengers(plan):
     first, last = g.HERO_RAMP
     assert all(START + first < p.impacted_at <= START + last for p in impacted)
     assert len({p.impacted_at for p in impacted}) == 11  # one wave per destination
-    assert [when for when, _ in hero.reveals] == [START + first + g.UPDATE_EVERY * k for k in range(1, 41)]
+    steps = (last - first) // g.UPDATE_EVERY
+    assert [when for when, _ in hero.reveals] == [START + first + g.UPDATE_EVERY * k for k in range(1, steps + 1)]
     delays = [delay for _, delay in hero.reveals]
     assert delays == sorted(delays) and delays[-1] == g.HERO_DELAY == 115
+
+
+def test_hero_is_red_and_in_biggest_delays_ten_minutes_in(plan):
+    hero, at = plan.live.hero, START + timedelta(minutes=10)
+    assert hero.delay_at(at) >= g.MAP_AT_RISK  # red on the map
+    others = [
+        f.delay_at(at)
+        for day in [*plan.days, plan.tomorrow]
+        for f in day.flights
+        if f is not hero and START - timedelta(hours=18) <= f.scheduled < START + timedelta(hours=6)
+    ]
+    assert hero.delay_at(at) > sorted(others, reverse=True)[9]  # in the app's top-10 Biggest delays
 
 
 def test_every_passenger_has_a_unique_seat_on_each_flight(plan, records):
@@ -117,7 +130,9 @@ def test_live_delays_climb_with_each_update_and_history_keeps_its_notices(plan):
         delays = [delay for _, delay in flight.reveals]
         if max(delays, default=0) >= g.DELAYED_AT:
             climbing += 1
-            assert all(abs(later - earlier) <= 3 for earlier, later in pairwise([0, *delays]))
+            # RA417 climbs faster, so it's red and in Biggest delays ten minutes in.
+            step = 7 if flight is plan.live.hero else 3
+            assert all(abs(later - earlier) <= step for earlier, later in pairwise([0, *delays]))
     assert climbing >= 20
     for day in plan.days[:-1]:
         assert all(len(flight.reveals) <= 4 for flight in day.flights)
