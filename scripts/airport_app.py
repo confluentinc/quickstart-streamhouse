@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from scripts import setup_rtce as rtce
-from scripts.airport_datagen import HUB, OFFERS, SEATS, Publisher
+from scripts.airport_datagen import HUB, OFFERS, SEATS, TELEMETRY, Publisher
 from scripts.local_port import ensure_port_free
 from scripts.terraform import extract_kafka_credentials, get_project_root
 
@@ -270,19 +270,35 @@ def _flights(key: str | None = None, window: tuple[datetime, datetime] | None = 
     ]
 
 
+def _telemetry(now: datetime) -> dict[str, dict]:
+    """The latest reading of each flight heard from in the last two minutes, keyed by flight."""
+    rows = deployment.lightning_scan(TELEMETRY, [("as_of", ">=", now - timedelta(minutes=2))])
+    latest: dict[str, dict] = {}
+    for row in rows:
+        kept = latest.get(row["key"])
+        if kept is None or (_timestamp(row.get("as_of")) or datetime.min) > (
+            _timestamp(kept.get("as_of")) or datetime.min
+        ):
+            latest[row["key"]] = row
+    return latest
+
+
 @app.get("/api/state")
 def state():
     now = _now()
+    telemetry = _pool.submit(_telemetry, now)
     booked = _pool.submit(
         deployment.lightning_scan, OFFERS, [("status", "=", "BOOKED"), ("recommended_at", ">=", now - WINDOW_BEFORE)]
     )
     flights = _flights(window=(now - WINDOW_BEFORE, now + WINDOW_AFTER))
     booked = booked.result()
+    telemetry = telemetry.result()
     delays = sorted(flights, key=lambda row: (-row["delay_minutes"], row.get("key") or ""))[:10]
     return {
         "now": now,
         "flights": flights,
         "delays": delays,
+        "telemetry": telemetry,
         "counts": {
             "affected": sum(row["affected_passengers"] for row in flights),
             "booked": len(booked),

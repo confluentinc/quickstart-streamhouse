@@ -400,3 +400,29 @@ def test_departure_shows_passengers_connecting_onto_it(fake):
         ("P-0928-5", "6F"),
         ("P-0928-1", "2F"),
     ]
+
+
+def _reading(key, seconds_ago, **extra):
+    as_of = (NOW - timedelta(seconds=seconds_ago)).strftime("%Y-%m-%d %H:%M:%S.%f")
+    return {"key": key, "as_of": as_of, "stage": "CRUISE", "latitude": "40.1", **extra}
+
+
+def test_state_returns_each_airborne_flights_latest_reading(fake):
+    fake.tables["flight_telemetry"] = [_reading("RA417-20260928", 10), _reading("RA100-20260928", 300)]
+    telemetry = airport_app.state()["telemetry"]
+    assert list(telemetry) == ["RA417-20260928"]
+    assert telemetry["RA417-20260928"]["stage"] == "CRUISE"
+    assert telemetry["RA417-20260928"]["latitude"] == "40.1"
+
+
+def test_state_keeps_the_newest_telemetry_copy(fake):
+    fake.tables["flight_telemetry"] = [
+        _reading("RA417-20260928", 30, latitude="1.0"),
+        _reading("RA417-20260928", 5, latitude="2.0"),
+    ]
+    assert airport_app.state()["telemetry"]["RA417-20260928"]["latitude"] == "2.0"
+
+
+def test_state_pages_telemetry_past_the_200_row_cap(fake):
+    fake.tables["flight_telemetry"] = [_reading(f"RA{n:03d}-20260928", 5) for n in range(250)]
+    assert len(airport_app.state()["telemetry"]) == 250
