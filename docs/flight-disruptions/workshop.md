@@ -354,7 +354,7 @@ One click per topic does it. Enabling a topic's **Lightning Table** keeps a low-
 
 > [!NOTE]
 >
-> Each topic shows **Provisioning** while Confluent loads its rows, then **Active**. Wait until all seven show **Active** before you continue.
+> Each topic shows **Provisioning** while Confluent loads its rows, then **Active**. Wait until all seven show **Active** before you continue. If the dashboard's map later says **Waiting for telemetry**, check that `flight_telemetry` is **Active**.
 
 5. Run your first Lightning Query. **In a terminal window, run**:
 

@@ -447,3 +447,9 @@ def test_state_survives_a_failed_telemetry_read(fake, monkeypatch):
     result = airport_app.state()
     assert [flight["key"] for flight in result["flights"]] == ["RA417-20260928"]
     assert result["telemetry"] == {}
+    assert "flight_telemetry" in result["notice"]
+
+
+def test_state_has_no_notice_when_telemetry_reads(fake):
+    fake.tables["flight_telemetry"] = [_reading("RA417-20260928", 10)]
+    assert airport_app.state()["notice"] is None

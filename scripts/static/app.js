@@ -67,7 +67,7 @@ async function refresh() {
     current = await request("/api/state");
     lastUpdated = Date.now();
     render();
-    if (Date.now() >= noticeUntil) $("status-line").textContent = "Live from Lightning Tables";
+    if (Date.now() >= noticeUntil) $("status-line").textContent = current.notice || "Live from Lightning Tables";
   } catch (error) {
     $("status-line").textContent = error.message;
   }

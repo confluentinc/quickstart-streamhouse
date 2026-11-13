@@ -206,8 +206,10 @@ function planeState(row, sample, nowMs) {
     const atDestination = phase === "done" || nowMs >= times.estimatedArrivalMs;
     const t = atDestination ? 1 : 0;
     const [x, y] = atDestination ? [times.x1, times.y1] : [times.x0, times.y0];
+    // In the air by its schedule, but no reading has arrived: the feed isn't readable yet.
+    const awaitingTelemetry = !reading && phase === "enroute" && !atDestination && nowMs >= times.departureMs;
     return {
-      ...times, x, y, phase, onGround: true, stale: false, clockMs: nowMs,
+      ...times, x, y, phase, onGround: true, awaitingTelemetry, stale: false, clockMs: nowMs,
       angleDeg: bezierTangentAngle(times.x0, times.y0, times.cx, times.cy, times.x1, times.y1, t),
     };
   }
@@ -342,6 +344,9 @@ function signed(value, unit) {
 function telemetry(pos) {
   if (!pos) return [];
   const nowMs = pos.clockMs;
+  if (pos.awaitingTelemetry) {
+    return [["Telemetry", "Waiting for telemetry", true], ["Arrives in", countdown(pos.estimatedArrivalMs - nowMs)]];
+  }
   if (pos.onGround) {
     // On the ground once landed or past its estimated arrival: an arrival's
     // LANDED update can trail that by up to a minute, and never comes if the

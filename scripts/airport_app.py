@@ -273,8 +273,14 @@ def _flights(key: str | None = None, window: tuple[datetime, datetime] | None = 
 _telemetry_failure: list[str | None] = [None]  # last logged failure, so a 2.5 s poll logs it once
 
 
-def _telemetry(now: datetime) -> dict[str, dict]:
-    """The latest reading of each flight heard from in the last two minutes, keyed by flight."""
+TELEMETRY_NOTICE = "Flight positions need the flight_telemetry Lightning Table. Enable it in the Console."
+
+
+def _telemetry(now: datetime) -> tuple[dict[str, dict], str | None]:
+    """The latest reading of each flight heard from in the last two minutes, keyed by flight.
+
+    Also returns a notice for the dashboard's status line when the readings can't be read.
+    """
     try:
         rows = deployment.lightning_scan(TELEMETRY, [("as_of", ">=", now - timedelta(minutes=2))])
     except HTTPException as exc:
@@ -283,7 +289,7 @@ def _telemetry(now: datetime) -> dict[str, dict]:
         if message != _telemetry_failure[0]:
             _telemetry_failure[0] = message
             print(message, flush=True)
-        return {}
+        return {}, TELEMETRY_NOTICE
     _telemetry_failure[0] = None
     latest: dict[str, dict] = {}
     for row in rows:
@@ -292,7 +298,7 @@ def _telemetry(now: datetime) -> dict[str, dict]:
             _timestamp(kept.get("as_of")) or datetime.min
         ):
             latest[row["key"]] = row
-    return latest
+    return latest, None
 
 
 @app.get("/api/state")
@@ -304,13 +310,14 @@ def state():
     )
     flights = _flights(window=(now - WINDOW_BEFORE, now + WINDOW_AFTER))
     booked = booked.result()
-    telemetry = telemetry.result()
+    telemetry, notice = telemetry.result()
     delays = sorted(flights, key=lambda row: (-row["delay_minutes"], row.get("key") or ""))[:10]
     return {
         "now": now,
         "flights": flights,
         "delays": delays,
         "telemetry": telemetry,
+        "notice": notice,
         "counts": {
             "affected": sum(row["affected_passengers"] for row in flights),
             "booked": len(booked),
