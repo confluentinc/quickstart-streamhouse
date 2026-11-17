@@ -318,6 +318,9 @@ class Day:
     departures: list[Flight]
     passengers: list[Passenger]
     schedule: Schedule = SCRIPTED
+    # Around the clock, whether the RA417s climb and strand their connections. The seeded history flies them like
+    # any other flight: the delayed RA417s are for whoever opens the board today.
+    ra417_ramps: bool = True
 
     @property
     def flights(self) -> list[Flight]:
@@ -395,12 +398,17 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
     hero = day.hero if story else None
     scripted = {f.key: AGENT_FLIGHTS[f.number] for f in day.agent_flights[1:]} if story else {}
     forced = {f.key for f in day.departures[LAST_BANK:]} if story else set()
+    continuous = day.live and not day.schedule.scripted
     # An around-the-clock live day climbs each of its eight RA417s the same way, relative to its own schedule.
-    ramps = {id(f) for f in day.heroes} if day.live and not day.schedule.scripted else set()
+    ramps = {id(f) for f in day.heroes} if continuous and day.ra417_ramps else set()
+    # Seeded history flies its RA417s on time, give or take the usual few minutes.
+    quiet = {id(f) for f in day.heroes} if continuous and not day.ra417_ramps else set()
     pool = [
-        f for f in day.flights if f is not hero and id(f) not in ramps and f.key not in forced and f.key not in scripted
+        f
+        for f in day.flights
+        if f is not hero and id(f) not in ramps | quiet and f.key not in forced and f.key not in scripted
     ]
-    severe_count = CONTINUOUS_SEVERE_PER_DAY if ramps else SEVERE_PER_DAY - (1 if hero else 0)
+    severe_count = CONTINUOUS_SEVERE_PER_DAY if continuous else SEVERE_PER_DAY - (1 if hero else 0)
     severe = {f.key for f in rng.sample(pool, severe_count)}
     # The live day streams its updates, so its delays climb the way RA417's does. History days
     # publish only their final rows, so they keep their two or three notices and the
@@ -430,7 +438,7 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
             if makeup:
                 steps.append((delay - 20, delay - makeup))
             _delays(flight, steps, climb)
-        elif rng.random() < (CONTINUOUS_MODERATE_SHARE if ramps else MODERATE_SHARE):
+        elif id(flight) not in quiet and rng.random() < (CONTINUOUS_MODERATE_SHARE if continuous else MODERATE_SHARE):
             delay = rng.randint(*MODERATE_DELAY)
             _delays(flight, [(-90, delay // 2), (-45, delay)], climb)
         else:
@@ -461,7 +469,7 @@ def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[P
     passengers = []
     open_seats = {d.key: seat_rng.sample(SEATS, len(SEATS)) for d in day.departures}
     story = day.live and day.schedule.scripted
-    ramps = {id(f) for f in day.heroes} if day.live and not day.schedule.scripted else set()
+    ramps = {id(f) for f in day.heroes} if day.live and not day.schedule.scripted and day.ra417_ramps else set()
     for flight in day.arrivals:
         hero = story and flight is day.hero
         script = AGENT_FLIGHTS.get(flight.number) if story else None
@@ -559,6 +567,7 @@ def build_day(
     live: bool = False,
     schedule_only: bool = False,
     schedule: Schedule = SCRIPTED,
+    ra417_ramps: bool = True,
 ) -> Day:
     """One service day. The same seed, date, and variant always produce the same keys and values."""
     variant = "live" if live else "schedule" if schedule_only else "history"
@@ -601,7 +610,7 @@ def build_day(
         )
         for i, minute in enumerate(schedule.departures)
     ]
-    day = Day(service_date, live, arrivals, departures, [], schedule)
+    day = Day(service_date, live, arrivals, departures, [], schedule, ra417_ramps)
     if not schedule_only:
         _assign_delays(day, rng)
         # Seats draw from their own stream, so they never shift delays, connections, or offers.
@@ -610,10 +619,12 @@ def build_day(
 
 
 @lru_cache(maxsize=8)
-def continuous_day(seed: int, service_date: date) -> Day:
-    """One around-the-clock service day (UTC), streamed live the way today's scripted day is."""
+def continuous_day(seed: int, service_date: date, seeded: bool = False) -> Day:
+    """One around-the-clock service day (UTC), streamed live the way today's scripted day is.
+
+    `seeded` is the version deploy publishes as history, whose RA417s fly like any other flight."""
     midnight = datetime.combine(service_date, datetime.min.time())
-    day = build_day(seed, service_date, midnight, live=True, schedule=AROUND_THE_CLOCK)
+    day = build_day(seed, service_date, midnight, live=True, schedule=AROUND_THE_CLOCK, ra417_ramps=not seeded)
     _revise_estimates(
         day,
         random.Random(f"{seed}:{service_date.isoformat()}:continuous:revisions"),
@@ -787,13 +798,16 @@ def continuous_state(seed: int, now: datetime) -> list[tuple[str, str, dict]]:
 
 
 def _expired_keys(seed: int, service_date: date) -> list[tuple[str, str]]:
-    """Every flight, itinerary, and offer key a continuous day wrote, for its tombstones."""
-    day = continuous_day.__wrapped__(seed, service_date)  # uncached: an old day is needed once
-    keys = [(FLIGHTS, f.key) for f in day.flights] + [(ITINERARIES, p.key) for p in day.passengers]
-    for passenger in day.passengers:
-        if passenger.impacted_at:
-            keys += [(OFFERS, f"{passenger.key}-O1"), (OFFERS, f"{passenger.key}-O2")]
-    return keys
+    """Every flight, itinerary, and offer key a continuous day wrote, streamed live or seeded as history."""
+    keys = {}
+    for seeded in (False, True):
+        day = continuous_day.__wrapped__(seed, service_date, seeded)  # uncached: an old day is needed once
+        keys.update(dict.fromkeys([(FLIGHTS, f.key) for f in day.flights]))
+        keys.update(dict.fromkeys([(ITINERARIES, p.key) for p in day.passengers]))
+        for passenger in day.passengers:
+            if passenger.impacted_at:
+                keys.update(dict.fromkeys([(OFFERS, f"{passenger.key}-O1"), (OFFERS, f"{passenger.key}-O2")]))
+    return list(keys)
 
 
 MISSED_MIDNIGHTS = 3  # a starting stream tombstones the days the last this many midnights would have
@@ -850,7 +864,7 @@ def continuous_history(seed: int, now: datetime) -> list[tuple[str, str, dict]]:
     dates = [today - timedelta(days=back) for back in range(HISTORY_DAYS, 1, -1)]
 
     def build(service_date: date) -> Day:  # uncached, so 29 old days don't push the live ones out of the cache
-        return continuous_day.__wrapped__(seed, service_date)
+        return continuous_day.__wrapped__(seed, service_date, seeded=True)
 
     rows = []
     day = build(dates[0])

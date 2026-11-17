@@ -380,3 +380,28 @@ def test_an_around_the_clock_day_stays_small_beyond_its_eight_ra417s():
     ]
     assert sum(delayed) / len(days) <= 6  # 1 severe + 2% moderate of ~170 flights, on average
     assert g.CONTINUOUS_SEVERE_PER_DAY == 1 and g.CONTINUOUS_MODERATE_SHARE == 0.02
+
+
+def test_seeded_history_flies_ra417_like_any_other_flight():
+    # The eight delayed RA417s are for whoever opens the board today; the seeded month of history doesn't need them.
+    for n in range(7):
+        day = g.continuous_day(g.SEED, DAY + timedelta(days=n), seeded=True)
+        assert len(day.heroes) == 8
+        assert all(h.delay_at(datetime.max) < g.HERO_DELAY for h in day.heroes)
+        assert sum(1 for h in day.heroes if h.delay_at(datetime.max) >= g.DELAYED_AT) <= 1
+        assert sum(1 for p in day.passengers if p.impacted_at and p.inbound in day.heroes) < 40
+
+
+def test_continuous_history_publishes_the_seeded_days():
+    rows = g.continuous_history(g.SEED, NOW)
+    ra417 = [value for topic, key, value in rows if topic == g.FLIGHTS and key.startswith("RA417-")]
+    assert len(ra417) == 8 * (g.HISTORY_DAYS - 1)
+    late = [v for v in ra417 if v["estimated_time"] - v["scheduled_time"] >= timedelta(minutes=g.DELAYED_AT)]
+    assert len(late) <= g.HISTORY_DAYS
+
+
+def test_expired_keys_cover_a_day_streamed_live_and_seeded():
+    keys = set(g._expired_keys(g.SEED, DAY))
+    for day in (g.continuous_day(g.SEED, DAY), g.continuous_day(g.SEED, DAY, seeded=True)):
+        assert {(g.ITINERARIES, p.key) for p in day.passengers} <= keys
+        assert {(g.OFFERS, f"{p.key}-O1") for p in day.passengers if p.impacted_at} <= keys
