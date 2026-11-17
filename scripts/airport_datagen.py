@@ -794,6 +794,10 @@ def continuous_state(seed: int, now: datetime) -> list[tuple[str, str, dict]]:
     rows = [(HOTELS, name, _hotel(name, rooms[name], now)) for name in HOTEL_ORDER]
     rows += [(FLIGHTS, flight.key, flight.row(now)) for day in days for flight in day.flights]
     rows += [(ITINERARIES, p.key, _itinerary(p)) for day in days for p in day.passengers]
+    # Where each airborne flight is now, so the map places it before the stream's first reading.
+    for flight in (f for day in days for f in day.flights):
+        if (reading := telemetry_row(flight, now)) and reading["stage"] != "LANDED":
+            rows.append((TELEMETRY, flight.key, reading))
     return rows
 
 
@@ -832,8 +836,8 @@ def startup_tombstones(seed: int, now: datetime) -> list[tuple[str, str, None]]:
 
 
 def continuous_events(seed: int, start: datetime, end: datetime) -> list[tuple[datetime, str, str, dict | None]]:
-    """Timed updates in (start, end]: flight ticks, hotel rooms, and at each UTC midnight the day after next's
-    schedule and passengers plus tombstones for the day past RETENTION_DAYS. Offers come from the agent."""
+    """Timed updates in (start, end]: flight ticks, telemetry, hotel rooms, and at each UTC midnight the day after
+    next's schedule and passengers plus tombstones for the day past RETENTION_DAYS. Offers come from the agent."""
     first = start.date() - timedelta(days=1)
     days = [continuous_day(seed, first + timedelta(days=n)) for n in range((end.date() - first).days + 2)]
     events = [
@@ -841,6 +845,12 @@ def continuous_events(seed: int, start: datetime, end: datetime) -> list[tuple[d
         for day in days
         for flight in day.flights
         for tick in flight.ticks(start, end)
+    ]
+    events += [
+        (tick, TELEMETRY, flight.key, reading)
+        for day in days
+        for flight in day.flights
+        for tick, reading in _telemetry_events(flight, start, end)
     ]
     for n in range((end.date() - start.date()).days + 1):
         service_date = start.date() + timedelta(days=n)

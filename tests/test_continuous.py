@@ -194,7 +194,7 @@ def test_events_cross_midnight_without_gaps():
     assert all(b - a == g.UPDATE_EVERY for times in ticks.values() for a, b in pairwise(times))
     assert any("-20261114" in k for _, t, k, _ in events if t == g.FLIGHTS)  # D+1 published at midnight
     assert any(t == g.ITINERARIES and k.startswith("P-1114-") for _, t, k, _ in events)
-    assert len({(at, k) for at, _, k, _ in events}) == len(events)
+    assert len({(at, t, k) for at, t, k, _ in events}) == len(events)  # telemetry shares a flight's key
 
 
 def test_hotels_refill_at_midnight_once():
@@ -418,3 +418,20 @@ def test_expired_keys_cover_passengers_older_settings_wrote():
     assert (g.ITINERARIES, f"P-{DAY:%m%d}-417-{hero.scheduled:%H%M}-{len(g.SEATS):03d}") in keys
     quiet = next(p for p in day.passengers if not p.impacted_at)
     assert {(g.OFFERS, f"{quiet.key}-O1"), (g.OFFERS, f"{quiet.key}-O2")} <= keys
+
+
+def test_continuous_stream_sends_telemetry_for_airborne_flights():
+    # The live flight map places each plane from flight_telemetry; without it every plane waits for telemetry.
+    events = g.continuous_events(g.SEED, NOW, NOW + timedelta(minutes=10))
+    telemetry = [e for e in events if e[1] == g.TELEMETRY]
+    assert telemetry, "no flight_telemetry events"
+    flights = {key for _, _, key, _ in telemetry}
+    assert len(flights) >= 3
+    first = sorted(t for t, _, key, _ in telemetry if key == next(iter(flights)))[:2]
+    assert first[1] - first[0] == g.TELEMETRY_EVERY
+
+
+def test_continuous_state_includes_current_positions():
+    rows = g.continuous_state(g.SEED, NOW)
+    telemetry = [value for topic, key, value in rows if topic == g.TELEMETRY]
+    assert telemetry and all(value["stage"] != "LANDED" for value in telemetry)
