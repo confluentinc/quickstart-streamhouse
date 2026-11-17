@@ -406,3 +406,15 @@ def test_expired_keys_cover_a_day_streamed_live_and_seeded():
     for day in (g.continuous_day(g.SEED, DAY), g.continuous_day(g.SEED, DAY, seeded=True)):
         assert {(g.ITINERARIES, p.key) for p in day.passengers} <= keys
         assert {(g.OFFERS, f"{p.key}-O1") for p in day.passengers if p.impacted_at} <= keys
+
+
+def test_expired_keys_cover_passengers_older_settings_wrote():
+    # A reset must also clear offers from earlier settings (150 stranded per RA417, more delays elsewhere),
+    # whose passengers aren't impacted, or don't exist, under today's settings.
+    keys = set(g._expired_keys(g.SEED, DAY))
+    day = g.continuous_day(g.SEED, DAY)
+    hero = day.heroes[0]
+    assert (g.OFFERS, f"P-{DAY:%m%d}-417-{hero.scheduled:%H%M}-150-O1") in keys
+    assert (g.ITINERARIES, f"P-{DAY:%m%d}-417-{hero.scheduled:%H%M}-{len(g.SEATS):03d}") in keys
+    quiet = next(p for p in day.passengers if not p.impacted_at)
+    assert {(g.OFFERS, f"{quiet.key}-O1"), (g.OFFERS, f"{quiet.key}-O2")} <= keys

@@ -798,16 +798,21 @@ def continuous_state(seed: int, now: datetime) -> list[tuple[str, str, dict]]:
 
 
 def _expired_keys(seed: int, service_date: date) -> list[tuple[str, str]]:
-    """Every flight, itinerary, and offer key a continuous day wrote, streamed live or seeded as history."""
-    keys = {}
-    for seeded in (False, True):
-        day = continuous_day.__wrapped__(seed, service_date, seeded)  # uncached: an old day is needed once
-        keys.update(dict.fromkeys([(FLIGHTS, f.key) for f in day.flights]))
-        keys.update(dict.fromkeys([(ITINERARIES, p.key) for p in day.passengers]))
-        for passenger in day.passengers:
-            if passenger.impacted_at:
-                keys.update(dict.fromkeys([(OFFERS, f"{passenger.key}-O1"), (OFFERS, f"{passenger.key}-O2")]))
-    return list(keys)
+    """Every flight, itinerary, and offer key a continuous day could have written, whatever the settings were.
+
+    Passengers are numbered per flight, so every seat number of every arrival covers the passengers of earlier
+    settings too (150 stranded per RA417, more delays elsewhere), with both offers each might have had."""
+    day = continuous_day.__wrapped__(seed, service_date)  # uncached: an old day is needed once
+    keys = [(FLIGHTS, f.key) for f in day.flights]
+    for flight in day.arrivals:
+        if flight.number == HERO_NUMBER:
+            prefix = f"P-{service_date:%m%d}-417-{flight.scheduled:%H%M}"
+        else:
+            prefix = f"P-{service_date:%m%d}-{flight.number:03d}"
+        for seq in range(1, len(SEATS) + 1):
+            key = f"{prefix}-{seq:03d}"
+            keys += [(ITINERARIES, key), (OFFERS, f"{key}-O1"), (OFFERS, f"{key}-O2")]
+    return keys
 
 
 MISSED_MIDNIGHTS = 3  # a starting stream tombstones the days the last this many midnights would have
