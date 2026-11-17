@@ -506,3 +506,15 @@ def test_settings_secret_is_skipped_without_its_arn(monkeypatch):
     monkeypatch.delenv("STREAMHOUSE_SETTINGS_SECRET_ARN", raising=False)
     monkeypatch.setitem(sys.modules, "boto3", None)  # importing it would fail
     airport_app.load_settings_secret()
+
+
+def test_tableflow_waits_for_its_iam_role():
+    # The 2026-11-12 deploy enabled Tableflow seconds after creating the role; both topics failed to assume it
+    # and Tableflow never retried.
+    analytics = (ROOT / "terraform/airline-demo/analytics.tf").read_text()
+    sleep = _block(analytics, "time_sleep.tableflow_role")
+    assert re.search(r'create_duration\s*=\s*"30s"', sleep)
+    assert "aws_iam_role_policy_attachment.tableflow_s3" in sleep
+    assert "aws_iam_role_policy_attachment.tableflow_glue" in sleep
+    for address in ("confluent_tableflow_topic.analytics", "confluent_catalog_integration.glue"):
+        assert "time_sleep.tableflow_role" in _block(analytics, address)

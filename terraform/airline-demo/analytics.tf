@@ -150,6 +150,19 @@ resource "aws_iam_role_policy_attachment" "tableflow_glue" {
   policy_arn = aws_iam_policy.tableflow_glue[0].arn
 }
 
+# IAM is eventually consistent: Tableflow enabled seconds after the role exists can fail to assume it, and a
+# FAILED topic never retries (the 2026-11-12 river-air-demo deploy failed both topics this way, with the role
+# correct). Wait for the role and its policies to propagate first.
+resource "time_sleep" "tableflow_role" {
+  count = local.analytics_enabled ? 1 : 0
+
+  create_duration = "30s"
+  depends_on = [
+    aws_iam_role_policy_attachment.tableflow_s3,
+    aws_iam_role_policy_attachment.tableflow_glue,
+  ]
+}
+
 resource "confluent_tableflow_topic" "analytics" {
   for_each = local.analytics_enabled ? toset(local.tableflow_topics) : toset([])
 
@@ -174,7 +187,7 @@ resource "confluent_tableflow_topic" "analytics" {
     confluent_flink_statement.tables,
     confluent_flink_statement.passenger_state,
     confluent_flink_statement.flight_impact,
-    aws_iam_role_policy_attachment.tableflow_s3,
+    time_sleep.tableflow_role,
   ]
 }
 
@@ -198,6 +211,6 @@ resource "confluent_catalog_integration" "glue" {
 
   depends_on = [
     confluent_tableflow_topic.analytics,
-    aws_iam_role_policy_attachment.tableflow_glue,
+    time_sleep.tableflow_role,
   ]
 }

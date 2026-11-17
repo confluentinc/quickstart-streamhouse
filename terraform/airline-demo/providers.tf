@@ -9,6 +9,10 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 5.17.0"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = ">= 0.9.0" # time_sleep.tableflow_role
+    }
   }
 }
 
