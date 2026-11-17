@@ -369,11 +369,16 @@ def state():
     def flying(row):
         return telemetry.get(row["key"], {}).get("stage") not in (None, "LANDED")
 
-    # In the air: what's flying now. Biggest delays: what's flying or still to leave; a landed arrival or a
-    # departure that's left and stopped reporting is done.
+    # In the air: what's flying now. Biggest delays: what's flying or still to leave and at least DELAYED_MINUTES
+    # late; a landed arrival or a departure that's left and stopped reporting is done.
     in_air = sorted((row for row in flights if flying(row)), key=biggest_impact)
     delays = sorted(
-        (row for row in flights if flying(row) or row.get("status") in ("ON_TIME", "DELAYED", "BOARDING")),
+        (
+            row
+            for row in flights
+            if row["delay_minutes"] >= DELAYED_MINUTES
+            and (flying(row) or row.get("status") in ("ON_TIME", "DELAYED", "BOARDING"))
+        ),
         key=biggest_impact,
     )[:10]
     return {

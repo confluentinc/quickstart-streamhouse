@@ -347,9 +347,8 @@ def test_state_counts_and_delays(fake):
     assert "RA100-20260928" not in keys and "RA420-20260928" not in keys
     assert body["counts"] == {"affected": 275, "booked": 205, "flights": 15, "delayed": 2}
     assert body["flights"][0]["delay_minutes"] == 0 and isinstance(body["flights"][0]["affected_passengers"], int)
-    # Most passengers at risk first, then the longest delay.
-    assert [row["key"] for row in body["delays"][:3]] == ["RA417-20260928", "RA418-20260928", "RA500-20260928"]
-    assert len(body["delays"]) == 10
+    # Most passengers at risk first, then the longest delay; only flights 15+ minutes late.
+    assert [row["key"] for row in body["delays"]] == ["RA417-20260928", "RA418-20260928"]
     for topic in ("flight_status", "flight_impact"):
         assert next(call for call in fake.calls if call["topic"] == topic)["order_by"] == ("scheduled_time", "ASC")
 
@@ -784,7 +783,9 @@ def test_biggest_delays_are_flights_in_the_air_or_still_to_leave(fake):
         flight("RA602-20260928", 60, "DEPARTED", "SFO", "DEN"),  # flying now
         flight("RA603-20260928", 30, "BOARDING", "SFO", "LAX"),
         flight("RA101-20260928", 20, "DELAYED"),
+        flight("RA102-20260928", 10, "DELAYED"),  # under 15 minutes isn't a delay
+        flight("RA604-20260928", 12, "DEPARTED", "SFO", "SEA"),  # flying, but only 12 late
     ]
-    fake.tables["flight_telemetry"] = [_reading("RA602-20260928", 10)]
+    fake.tables["flight_telemetry"] = [_reading("RA602-20260928", 10), _reading("RA604-20260928", 10)]
     keys = [row["key"] for row in airport_app.state()["delays"]]
     assert keys == ["RA602-20260928", "RA603-20260928", "RA101-20260928"]
