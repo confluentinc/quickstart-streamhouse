@@ -435,3 +435,17 @@ def test_continuous_state_includes_current_positions():
     rows = g.continuous_state(g.SEED, NOW)
     telemetry = [value for topic, key, value in rows if topic == g.TELEMETRY]
     assert telemetry and all(value["stage"] != "LANDED" for value in telemetry)
+
+
+def test_each_live_ra417_strands_its_passengers_steadily_over_hours():
+    # So whoever has the board open sees RA417's delay and its at-risk count keep rising.
+    day = g.continuous_day(g.SEED, DAY)
+    for hero in day.heroes:
+        flips = sorted(p.impacted_at for p in day.passengers if p.inbound is hero and p.impacted_at)
+        assert len(flips) == 60
+        # Passengers on the same connecting flight turn at risk together, so the count rises in steps.
+        assert flips[-1] - flips[0] >= timedelta(minutes=60)
+        assert len(set(flips)) >= 5
+        assert max(b - a for a, b in pairwise(flips)) <= timedelta(minutes=50)
+        reveals = sorted(at for at, _ in hero.reveals)
+        assert reveals[-1] - reveals[0] >= timedelta(minutes=150)  # the delay climbs for 2.5 hours

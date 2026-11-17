@@ -151,8 +151,11 @@ HERO_CONNECTING = 150
 HERO_LOCAL = 20
 CONTINUOUS_HERO_CONNECTING = 60  # each of the eight daily RA417s around the clock: among the day's biggest impacts
 HERO_BUFFER = (56, 110)  # minutes RA417's connections have to spare: none at risk until it's 12 late
-# On an around-the-clock day each RA417's delay climbs from 75 to 25 minutes before its scheduled arrival.
-CONTINUOUS_HERO_RAMP = (timedelta(minutes=-75), timedelta(minutes=-25))
+# On an around-the-clock day each RA417's delay climbs slowly, from 170 to 15 minutes before its scheduled arrival,
+# and its connections' buffers spread so a passenger turns at risk every couple of minutes along the way: with an
+# RA417 every three hours, the board almost always shows one whose delay and at-risk count keep rising.
+CONTINUOUS_HERO_RAMP = (timedelta(minutes=-170), timedelta(minutes=-15))
+CONTINUOUS_HERO_BUFFER = (50, 155)  # a connection turns at risk once the delay passes its buffer minus 45
 
 
 # Two later arrivals the recovery agent also handles (sql/27-staging-impacted-passengers.sql), so its
@@ -476,7 +479,7 @@ def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[P
         if hero or id(flight) in ramps:
             plan = [True] * (HERO_CONNECTING if hero else CONTINUOUS_HERO_CONNECTING) + [False] * HERO_LOCAL
             rng.shuffle(plan)
-            low, high = HERO_BUFFER
+            low, high = HERO_BUFFER if hero else CONTINUOUS_HERO_BUFFER
         elif script:
             plan = [True] * script.connecting + [False] * script.local
             rng.shuffle(plan)
