@@ -125,10 +125,11 @@ ALWAYS_ON_IAM_ACTIONS = (
     "iam:AttachRolePolicy",
     "iam:CreatePolicy",
     "iam:PassRole",
-    "athena:CreateWorkGroup",
-    "quicksight:CreateDataSource",
-    "quicksight:CreateTopic",
 )
+# Quick is optional: without these, deploy skips it (QUICK_DENIED) rather than stopping the always-on deploy.
+QUICK_IAM_ACTIONS = ("athena:CreateWorkGroup", "quicksight:CreateDataSource", "quicksight:CreateTopic")
+QUICK_DENIED = "STREAMHOUSE_QUICK_DENIED"
+QUICK_OWNER_ROLES = {"AUTHOR", "ADMIN", "AUTHOR_PRO", "ADMIN_PRO"}  # Quick rejects owner permissions for a Reader
 
 # Module-level buffer for Plan B fallback when set_key() fails (e.g. Windows locks).
 _pending_writes: dict = {}
@@ -898,6 +899,7 @@ def _preflight_always_on(creds: dict) -> None:
                 principal,
                 "--action-names",
                 *ALWAYS_ON_IAM_ACTIONS,
+                *QUICK_IAM_ACTIONS,
                 "--output",
                 "json",
             ],
@@ -912,7 +914,12 @@ def _preflight_always_on(creds: dict) -> None:
         print(f"⚠ couldn't check {caller or 'the caller'}'s IAM permissions; continuing")
         return
     results = json.loads(simulated.stdout or "{}").get("EvaluationResults", [])
-    denied = [r.get("EvalActionName", "") for r in results if r.get("EvalDecision") != "allowed"]
+    refused = [r.get("EvalActionName", "") for r in results if r.get("EvalDecision") != "allowed"]
+    denied = [action for action in refused if action not in QUICK_IAM_ACTIONS]
+    quick_denied = [action for action in refused if action in QUICK_IAM_ACTIONS]
+    if quick_denied:
+        os.environ[QUICK_DENIED] = "1"
+        print(f"⚠ {caller} can't {', '.join(quick_denied)}, so Amazon Quick is skipped; everything else deploys.")
     if denied:
         sys.exit(
             f"{caller} can't {', '.join(denied)}, which terraform/always-on needs to create the Lambda and "
@@ -949,7 +956,7 @@ def _finish_always_on(root, reset_data: bool = False) -> None:
 
     creds = dotenv_values(str(creds_file))
     print("\n=== Preparing Amazon Quick over the Tableflow history ===")
-    _prepare_quick(root, infra, _demo_emails(creds))
+    quick_fallback = _prepare_quick(root, infra, _demo_emails(creds))
     key, secret = creds.get("CONFLUENT_RTCE_API_KEY") or "", creds.get("CONFLUENT_RTCE_API_SECRET") or ""
     if not (key and secret):
         sys.exit("No Global API key for Lightning Tables yet, so the flight board can't read. Rerun `uv run deploy`.")
@@ -959,7 +966,15 @@ def _finish_always_on(root, reset_data: bool = False) -> None:
     image = _push_image(root, infra["region"])
     os.environ["TF_VAR_image_uri"] = image
     print("\n=== Running the flight board and the generator on AWS ===")
-    if not run_terraform(root / "terraform" / "always-on"):
+    applied = run_terraform(root / "terraform" / "always-on")
+    if not applied and os.environ.get("TF_VAR_quick_principal_arns") != json.dumps(quick_fallback):
+        # Quick is optional: never let a Quick error leave the demo users without their role and card.
+        print(
+            "\n⚠ The always-on apply failed with the new Amazon Quick setup; retrying with the last run's Quick users."
+        )
+        os.environ["TF_VAR_quick_principal_arns"] = json.dumps(quick_fallback)
+        applied = run_terraform(root / "terraform" / "always-on")
+    if not applied:
         sys.exit("\nDeployment failed at always-on. Stopping.")
     outputs = _always_on_outputs(root)
     if previous == image:
@@ -1050,11 +1065,16 @@ def _quick_principals(account_id: str, emails: list[str]) -> list[str]:
         return []
     by_email = {}
     for user in json.loads(listed.stdout or "{}").get("UserList", []):
-        by_email.setdefault((user.get("Email") or "").lower(), user["Arn"])
+        by_email.setdefault((user.get("Email") or "").lower(), user)
     arns = []
     for email in emails:
-        if email.lower() in by_email:
-            arns.append(by_email[email.lower()])
+        user = by_email.get(email.lower())
+        if user and user.get("Role", "AUTHOR") in QUICK_OWNER_ROLES:
+            arns.append(user["Arn"])
+        elif user:
+            print(
+                f"⚠ {email} is a Quick {user.get('Role')}, and only authors and admins can own the datasets. Skipping."
+            )
         else:
             print(
                 f"⚠ No Quick user for {email}, so they won't see the Quick datasets. "
@@ -1076,15 +1096,15 @@ def _glue_tables(region: str, database: str) -> set[str]:
 
 
 def _wait_for_glue_tables(
-    region: str, database: str, tables: tuple[str, ...], timeout_s: int = GLUE_WAIT_SECONDS
+    region: str, database: str, tables: tuple[str, ...], timeout_s: int = GLUE_WAIT_SECONDS, stop=lambda: False
 ) -> bool:
-    """True once Tableflow has synced every table to Glue; False after timeout_s."""
+    """True once Tableflow has synced every table to Glue; False after timeout_s, or as soon as stop() is true."""
     deadline = time.monotonic() + timeout_s
     while True:
         missing = set(tables) - _glue_tables(region, database)
         if not missing:
             return True
-        if time.monotonic() >= deadline:
+        if time.monotonic() >= deadline or stop():
             return False
         print(f"  Waiting for Tableflow to sync {', '.join(sorted(missing))} to Glue...", flush=True)
         time.sleep(30)
@@ -1116,22 +1136,26 @@ def _tableflow_errors(infra: dict[str, str]) -> dict[str, str]:
     return {t["topic_name"]: t.get("error_message", "") for t in topics if t.get("phase") == "FAILED"}
 
 
-def _prepare_quick(root, infra: dict[str, str], emails: list[str]) -> None:
+def _prepare_quick(root, infra: dict[str, str], emails: list[str]) -> list[str]:
     """Set TF_VAR_quick_principal_arns for terraform/always-on: the demo users' Quick users, once both Tableflow
     tables are in Glue. Otherwise the users of the last run, so a rerun never deletes a working Quick setup, or "[]"
-    on a first run, which skips Quick and lets the rest of the always-on deploy finish."""
+    on a first run, which skips Quick and lets the rest of the always-on deploy finish. Returns that fallback, which
+    the caller applies when the apply with the new users fails."""
     previous = _always_on_outputs(root).get("quick_principal_arns") or []
     os.environ["TF_VAR_quick_principal_arns"] = json.dumps(previous)
     if previous:
         print(
             f"  (Until this finishes, keeping the Quick setup shared with {len(previous)} user(s) from the last run.)"
         )
+    if os.environ.get(QUICK_DENIED) == "1":
+        print("⚠ Your AWS credentials can't create the Quick resources, so Quick is skipped.")
+        return previous
     state = root / "terraform" / "airline-demo" / "terraform.tfstate"
     database = (run_terraform_output(state) if state.exists() else {}).get("glue_database", "")
     if not database:
         print("⚠ Tableflow isn't deployed (no AWS credentials for it), so Quick is skipped.")
-        return
-    if not _wait_for_glue_tables(infra["region"], database, QUICK_TABLES):
+        return previous
+    if not _wait_for_glue_tables(infra["region"], database, QUICK_TABLES, stop=lambda: bool(_tableflow_errors(infra))):
         failed = _tableflow_errors(infra)
         print(f"⚠ Tableflow hasn't synced {' and '.join(QUICK_TABLES)} to Glue yet, so Quick is skipped this run.")
         for topic, error in failed.items():
@@ -1145,13 +1169,14 @@ def _prepare_quick(root, infra: dict[str, str], emails: list[str]) -> None:
             )
         else:
             print("  Rerun `uv run deploy --always-on` in a few minutes.")
-        return
+        return previous
     principals = _quick_principals(_aws_account_id(), emails)
     if not principals:
-        print("⚠ No demo user has a Quick user, so Quick is skipped.")
-        return
+        print("⚠ No demo user can own the Quick datasets, so Quick isn't changed this run.")
+        return previous
     os.environ["TF_VAR_quick_principal_arns"] = json.dumps(principals)
     print(f"✓ Quick will be shared with {len(principals)} demo user(s)")
+    return previous
 
 
 def _always_on_outputs(root) -> dict:

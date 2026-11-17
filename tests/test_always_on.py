@@ -667,3 +667,63 @@ def test_always_on_outputs_the_quick_users_it_shared_with():
     assert re.search(
         r'output "quick_principal_arns" \{\s*value\s*=\s*var\.quick_principal_arns', (TF / "outputs.tf").read_text()
     )
+
+
+# --- Quick never blocks the always-on deploy (final review fixes) ----------------
+
+
+def test_preflight_warns_and_skips_quick_when_quick_actions_are_denied(monkeypatch, capsys):
+    monkeypatch.delenv(deploy.QUICK_DENIED, raising=False)
+    _aws(monkeypatch, {"quicksight:CreateTopic": "implicitDeny"})
+    deploy._preflight_always_on({"TF_VAR_aws_tableflow_access_key": "AKIA"})  # no SystemExit
+    assert deploy.os.environ[deploy.QUICK_DENIED] == "1"
+    assert "quicksight:CreateTopic" in capsys.readouterr().out
+    monkeypatch.delenv(deploy.QUICK_DENIED)
+
+
+def test_prepare_quick_skips_when_the_operator_cant_create_quick(monkeypatch, tmp_path):
+    _airline_state(tmp_path, monkeypatch)
+    monkeypatch.setenv(deploy.QUICK_DENIED, "1")
+    monkeypatch.setattr(deploy, "_wait_for_glue_tables", lambda *a, **k: pytest.fail("waited although denied"))
+    assert deploy._prepare_quick(tmp_path, INFRA, ["me@x.io"]) == []
+    assert deploy.os.environ["TF_VAR_quick_principal_arns"] == "[]"
+    monkeypatch.delenv("TF_VAR_quick_principal_arns")
+
+
+def test_quick_principals_leave_out_readers(monkeypatch, capsys):
+    # Quick rejects owner permissions on a data source or dataset for a Reader, which would fail the whole apply.
+    users = {
+        "UserList": [
+            {"Email": "author@x.io", "Arn": "arn:q:author", "Role": "AUTHOR_PRO"},
+            {"Email": "reader@x.io", "Arn": "arn:q:reader", "Role": "READER"},
+        ]
+    }
+    monkeypatch.setattr(deploy.subprocess, "run", lambda cmd, **k: _completed(cmd, json.dumps(users)))
+    assert deploy._quick_principals("1", ["author@x.io", "reader@x.io"]) == ["arn:q:author"]
+    assert "reader@x.io is a Quick READER" in capsys.readouterr().out
+
+
+def test_wait_for_glue_tables_stops_when_tableflow_failed(monkeypatch):
+    monkeypatch.setattr(deploy, "_glue_tables", lambda region, database: set())
+    monkeypatch.setattr(deploy.time, "sleep", lambda seconds: pytest.fail("waited after Tableflow failed"))
+    assert not deploy._wait_for_glue_tables("us-east-1", "lkc-1", deploy.QUICK_TABLES, stop=lambda: True)
+
+
+def test_a_failed_quick_apply_retries_with_the_last_quick_users(monkeypatch, tmp_path, capsys):
+    calls = []
+    _stub_finish(monkeypatch, tmp_path, calls)
+
+    def prepare(root, infra, emails):
+        deploy.os.environ["TF_VAR_quick_principal_arns"] = '["arn:q:new"]'
+        return []
+
+    applies = iter([False, True])
+    monkeypatch.setattr(deploy, "_prepare_quick", prepare)
+    monkeypatch.setattr(
+        deploy, "run_terraform", lambda path, **k: calls.append(("terraform", path.name)) or next(applies)
+    )
+    deploy._finish_always_on(tmp_path)
+    assert [c for c in calls if c[0] == "terraform"] == [("terraform", "always-on")] * 2
+    assert deploy.os.environ["TF_VAR_quick_principal_arns"] == "[]"
+    assert "card" in calls and "Quick" in capsys.readouterr().out
+    monkeypatch.delenv("TF_VAR_quick_principal_arns")
