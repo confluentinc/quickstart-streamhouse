@@ -5,7 +5,7 @@
 ## What colleagues see
 
 - The flight board, behind a shared password, with 180 flights per UTC day.
-- Eight RA417s a day from Chicago O'Hare (00:40, 03:40, ... 21:40 UTC), each delayed the way the scripted RA417 is and stranding 40 connecting passengers. The seeded history (the 29 finished days deploy publishes) flies RA417 on time; days streamed since then keep the delayed ones. The Grand Hyatt sells out at 18:00 UTC and refills at midnight.
+- Eight RA417s a day from Chicago O'Hare (00:40, 03:40, ... 21:40 UTC), each delayed the way the scripted RA417 is and stranding 60 connecting passengers, among the day's biggest impacts. The seeded history (the 29 finished days deploy publishes) flies RA417 on time; days streamed since then keep the delayed ones. The Grand Hyatt sells out at 18:00 UTC and refills at midnight.
 - A few random delays on the other flights (one severe a day, 2% moderate), so a month of history stays small. The recovery agent writes offers for every HIGH-risk passenger, not just three flights.
 - Simulated customers who book about 85% of offers, the rest expire after 90 minutes. A colleague who books in the app wins over the simulated customer.
 - Scene 3 (Tableflow, Glue, Athena, Amazon Quick): demo users with a Quick user in the AWS account can ask the history questions in the **River Air flight history** Topic. Everyone else sees Tableflow in Confluent Cloud only.

@@ -74,12 +74,12 @@ def test_hotel_offers_stay_about_as_common_as_today():
     assert baseline / 2 <= share <= baseline * 2
 
 
-def test_every_ra417_strands_40_of_60_passengers():
+def test_every_ra417_strands_60_of_80_passengers():
     day = g.continuous_day(g.SEED, DAY)
     for hero in day.heroes:
         riders = [p for p in day.passengers if p.inbound is hero]
-        assert len(riders) == g.CONTINUOUS_HERO_CONNECTING + g.HERO_LOCAL == 60
-        assert sum(1 for p in riders if p.impacted_at) == 40
+        assert len(riders) == g.CONTINUOUS_HERO_CONNECTING + g.HERO_LOCAL == 80
+        assert sum(1 for p in riders if p.impacted_at) == 60
         assert hero.delay_at(datetime.max) == g.HERO_DELAY
 
 
@@ -365,13 +365,14 @@ def test_grand_hyatt_drains_gradually_through_the_day():
 
 
 def test_an_around_the_clock_day_stays_small_beyond_its_eight_ra417s():
-    # Eight RA417s a day with 40 connecting passengers each; otherwise one severe delay and few moderate ones,
+    # Eight RA417s a day with 60 connecting passengers each, among the day's biggest impacts;
+    # otherwise one severe delay and few moderate ones,
     # so a month of history reads like an airline's, not a disaster's.
     days = [g.continuous_day(g.SEED, DAY + timedelta(days=n)) for n in range(7)]
     for day in days:
         assert len(day.heroes) == 8
         for hero in day.heroes:
-            assert sum(1 for p in day.passengers if p.inbound is hero and p.connecting) == 40
+            assert sum(1 for p in day.passengers if p.inbound is hero and p.connecting) == 60
     delayed = [
         sum(
             1 for f in day.flights if f.reveals and f not in day.heroes and max(d for _, d in f.reveals) >= g.DELAYED_AT

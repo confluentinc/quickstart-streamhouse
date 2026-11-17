@@ -149,7 +149,7 @@ HERO_CLIMB = (
 HERO_DELAY = HERO_CLIMB[-1][1]
 HERO_CONNECTING = 150
 HERO_LOCAL = 20
-CONTINUOUS_HERO_CONNECTING = 40  # each of the eight daily RA417s around the clock
+CONTINUOUS_HERO_CONNECTING = 60  # each of the eight daily RA417s around the clock: among the day's biggest impacts
 HERO_BUFFER = (56, 110)  # minutes RA417's connections have to spare: none at risk until it's 12 late
 # On an around-the-clock day each RA417's delay climbs from 75 to 25 minutes before its scheduled arrival.
 CONTINUOUS_HERO_RAMP = (timedelta(minutes=-75), timedelta(minutes=-25))
