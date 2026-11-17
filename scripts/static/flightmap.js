@@ -220,10 +220,13 @@ function planeState(row, sample, nowMs) {
   const knots = Number(reading.ground_speed_kt);
   const verticalFpm = Number(reading.vertical_speed_fpm);
   const headingDeg = Number(reading.heading_deg);
-  const angleDeg = headingDeg - 90;
-  const angle = (angleDeg * Math.PI) / 180;
   const movedNm = (knots * elapsedS) / 3600;
   const [rx, ry] = project([Number(reading.latitude), Number(reading.longitude)]);
+  // An airborne plane faces (and flies toward) its destination airport, so it never seems to turn
+  // away between readings. A hold keeps its own heading while it circles.
+  const towardDestination = (Math.atan2(times.y1 - ry, times.x1 - rx) * 180) / Math.PI;
+  const angleDeg = stage === "HOLDING" ? headingDeg - 90 : towardDestination;
+  const angle = (angleDeg * Math.PI) / 180;
   return {
     ...times,
     x: rx + movedNm * NM_PX * Math.cos(angle),
