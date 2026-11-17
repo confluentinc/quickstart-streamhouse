@@ -5,8 +5,8 @@
 ## What colleagues see
 
 - The flight board, behind a shared password, with 180 flights per UTC day.
-- Eight RA417s a day from Chicago O'Hare (00:40, 03:40, ... 21:40 UTC), each delayed the way the scripted RA417 is. The Grand Hyatt sells out at 18:00 UTC and refills at midnight.
-- Random delays on the other flights. The recovery agent writes offers for every HIGH-risk passenger, not just three flights.
+- Eight RA417s a day from Chicago O'Hare (00:40, 03:40, ... 21:40 UTC), each delayed the way the scripted RA417 is and stranding 40 connecting passengers. The Grand Hyatt sells out at 18:00 UTC and refills at midnight.
+- A few random delays on the other flights (one severe a day, 2% moderate), so a month of history stays small. The recovery agent writes offers for every HIGH-risk passenger, not just three flights.
 - Simulated customers who book about 85% of offers, the rest expire after 90 minutes. A colleague who books in the app wins over the simulated customer.
 - Scene 3 (Tableflow, Glue, Athena, Amazon Quick): demo users with a Quick user in the AWS account can ask the history questions in the **River Air flight history** Topic. Everyone else sees Tableflow in Confluent Cloud only.
 
@@ -55,7 +55,7 @@ Keep the card out of tracked files and share it only through a private channel.
 3. Within 2 hours, some agent offers turn BOOKED.
 4. `aws ecs update-service --force-new-deployment` (see [Logs](#logs-and-restarts) for the cluster and service names) leaves the board where it was: the generator derives every row from the seed and the wall clock.
 5. One demo user can sign in to Confluent Cloud and open the environment.
-6. Scene 3 works: `flight_impact` and `passenger_recommendations` are `RUNNING` in Tableflow and appear in the Glue database, and in Quick (`us-east-1`) the **River Air flight history** Topic answers both [Appendix E](./demo-script-screens.md#e-athena-questions-3-2) questions. Appendix E's figures are for the scripted demo's seed; the always-on history gives its own. On 2026-11-17, a fresh deploy answered 1,893 delayed flights, 48,208 impacted passengers, $6,401,860 of hotel cost, and 22.5 s average recovery, with one row per key in both tables.
+6. Scene 3 works: `flight_impact` and `passenger_recommendations` are `RUNNING` in Tableflow and appear in the Glue database, and in Quick (`us-east-1`) the **River Air flight history** Topic answers both [Appendix E](./demo-script-screens.md#e-athena-questions-3-2) questions. Appendix E's figures are for the scripted demo's seed; the always-on history gives its own.
 
 ## Cost
 

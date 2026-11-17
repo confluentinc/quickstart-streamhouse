@@ -149,6 +149,7 @@ HERO_CLIMB = (
 HERO_DELAY = HERO_CLIMB[-1][1]
 HERO_CONNECTING = 150
 HERO_LOCAL = 20
+CONTINUOUS_HERO_CONNECTING = 40  # each of the eight daily RA417s around the clock
 HERO_BUFFER = (56, 110)  # minutes RA417's connections have to spare: none at risk until it's 12 late
 # On an around-the-clock day each RA417's delay climbs from 75 to 25 minutes before its scheduled arrival.
 CONTINUOUS_HERO_RAMP = (timedelta(minutes=-75), timedelta(minutes=-25))
@@ -177,9 +178,10 @@ CONNECTING_SHARE = 0.3
 CONNECTION_BUFFER = (60, 180)
 PASSENGERS_PER_FLIGHT = (120, 180)
 SEVERE_PER_DAY = 10
-CONTINUOUS_SEVERE_PER_DAY = 14  # an around-the-clock day has no forced last bank, so it needs more to strand as many
+CONTINUOUS_SEVERE_PER_DAY = 1  # around the clock, the eight RA417s carry the story; a month of history stays small
 SEVERE_DELAY = (90, 240)
 MODERATE_SHARE = 0.25
+CONTINUOUS_MODERATE_SHARE = 0.02
 MODERATE_DELAY = (15, 60)
 DELAYED_AT = 15
 MAP_AT_RISK = 45  # the dashboard's flight map colors a flight this many minutes late as at risk
@@ -428,7 +430,7 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
             if makeup:
                 steps.append((delay - 20, delay - makeup))
             _delays(flight, steps, climb)
-        elif rng.random() < MODERATE_SHARE:
+        elif rng.random() < (CONTINUOUS_MODERATE_SHARE if ramps else MODERATE_SHARE):
             delay = rng.randint(*MODERATE_DELAY)
             _delays(flight, [(-90, delay // 2), (-45, delay)], climb)
         else:
@@ -464,7 +466,7 @@ def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[P
         hero = story and flight is day.hero
         script = AGENT_FLIGHTS.get(flight.number) if story else None
         if hero or id(flight) in ramps:
-            plan = [True] * HERO_CONNECTING + [False] * HERO_LOCAL
+            plan = [True] * (HERO_CONNECTING if hero else CONTINUOUS_HERO_CONNECTING) + [False] * HERO_LOCAL
             rng.shuffle(plan)
             low, high = HERO_BUFFER
         elif script:

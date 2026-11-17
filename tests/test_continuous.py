@@ -52,15 +52,15 @@ def test_scripted_schedule_is_unchanged():
     assert day.heroes == [day.hero]
 
 
-def test_continuous_delay_and_risk_rates_match_today():
+def test_continuous_random_delays_stay_small():
     days = [g.continuous_day(g.SEED, DAY + timedelta(days=n)) for n in range(7)]
     for day in days:
         heroes = set(map(id, day.heroes))
         others = [f for f in day.arrivals if id(f) not in heroes]
         delayed = sum(1 for f in others if f.delay_at(datetime.max) >= g.DELAYED_AT)
         high = sum(1 for p in day.passengers if p.impacted_at and id(p.inbound) not in heroes)
-        assert 15 <= delayed <= 45  # the random delays, besides the eight RA417s
-        assert 300 <= high <= 900
+        assert 0 <= delayed <= 8  # the random delays, besides the eight RA417s
+        assert 0 <= high <= 120
 
 
 def test_hotel_offers_stay_about_as_common_as_today():
@@ -74,12 +74,12 @@ def test_hotel_offers_stay_about_as_common_as_today():
     assert baseline / 2 <= share <= baseline * 2
 
 
-def test_every_ra417_strands_150_of_170_passengers():
+def test_every_ra417_strands_40_of_60_passengers():
     day = g.continuous_day(g.SEED, DAY)
     for hero in day.heroes:
         riders = [p for p in day.passengers if p.inbound is hero]
-        assert len(riders) == 170
-        assert sum(1 for p in riders if p.impacted_at) == 150
+        assert len(riders) == g.CONTINUOUS_HERO_CONNECTING + g.HERO_LOCAL == 60
+        assert sum(1 for p in riders if p.impacted_at) == 40
         assert hero.delay_at(datetime.max) == g.HERO_DELAY
 
 
@@ -362,3 +362,21 @@ def test_grand_hyatt_drains_gradually_through_the_day():
     assert g.rooms_at(g.SEED, MIDNIGHT + timedelta(hours=15))[g.GRAND_HYATT] <= 10
     hourly = [g.rooms_at(g.SEED, MIDNIGHT + timedelta(hours=h))[g.GRAND_HYATT] for h in range(1, 19)]
     assert all(b <= a + g.HYATT_BAND for a, b in pairwise(hourly)) and len(set(hourly)) > 10
+
+
+def test_an_around_the_clock_day_stays_small_beyond_its_eight_ra417s():
+    # Eight RA417s a day with 40 connecting passengers each; otherwise one severe delay and few moderate ones,
+    # so a month of history reads like an airline's, not a disaster's.
+    days = [g.continuous_day(g.SEED, DAY + timedelta(days=n)) for n in range(7)]
+    for day in days:
+        assert len(day.heroes) == 8
+        for hero in day.heroes:
+            assert sum(1 for p in day.passengers if p.inbound is hero and p.connecting) == 40
+    delayed = [
+        sum(
+            1 for f in day.flights if f.reveals and f not in day.heroes and max(d for _, d in f.reveals) >= g.DELAYED_AT
+        )
+        for day in days
+    ]
+    assert sum(delayed) / len(days) <= 6  # 1 severe + 2% moderate of ~170 flights, on average
+    assert g.CONTINUOUS_SEVERE_PER_DAY == 1 and g.CONTINUOUS_MODERATE_SHARE == 0.02
