@@ -743,3 +743,26 @@ def test_state_lists_the_flights_in_the_air_biggest_impact_first(fake):
         "RA102-20260928",
         "RA101-20260928",
     ]
+
+
+def test_the_page_and_its_scripts_are_rechecked_on_every_load(monkeypatch):
+    # A browser that kept an old app.js beside a new index.html showed an empty Day view.
+    monkeypatch.delenv("APP_PASSWORD", raising=False)
+    client = TestClient(airport_app.app)
+    for path in ("/", "/static/app.js", "/static/flightmap.js"):
+        assert client.get(path).headers.get("cache-control") == "no-cache", path
+
+
+def test_biggest_delays_leave_out_landed_flights(fake):
+    def flight(key, delay, status):
+        return {
+            "key": key,
+            "origin": "ORD",
+            "destination": "SFO",
+            "scheduled_time": "2026-09-28 11:00:00.000",
+            "estimated_time": (datetime(2026, 9, 28, 11) + timedelta(minutes=delay)).strftime("%Y-%m-%d %H:%M:%S.000"),
+            "status": status,
+        }
+
+    fake.tables["flight_status"] = [flight("RA101-20260928", 186, "LANDED"), flight("RA102-20260928", 40, "DELAYED")]
+    assert [row["key"] for row in airport_app.state()["delays"]] == ["RA102-20260928"]

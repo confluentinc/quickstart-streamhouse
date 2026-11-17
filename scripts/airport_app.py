@@ -366,7 +366,7 @@ def state():
     def biggest_impact(row):
         return (-row["affected_passengers"], -row["delay_minutes"], row.get("key") or "")
 
-    delays = sorted(flights, key=biggest_impact)[:10]
+    delays = sorted((row for row in flights if row.get("status") != "LANDED"), key=biggest_impact)[:10]
     # The Operations table's default tab: what's flying now, by the same order.
     in_air = sorted(
         (row for row in flights if telemetry.get(row["key"], {}).get("stage") not in (None, "LANDED")),
@@ -544,6 +544,16 @@ def _session_token(password: str) -> str:
 
 def _same(supplied: str, expected: str) -> bool:
     return secrets.compare_digest(supplied.encode(), expected.encode())
+
+
+@app.middleware("http")
+async def recheck_the_page(request: Request, call_next):
+    """The page and its scripts revalidate on every load (ETag), so a new deploy never pairs a cached app.js
+    with a new index.html."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.middleware("http")
