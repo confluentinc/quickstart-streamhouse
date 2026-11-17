@@ -449,3 +449,31 @@ def test_each_live_ra417_strands_its_passengers_steadily_over_hours():
         assert max(b - a for a, b in pairwise(flips)) <= timedelta(minutes=50)
         reveals = sorted(at for at, _ in hero.reveals)
         assert reveals[-1] - reveals[0] >= timedelta(minutes=150)  # the delay climbs for 2.5 hours
+
+
+def _readings(flight, start, end):
+    return [row for _, row in g._telemetry_events(flight, start, end)]
+
+
+def test_a_live_ra417_takes_off_late_and_flies_straight_in():
+    # No hold: miles to go keep counting down and the heading only sways, so the telemetry looks live.
+    day = g.continuous_day(g.SEED, DAY)
+    hero = day.heroes[3]
+    rows = _readings(hero, hero.scheduled - timedelta(hours=5), hero.scheduled + timedelta(hours=3))
+    airborne = [r for r in rows if r["stage"] != "LANDED"]
+    assert airborne and "HOLDING" not in {r["stage"] for r in airborne}
+    cruise = [r for r in airborne if r["stage"] == "CRUISING"]
+    assert all(b["distance_to_go_nm"] < a["distance_to_go_nm"] for a, b in pairwise(cruise[::12]))  # every minute
+    headings = [r["heading_deg"] for r in cruise[:60]]
+    assert len({round(h, 1) for h in headings}) > 10  # it moves...
+    assert max(headings) - min(headings) <= 4  # ...but only slightly
+    first = min(at for at, _ in g._telemetry_events(hero, hero.scheduled - timedelta(hours=6), hero.scheduled))
+    landed = hero.scheduled + timedelta(minutes=g.HERO_DELAY)
+    assert first >= landed - g.flight_profile.flight_duration(hero.origin, hero.destination) - timedelta(minutes=1)
+
+
+def test_the_scripted_ra417_still_holds():
+    plan = g.build_plan(datetime(2026, 11, 12, 17, 0), history=False)
+    hero = plan.live.hero
+    stages = {r["stage"] for r in _readings(hero, plan.start, plan.start + timedelta(minutes=90))}
+    assert "HOLDING" in stages

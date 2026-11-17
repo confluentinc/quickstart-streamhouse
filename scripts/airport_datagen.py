@@ -43,6 +43,7 @@ import argparse
 import heapq
 import json
 import logging
+import math
 import os
 import random
 import signal
@@ -229,6 +230,9 @@ class Flight:
     scheduled: datetime
     offset: int = 0  # shifts this flight's updates by this many seconds, so flights don't all publish at once
     reveals: list[tuple[datetime, int]] = field(default_factory=list)  # (published at, delay minutes), in time order
+    # An always-on RA417 takes off late for this arrival rather than holding off SFO for its whole delay, so its
+    # telemetry keeps closing in. Its flight_status delay still climbs update by update.
+    flies_to: datetime | None = None
 
     @property
     def arrival(self) -> bool:
@@ -428,6 +432,7 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
         elif id(flight) in ramps:
             first, last = CONTINUOUS_HERO_RAMP
             flight.reveals = _climb(flight.scheduled + first, flight.scheduled + last, HERO_DELAY)
+            flight.flies_to = flight.scheduled + timedelta(minutes=HERO_DELAY)
         elif flight.key in scripted:
             # On the minute, like RA417, so its passengers turn HIGH at the same stream minutes every day.
             script, flight.offset, start = scripted[flight.key], 0, hero.scheduled - HERO_LEAD
@@ -922,14 +927,26 @@ def hotel_warmup(plan: Plan, updates: int = 200):
             yield HOTELS, name, _hotel(name, step[name], at)
 
 
+HEADING_SWAY_DEG = 1.5  # the reported heading wanders this far either side of the route, as live data does
+HEADING_SWAY_S = 40
+
+
 def telemetry_row(flight: Flight, at: datetime) -> dict | None:
     """The flight's reading at `at` in the flight_telemetry column order, or None while it is at the gate."""
     status = flight.row(at)
+    if flight.flies_to:
+        scheduled = estimated = flight.flies_to
+    else:
+        scheduled, estimated = flight.scheduled, status["estimated_time"]
     found = flight_profile.reading(
-        flight.key, flight.origin, flight.destination, flight.scheduled, status["estimated_time"], status["status"], at
+        flight.key, flight.origin, flight.destination, scheduled, estimated, status["status"], at
     )
     if found is None:
         return None
+    heading = found.heading_deg
+    if found.stage not in ("HOLDING", "LANDED"):
+        phase = at.replace(tzinfo=timezone.utc).timestamp() / HEADING_SWAY_S + flight_profile.flight_seed(flight.key)
+        heading = (heading + HEADING_SWAY_DEG * math.sin(2 * math.pi * phase)) % 360
     return dict(
         as_of=at,
         stage=found.stage,
@@ -938,7 +955,7 @@ def telemetry_row(flight: Flight, at: datetime) -> dict | None:
         altitude_ft=found.altitude_ft,
         ground_speed_kt=found.ground_speed_kt,
         vertical_speed_fpm=found.vertical_speed_fpm,
-        heading_deg=found.heading_deg,
+        heading_deg=heading,
         distance_to_go_nm=found.distance_to_go_nm,
         hold_ends_at=found.hold_ends_at,
     )
