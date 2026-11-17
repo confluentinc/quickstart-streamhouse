@@ -518,3 +518,44 @@ def test_tableflow_waits_for_its_iam_role():
     assert "aws_iam_role_policy_attachment.tableflow_glue" in sleep
     for address in ("confluent_tableflow_topic.analytics", "confluent_catalog_integration.glue"):
         assert "time_sleep.tableflow_role" in _block(analytics, address)
+
+
+# --- Amazon Quick over the Tableflow history ---------------------------------
+
+
+def _quick() -> str:
+    return (TF / "quick.tf").read_text()
+
+
+def test_quick_never_manages_the_account_subscription():
+    # The subscription is shared by the whole AWS account: destroying it would delete every Quick user and asset.
+    text = "".join(p.read_text() for p in (ROOT / "terraform").rglob("*.tf") if ".terraform" not in p.parts)
+    assert "aws_quicksight_account_subscription" not in text
+    assert "aws_quicksight_account_settings" not in text
+
+
+def test_quick_reads_athena_through_its_own_role():
+    quick = _quick()
+    source = _block(quick, "aws_quicksight_data_source.athena")
+    assert re.search(r'type\s*=\s*"ATHENA"', source)
+    assert "aws_iam_role.quick_athena[0].arn" in source and "aws_athena_workgroup.analytics[0].name" in source
+    assert "quicksight.amazonaws.com" in _block(quick, "aws_iam_role.quick_athena")
+    for name in ("flight_impact", "passenger_recommendations"):
+        dataset = _block(quick, f"aws_quicksight_data_set.{name}")
+        assert re.search(r'import_mode\s*=\s*"DIRECT_QUERY"', dataset)
+        assert f'"{name}"' in dataset and "local.analytics.glue_database" in dataset
+    assert "{delay_minutes} >= 15" in _block(quick, "aws_quicksight_data_set.flight_impact")
+    assert "dateDiff({impacted_at}, {recommended_at}" in _block(quick, "aws_quicksight_data_set.passenger_recommendations")
+
+
+def test_athena_results_bucket_force_destroys():
+    quick = _quick()
+    assert re.search(r"force_destroy\s*=\s*true", _block(quick, "aws_s3_bucket.athena_results"))
+    workgroup = _block(quick, "aws_athena_workgroup.analytics")
+    assert re.search(r"force_destroy\s*=\s*true", workgroup) and "aws_s3_bucket.athena_results[0]" in workgroup
+
+
+def test_quick_is_skipped_without_principals():
+    variables = (TF / "variables.tf").read_text()
+    assert re.search(r'variable "quick_principal_arns" \{[^}]*default\s*=\s*\[\]', variables, re.S)
+    assert "length(var.quick_principal_arns) > 0" in _quick()

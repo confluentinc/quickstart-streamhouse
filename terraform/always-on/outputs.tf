@@ -45,3 +45,16 @@ output "app_log_group" {
   value       = aws_cloudwatch_log_group.flight_board.name
   description = "CloudWatch log group for the flight board"
 }
+
+output "athena_workgroup" {
+  value       = local.quick_enabled ? aws_athena_workgroup.analytics[0].name : ""
+  description = "Athena workgroup for the Tableflow history (empty when Quick is skipped)"
+}
+
+output "quick_datasets" {
+  value = local.quick_enabled ? [
+    aws_quicksight_data_set.flight_impact[0].data_set_id,
+    aws_quicksight_data_set.passenger_recommendations[0].data_set_id,
+  ] : []
+  description = "Quick datasets over the Tableflow history"
+}

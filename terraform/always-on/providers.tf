@@ -5,6 +5,10 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 6.73.0" # aws_lambda_permission.invoked_via_function_url
     }
+    time = {
+      source  = "hashicorp/time"
+      version = ">= 0.9.0" # time_sleep.quick_athena_role
+    }
     random = {
       source  = "hashicorp/random"
       version = ">= 3.5.0"

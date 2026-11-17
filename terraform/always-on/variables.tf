@@ -3,6 +3,12 @@ variable "image_uri" {
   description = "The demo image in ECR with its tag, set by deploy"
 }
 
+variable "quick_principal_arns" {
+  type        = list(string)
+  default     = []
+  description = "Quick user ARNs to share the Athena data source, datasets, and Topic with; deploy matches DEMO_USER_EMAILS. Empty skips Quick."
+}
+
 variable "rtce_api_key" {
   type        = string
   sensitive   = true
