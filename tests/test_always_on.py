@@ -726,3 +726,15 @@ def test_a_failed_quick_apply_retries_with_the_last_quick_users(monkeypatch, tmp
     assert deploy.os.environ["TF_VAR_quick_principal_arns"] == "[]"
     assert "card" in calls and "Quick" in capsys.readouterr().out
     monkeypatch.delenv("TF_VAR_quick_principal_arns")
+
+
+def test_the_scene_3_queries_are_saved_in_the_workgroup():
+    names = {p.name for p in (TF / "athena").glob("*.sql")}
+    assert names == {
+        "delays-impact-and-hotel-cost.sql",
+        "average-recovery-time.sql",
+        "hotel-cost-ra417-vs-other-flights.sql",
+        "one-row-per-key.sql",
+    }
+    query = _block(_quick(), "aws_athena_named_query.history")
+    assert 'fileset("${path.module}/athena", "*.sql")' in query and "aws_athena_workgroup.analytics[0].id" in query

@@ -426,3 +426,16 @@ resource "terraform_data" "quick_topic" {
     command = "aws quicksight delete-topic --aws-account-id ${self.input.account_id} --topic-id ${self.input.topic_id} --region ${self.input.region} >/dev/null 2>&1 || true"
   }
 }
+
+# ---------------------------------------------------------------------------
+# The scene 3 queries, saved in the workgroup (Athena console > Saved queries).
+# ---------------------------------------------------------------------------
+
+resource "aws_athena_named_query" "history" {
+  for_each = local.quick_enabled ? fileset("${path.module}/athena", "*.sql") : toset([])
+
+  name      = trimsuffix(each.value, ".sql")
+  workgroup = aws_athena_workgroup.analytics[0].id
+  database  = local.analytics.glue_database
+  query     = file("${path.module}/athena/${each.value}")
+}

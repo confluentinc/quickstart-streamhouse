@@ -55,7 +55,7 @@ Keep the card out of tracked files and share it only through a private channel.
 3. Within 2 hours, some agent offers turn BOOKED.
 4. `aws ecs update-service --force-new-deployment` (see [Logs](#logs-and-restarts) for the cluster and service names) leaves the board where it was: the generator derives every row from the seed and the wall clock.
 5. One demo user can sign in to Confluent Cloud and open the environment.
-6. Scene 3 works: `flight_impact` and `passenger_recommendations` are `RUNNING` in Tableflow and appear in the Glue database, and in Quick (`us-east-1`) the **River Air flight history** Topic answers both [Appendix E](./demo-script-screens.md#e-athena-questions-3-2) questions. Appendix E's figures are for the scripted demo's seed; the always-on history gives its own.
+6. Scene 3 works: `flight_impact` and `passenger_recommendations` are `RUNNING` in Tableflow and appear in the Glue database, and in Quick (`us-east-1`) the **River Air flight history** Topic answers both [Appendix E](./demo-script-screens.md#e-athena-questions-3-2) questions. Appendix E's figures are for the scripted demo's seed; the always-on history gives its own. The queries are in [`terraform/always-on/athena/`](../../terraform/always-on/athena/), and deploy saves them in the Athena workgroup (**Saved queries**).
 
 ## Cost
 
