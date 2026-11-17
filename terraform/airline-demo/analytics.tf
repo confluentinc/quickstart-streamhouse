@@ -50,6 +50,16 @@ resource "confluent_provider_integration" "tableflow" {
   }
 }
 
+# The Tableflow API key's owner (app-manager) must own the provider integration, as the provider's
+# tableflow/byob-aws-storage example grants. EnvironmentAdmin alone isn't enough to use it for BYOB storage.
+resource "confluent_role_binding" "tableflow_provider_integration" {
+  count = local.analytics_enabled ? 1 : 0
+
+  principal   = "User:${local.core.app_manager_service_account_id}"
+  role_name   = "ResourceOwner"
+  crn_pattern = "crn://confluent.cloud/organization=${local.core.confluent_organization_id}/environment=${local.core.confluent_environment_id}/provider-integration=${confluent_provider_integration.tableflow[0].id}"
+}
+
 resource "aws_iam_role" "tableflow" {
   count = local.analytics_enabled ? 1 : 0
 
@@ -188,6 +198,7 @@ resource "confluent_tableflow_topic" "analytics" {
     confluent_flink_statement.passenger_state,
     confluent_flink_statement.flight_impact,
     time_sleep.tableflow_role,
+    confluent_role_binding.tableflow_provider_integration,
   ]
 }
 
