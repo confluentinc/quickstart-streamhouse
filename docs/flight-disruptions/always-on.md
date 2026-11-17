@@ -8,13 +8,14 @@
 - Eight RA417s a day from Chicago O'Hare (00:40, 03:40, ... 21:40 UTC), each delayed the way the scripted RA417 is. The Grand Hyatt sells out at 18:00 UTC and refills at midnight.
 - Random delays on the other flights. The recovery agent writes offers for every HIGH-risk passenger, not just three flights.
 - Simulated customers who book about 85% of offers, the rest expire after 90 minutes. A colleague who books in the app wins over the simulated customer.
-- Scene 3 (Tableflow, Glue, Athena) is for the operator only: colleagues have no AWS access.
+- Scene 3 (Tableflow, Glue, Athena, Amazon Quick): demo users with a Quick user in the AWS account can ask the history questions in the **River Air flight history** Topic. Everyone else sees Tableflow in Confluent Cloud only.
 
 ## Prerequisites
 
 - The repository's usual [prerequisites](../../README.md#prerequisites) and a Confluent login (`confluent login` for SSO users).
 - [Docker](https://www.docker.com), **running**. Deploy builds the demo image and pushes it to Amazon ECR.
 - The [AWS CLI](https://aws.amazon.com/cli/) with credentials that can create IAM roles and policies (`iam:CreateRole`, `iam:PutRolePolicy`, `iam:AttachRolePolicy`, `iam:CreatePolicy`, `iam:PassRole`). Deploy checks this before it creates anything. It also asks for the AWS credentials Tableflow uses, saved in `credentials.env`.
+- An [Amazon Quick](https://aws.amazon.com/quick/) subscription in the AWS account, and a Quick user for each demo user who should ask questions in Quick. Deploy finds them by email in Quick's identity region (`us-east-1`), and never creates or changes the subscription, which the whole account shares. Each Quick user is a paid seat; without any, deploy skips Quick and everything else still deploys.
 - The demo users' email addresses, which deploy asks for the first time and keeps in `credentials.env` as `DEMO_USER_EMAILS` (comma-separated).
 
 ## Deploy
@@ -31,7 +32,8 @@ Then [`terraform/always-on/`](../../terraform/always-on/) creates, on AWS:
 - a Secrets Manager secret holding the settings both services read, including a generated flight board password;
 - an AWS Lambda function for the flight board, run from the same image through the Lambda Web Adapter, with a public function URL (the board's own password is the only gate), one instance kept warm on its `live` alias, and a CloudWatch log group for it. Extra concurrent requests (one open board already makes a few in parallel) use on-demand instances, which can take a few seconds to start the first time; raise the provisioned concurrency in `terraform/always-on/aws.tf` to 2–3 if the board feels slow;
 - an ECS Fargate cluster and service for the continuous generator (`uv run airport-datagen --continuous`), and a CloudWatch log group for it;
-- the IAM roles those need.
+- the IAM roles those need;
+- for scene 3 ([`quick.tf`](../../terraform/always-on/quick.tf)): an Athena workgroup with its own results bucket, a role Quick reads Athena through, a Quick Athena data source, two direct-query datasets (**Flight impact**, with a `is_delayed` field for 15 minutes or more, and **Passenger recommendations**, with `recovery_seconds`), and the **River Air flight history** Topic. They're shared with the demo users who have a Quick user. Deploy first waits up to 15 minutes for Tableflow to sync both tables to Glue; if Tableflow failed, it prints the error and the command that recreates the topics, skips Quick, and still finishes the rest. A rerun that can't prepare Quick keeps the Quick setup it made before.
 
 Last, deploy gives each demo user the `EnvironmentAdmin` role on the environment. Users not yet in your Confluent organization are listed. Invite them (below) and rerun deploy. Deploy is idempotent, so rerun it any time.
 
@@ -42,6 +44,7 @@ Deploy prints the card and writes it to `tmp/always-on-card.env` (gitignored):
 - `ALWAYS_ON_APP_URL`: the flight board.
 - `ALWAYS_ON_APP_PASSWORD`: the board's sign-in page takes this password (scripts can use `curl -u any:<password>`).
 - `ALWAYS_ON_DEMO_USERS`: who has the environment role.
+- `ALWAYS_ON_QUICK_TOPIC`: the Quick Topic's ID (empty when Quick was skipped).
 
 Keep the card out of tracked files and share it only through a private channel.
 
@@ -52,7 +55,7 @@ Keep the card out of tracked files and share it only through a private channel.
 3. Within 2 hours, some agent offers turn BOOKED.
 4. `aws ecs update-service --force-new-deployment` (see [Logs](#logs-and-restarts) for the cluster and service names) leaves the board where it was: the generator derives every row from the seed and the wall clock.
 5. One demo user can sign in to Confluent Cloud and open the environment.
-6. Scene 3 works for you: `flight_impact` and `passenger_recommendations` appear as tables in the Glue database, and Athena can query them.
+6. Scene 3 works: `flight_impact` and `passenger_recommendations` are `RUNNING` in Tableflow and appear in the Glue database, and in Quick (`us-east-1`) the **River Air flight history** Topic answers both [Appendix E](./demo-script-screens.md#e-athena-questions-3-2) questions. Appendix E's figures are for the scripted demo's seed; the always-on history gives its own.
 
 ## Cost
 
@@ -108,7 +111,7 @@ Flink keeps each passenger's first HIGH-risk state, so passengers already impact
 uv run destroy
 ```
 
-This destroys `terraform/always-on` first, then the labs and the core environment, and deletes the card.
+This destroys `terraform/always-on` first (the Quick Topic, datasets, data source, and Athena workgroup with it, but never the account's Quick subscription or Quick users), then the labs and the core environment, and deletes the card.
 
 ## Tell the users
 
