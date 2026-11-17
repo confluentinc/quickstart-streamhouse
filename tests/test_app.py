@@ -712,3 +712,34 @@ def test_app_in_a_checkout_runs_the_workshop_checks(monkeypatch):
     monkeypatch.setattr(airport_app.workshop_checks, "ensure_lightning", lambda *a, **k: True)
     airport_app.main([])
     assert calls == ["checks", "port", "serve"]
+
+
+def test_state_lists_the_flights_in_the_air_biggest_impact_first(fake):
+    def flight(key, delay, at_risk):
+        return {
+            "key": key,
+            "origin": "ORD",
+            "destination": "SFO",
+            "scheduled_time": "2026-09-28 11:00:00.000",
+            "estimated_time": (datetime(2026, 9, 28, 11) + timedelta(minutes=delay)).strftime("%Y-%m-%d %H:%M:%S.000"),
+            "status": "DELAYED" if delay else "ON_TIME",
+        }
+
+    fake.tables["flight_status"] = [
+        flight("RA101-20260928", 20, 0),
+        flight("RA417-20260928", 115, 60),
+        flight("RA102-20260928", 50, 0),
+        flight("RA103-20260928", 90, 0),  # at the gate: no telemetry
+    ]
+    fake.tables["flight_impact"] = [{"key": "RA417-20260928", "affected_passengers": 60, "delay_minutes": 115}]
+    fake.tables["flight_telemetry"] = [
+        _reading("RA101-20260928", 10),
+        _reading("RA417-20260928", 10),
+        _reading("RA102-20260928", 10),
+        _reading("RA104-20260928", 10, stage="LANDED"),
+    ]
+    assert [row["key"] for row in airport_app.state()["in_air"]] == [
+        "RA417-20260928",
+        "RA102-20260928",
+        "RA101-20260928",
+    ]

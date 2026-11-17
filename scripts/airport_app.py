@@ -361,14 +361,22 @@ def state():
     telemetry, notice = telemetry.result()
     if not flights:
         notice = NO_FLIGHTS_NOTICE
+
     # Most passengers at risk first, then the longest delay, so a flight stranding connections leads the list.
-    delays = sorted(
-        flights, key=lambda row: (-row["affected_passengers"], -row["delay_minutes"], row.get("key") or "")
-    )[:10]
+    def biggest_impact(row):
+        return (-row["affected_passengers"], -row["delay_minutes"], row.get("key") or "")
+
+    delays = sorted(flights, key=biggest_impact)[:10]
+    # The Operations table's default tab: what's flying now, by the same order.
+    in_air = sorted(
+        (row for row in flights if telemetry.get(row["key"], {}).get("stage") not in (None, "LANDED")),
+        key=biggest_impact,
+    )
     return {
         "now": now,
         "flights": flights,
         "delays": delays,
+        "in_air": in_air,
         "telemetry": telemetry,
         "notice": notice,
         "counts": {
