@@ -511,8 +511,7 @@ def test_settings_secret_is_skipped_without_its_arn(monkeypatch):
 
 
 def test_tableflow_waits_for_its_iam_role():
-    # The 2026-11-12 deploy enabled Tableflow seconds after creating the role; both topics failed to assume it
-    # and Tableflow never retried.
+    # Propagation time for the new role. It didn't cure the 2026-11-12/17 "Unable to assume" failures.
     analytics = (ROOT / "terraform/airline-demo/analytics.tf").read_text()
     sleep = _block(analytics, "time_sleep.tableflow_role")
     assert re.search(r'create_duration\s*=\s*"30s"', sleep)

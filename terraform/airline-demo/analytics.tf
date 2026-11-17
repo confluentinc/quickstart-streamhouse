@@ -150,9 +150,9 @@ resource "aws_iam_role_policy_attachment" "tableflow_glue" {
   policy_arn = aws_iam_policy.tableflow_glue[0].arn
 }
 
-# IAM is eventually consistent: Tableflow enabled seconds after the role exists can fail to assume it, and a
-# FAILED topic never retries (the 2026-11-12 river-air-demo deploy failed both topics this way, with the role
-# correct). Wait for the role and its policies to propagate first.
+# Give the new role and its policies time to propagate before Tableflow first assumes it. This alone does not
+# fix "Unable to assume the IAM role": on 2026-11-17 river-air-enablement failed with it after this wait, and
+# again when the topics were recreated minutes later, with the trust policy and external ID matching.
 resource "time_sleep" "tableflow_role" {
   count = local.analytics_enabled ? 1 : 0
 
