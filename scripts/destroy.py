@@ -226,6 +226,11 @@ def main():
             print("Destroy cancelled.")
             sys.exit(0)
 
+    if "airline-demo" in envs_to_destroy:
+        from .airport_datagen import stop_previous_stream
+
+        stop_previous_stream(root)  # the live stream would keep writing to topics destroy is about to delete
+
     # Step 5: Destroy environments
     print("\n=== Starting Destroy ===")
     for env in envs_to_destroy:

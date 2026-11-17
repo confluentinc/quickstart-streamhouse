@@ -454,7 +454,14 @@ def _validate_rtce_support(infra: dict[str, str]) -> None:
 
 
 def _list_rtce_topics(api_key: str, api_secret: str, infra: dict[str, str]) -> list[str]:
-    """Return RTCE-enabled topic names. Tries Confluent CLI first, then REST API.
+    """Return RTCE-enabled topic names (any phase, so a FAILED one is still listed)."""
+    return list(rtce_topic_phases(api_key, api_secret, infra))
+
+
+def rtce_topic_phases(api_key: str, api_secret: str, infra: dict[str, str]) -> dict[str, str]:
+    """Return {topic name: phase} for every RTCE-enabled topic. Tries Confluent CLI first, then REST API.
+
+    A phase is PENDING, PROVISIONING, ACTIVE, or FAILED (a topic enabled before it existed).
 
     The CLI uses the logged-in user session (always has correct permissions).
     The REST API requires the Global API key to have CloudClusterAdmin on the
@@ -485,7 +492,7 @@ def _list_rtce_topics(api_key: str, api_secret: str, infra: dict[str, str]) -> l
         )
         if result.returncode == 0:
             items = json.loads(result.stdout or "[]")
-            return [i["topic_name"] for i in items if i.get("phase") != "DISABLED"]
+            return {i["topic_name"]: i.get("phase", "UNKNOWN") for i in items if i.get("phase") != "DISABLED"}
     except Exception:
         pass
 
@@ -496,10 +503,13 @@ def _list_rtce_topics(api_key: str, api_secret: str, infra: dict[str, str]) -> l
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())
-        return [item["spec"]["topic_name"] for item in data.get("data", [])]
+        return {
+            item["spec"]["topic_name"]: (item.get("status") or {}).get("phase", "UNKNOWN")
+            for item in data.get("data", [])
+        }
     except Exception as exc:
         print(f"  Warning: could not list RTCE-enabled topics ({exc})")
-    return []
+    return {}
 
 
 def _enable_rtce_topic(
@@ -850,6 +860,11 @@ def _lightning_literal(value) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+# Lightning keeps every version of an upsert row, so these tables are read newest first: the
+# first rows are each key's current one.
+NEWEST_FIRST = {"hotel_inventory": "as_of", "flight_telemetry": "as_of"}
+
+
 def _build_lightning_query(
     topic: str,
     key: str | None = None,
@@ -937,10 +952,11 @@ def _lightning_request(
             "Missing infrastructure details for Lightning Queries: " + ", ".join(missing or ["API key/secret"])
         )
     url = f"https://sql.{region}.{cloud}.confluent.cloud/query/v1alpha1"
+    newest = NEWEST_FIRST.get(topic)
     body = {
         "catalog_name": env_id,
         "database_name": cluster_id,
-        "query": _build_lightning_query(topic, key=key, limit=limit),
+        "query": _build_lightning_query(topic, key=key, limit=limit, order_by=(newest, "DESC") if newest else None),
     }
     return url, body
 
@@ -1059,6 +1075,10 @@ def main(argv: list[str] | None = None):
     creds_file = _find_credentials_file()
     creds = _load_env_file(creds_file)
 
+    from scripts import workshop_checks  # imports this module, so it can't be imported at the top
+
+    workshop_checks.require_cluster_or_own("uv run setup-rtce", creds_file)  # before it asks for cluster IDs
+
     if args.agent_connection:
         from scripts.login_checks import ensure_confluent_login
 
@@ -1070,9 +1090,14 @@ def main(argv: list[str] | None = None):
     infra = _get_infra(creds_file)
     _validate_rtce_support(infra)
 
+    ws = workshop_checks.find_deployment()  # None for a cluster that isn't this repo's workshop
+
     if args.lightning:
         try:
             if args.run:
+                if ws and args.lightning in workshop_checks.LIGHTNING_TOPICS:
+                    if not workshop_checks.ensure_lightning(ws, [args.lightning], "The query reads it."):
+                        sys.exit(1)
                 started = time.monotonic()
                 rows = run_lightning_query(infra, api_key, api_secret, args.lightning, args.key, args.limit)
                 for row in rows:
@@ -1083,12 +1108,22 @@ def main(argv: list[str] | None = None):
         except ValueError as exc:
             sys.exit(str(exc))
         except urllib.error.HTTPError as exc:
-            sys.exit(f"Lightning query returned HTTP {exc.code}: {exc.read().decode(errors='replace')[:300]}")
+            body = exc.read().decode(errors="replace")
+            if "DP_TABLE_NOT_AVAILABLE" in body:
+                sys.exit(
+                    f"✗ {args.lightning} has no data yet. If the datagen isn't running, start it in a second terminal "
+                    "(uv run airport-datagen --skip-history), then run this again."
+                )
+            sys.exit(f"Lightning query returned HTTP {exc.code}: {body[:300]}")
         except urllib.error.URLError as exc:
             sys.exit(f"Lightning query failed: {exc.reason}")
         return
 
     if args.agent_connection:
+        if ws and not workshop_checks.ensure_agent_context(ws):
+            print(
+                "  Continuing: the connection works, but the agent can't read flights or hotels until they're Active."
+            )
         if not create_agent_connection(infra, api_key, api_secret):
             sys.exit(f"✗ Could not create the Flink connection '{AGENT_CONNECTION}' (see the error above).")
         print(f"✓ Flink connection '{AGENT_CONNECTION}' points at {_mcp_url(infra)}")
@@ -1098,6 +1133,13 @@ def main(argv: list[str] | None = None):
     server_name = _DEFAULT_SERVER_NAME
 
     client = args.client if args.client else _pick_client()
+
+    # This command turns the Lightning Tables on itself, as it always has (and `deploy --with-labs` relies on
+    # that). But a table turned on before Flink builds its topic ends up FAILED, so point an attendee who
+    # skipped Lab 2 back to it.
+    if ws and ws.is_workshop and not args.dry_run:
+        if not workshop_checks.require_lab_2(ws):
+            sys.exit(1)
 
     print("\nFetching currently RTCE-enabled topics...")
     already_enabled = _list_rtce_topics(api_key, api_secret, infra)

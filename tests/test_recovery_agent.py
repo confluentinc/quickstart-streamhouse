@@ -144,3 +144,15 @@ def test_deploy_finishes_with_data_then_rtce_then_the_agent(monkeypatch, tmp_pat
     monkeypatch.setattr(deploy, "_print_env_name", lambda _: None)
     deploy._finish(tmp_path, "codex")
     assert calls == ["data", "rtce", "agent"]
+
+
+def test_hotel_readers_take_the_newest_row_because_lightning_keeps_every_version():
+    assert "as_of TIMESTAMP(3)" in _sql("22")
+    assert "AS as_of" in _sql("34")
+    assert "hotel_query=SELECT * FROM `hotel_inventory` ORDER BY as_of DESC LIMIT" in _sql("31")
+    assert "latest as_of" in _sql("30")
+
+
+def test_agent_prompt_has_no_apostrophe_to_end_its_string_early():
+    prompt = _sql("30").split("USING PROMPT '", 1)[1].split("'\nUSING TOOLS", 1)[0]
+    assert "'" not in prompt

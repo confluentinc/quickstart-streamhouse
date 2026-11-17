@@ -419,7 +419,7 @@ tbody tr.top-delay {
 .map-infobox .infobox-value.tight { color: var(--tight); }
 .map-infobox .infobox-value.miss { color: var(--miss); }
 .map-infobox.hidden { display: none; }
-/* Simulated live telemetry under the times (flightmap.js telemetry), refreshed every second. */
+/* Live readings from the flight_telemetry feed under the times (flightmap.js telemetry), refreshed every second. */
 .map-infobox .infobox-telemetry {
   display: grid; grid-template-columns: auto auto; gap: 7px 18px;
   margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line);

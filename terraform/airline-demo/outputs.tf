@@ -1,5 +1,5 @@
 output "source_topics" {
-  value       = ["flight_status", "passenger_itineraries", "hotel_inventory"]
+  value       = ["flight_status", "passenger_itineraries", "hotel_inventory", "flight_telemetry"]
   description = "Source topics datagen produces into"
 }
 
