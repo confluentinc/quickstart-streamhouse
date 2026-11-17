@@ -94,7 +94,7 @@ resource "aws_iam_policy" "tableflow_s3" {
       },
       {
         Effect   = "Allow"
-        Action   = ["s3:PutObject", "s3:PutObjectTagging", "s3:GetObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
+        Action   = ["s3:PutObject", "s3:PutObjectTagging", "s3:GetObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
         Resource = "${aws_s3_bucket.analytics[0].arn}/*"
       }
     ]
