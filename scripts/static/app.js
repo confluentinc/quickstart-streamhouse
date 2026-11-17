@@ -146,11 +146,10 @@ function render() {
     : `${inAir.length} flying · Lightning Tables`;
   if (openFlight) $("flights-show-all").onclick = () => selectFlight(null);
 
-  // "Biggest impact" is the flight putting the most passengers at risk. Biggest
-  // delays is sorted the same way (most at risk first, then longest delay), so
-  // it is that list's first row unless nothing has passengers at risk yet.
-  const impactKey = current.flights.reduce((best, row) =>
-    row.affected_passengers > (best?.affected_passengers ?? 0) ? row : best, null)?.key;
+  // "Biggest impact" is Biggest delays' first row (flying or still to leave, most at
+  // risk first), unless nothing there has passengers at risk yet. A landed flight
+  // with as many at risk never takes the tag.
+  const impactKey = (current.delays || []).find((row) => row.affected_passengers > 0)?.key;
   const impactTag = (key) => (key === impactKey ? '<span class="impact-tag">Biggest impact</span>' : "");
   const rowClass = (key) => [key === openFlight ? "selected" : "", key === impactKey ? "top-delay" : ""].join(" ").trim();
   const flightRow = (row, prefix) => `<tr id="${prefix}-${esc(row.key)}" class="${rowClass(row.key)}">

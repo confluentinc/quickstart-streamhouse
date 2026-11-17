@@ -48,16 +48,6 @@
       </div>
     </section>
     <div class="data-rail">
-      <section class="panel"><div class="panel-head"><h2>In the air</h2><span class="src" id="flights-src">Lightning Tables</span></div>
-        <div class="table-wrap scroll"><table><thead><tr><th>Flight</th><th>Route</th><th>Scheduled</th><th>Status</th>
-          <th>Delay (min)</th><th>At risk</th></tr></thead>
-        <tbody id="flights"></tbody></table></div>
-      </section>
-      <section class="panel"><div class="panel-head"><h2>Day view</h2><span class="src">Lightning Tables</span></div>
-        <div class="table-wrap scroll"><table><thead><tr><th>Flight</th><th>Route</th><th>Scheduled</th><th>Status</th>
-          <th>Delay (min)</th><th>At risk</th></tr></thead>
-        <tbody id="day-flights"></tbody></table></div>
-      </section>
       <section class="panel"><div class="panel-head"><h2 id="flight-title">Flight passengers</h2><span class="src" id="flight-sub"></span></div>
         <div id="flight-empty" class="pax-empty">Select a flight.</div>
         <div class="seat-map hidden" id="seat-map">
@@ -82,6 +72,16 @@
       </section>
       <section class="panel"><div class="panel-head"><h2>Passenger recovery</h2></div>
         <div id="passenger-card" class="pax-empty">Select a passenger.</div></section>
+      <section class="panel"><div class="panel-head"><h2>In the air</h2><span class="src" id="flights-src">Lightning Tables</span></div>
+        <div class="table-wrap scroll"><table><thead><tr><th>Flight</th><th>Route</th><th>Scheduled</th><th>Status</th>
+          <th>Delay (min)</th><th>At risk</th></tr></thead>
+        <tbody id="flights"></tbody></table></div>
+      </section>
+      <section class="panel"><div class="panel-head"><h2>Day view</h2><span class="src">Lightning Tables</span></div>
+        <div class="table-wrap scroll"><table><thead><tr><th>Flight</th><th>Route</th><th>Scheduled</th><th>Status</th>
+          <th>Delay (min)</th><th>At risk</th></tr></thead>
+        <tbody id="day-flights"></tbody></table></div>
+      </section>
     </div>
   </main>
   <footer class="foot"><span id="status-line">Loading…</span><button id="refresh" class="ghost">Refresh</button></footer>
