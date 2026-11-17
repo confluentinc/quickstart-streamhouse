@@ -63,3 +63,9 @@ output "quick_topic_id" {
   value       = local.quick_enabled ? local.topic_id : ""
   description = "The Quick Topic people ask the history questions in"
 }
+
+# deploy keeps these on a rerun that can't prepare Quick, so a lagging Tableflow never deletes the Topic.
+output "quick_principal_arns" {
+  value       = var.quick_principal_arns
+  description = "The Quick users the datasets and the Topic are shared with"
+}

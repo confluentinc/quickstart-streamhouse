@@ -121,6 +121,7 @@ def _stub_finish(monkeypatch, tmp_path, calls):
     monkeypatch.setattr(deploy.setup_rtce, "core_infra", lambda _: INFRA)
     monkeypatch.setattr(deploy, "_start_agent", lambda root: calls.append("agent"))
     monkeypatch.setattr(deploy, "_compact_sources", lambda infra: calls.append("compact"))
+    monkeypatch.setattr(deploy, "_prepare_quick", lambda root, infra, emails: calls.append(("quick", emails)))
     monkeypatch.setattr(deploy, "_push_image", lambda root, region: calls.append("image") or "repo:new")
     monkeypatch.setattr(deploy, "_always_on_outputs", lambda root: outputs)
     monkeypatch.setattr(deploy, "run_terraform", lambda path, **k: calls.append(("terraform", path.name, k)) or True)
@@ -140,13 +141,14 @@ def test_always_on_finish_order(monkeypatch, tmp_path):
     calls = []
     _stub_finish(monkeypatch, tmp_path, calls)
     deploy._finish_always_on(tmp_path)
-    assert _names(calls) == ["history", "rtce", "agent", "compact", "image", "terraform", "users", "card"]
+    assert _names(calls) == ["history", "rtce", "agent", "compact", "quick", "image", "terraform", "users", "card"]
     history = calls[0]
     assert history[1] == (airport_datagen.SEED,) and history[2]["history"] is True
     assert history[2]["until"] == history[2]["now"]  # publishes and returns, never streams
     assert calls[1][1] == ["--client", "none"]
-    assert calls[5] == ("terraform", "always-on", {})
-    assert calls[6] == ("users", "env-1", ["a+1@x.io", "a+2@x.io"])
+    assert calls[4] == ("quick", ["a+1@x.io", "a+2@x.io"])  # before terraform/always-on, which reads the ARNs
+    assert calls[6] == ("terraform", "always-on", {})
+    assert calls[7] == ("users", "env-1", ["a+1@x.io", "a+2@x.io"])
     assert deploy.os.environ["TF_VAR_image_uri"] == "repo:new"
     assert deploy.os.environ["TF_VAR_rtce_api_key"] == "k"
 
@@ -545,7 +547,9 @@ def test_quick_reads_athena_through_its_own_role():
         assert re.search(r'import_mode\s*=\s*"DIRECT_QUERY"', dataset)
         assert f'"{name}"' in dataset and "local.analytics.glue_database" in dataset
     assert "{delay_minutes} >= 15" in _block(quick, "aws_quicksight_data_set.flight_impact")
-    assert "dateDiff({impacted_at}, {recommended_at}" in _block(quick, "aws_quicksight_data_set.passenger_recommendations")
+    assert "dateDiff({impacted_at}, {recommended_at}" in _block(
+        quick, "aws_quicksight_data_set.passenger_recommendations"
+    )
 
 
 def test_athena_results_bucket_force_destroys():
@@ -578,3 +582,88 @@ def test_topic_spells_out_the_demo_definitions():
     for synonym in ("hotel spend", "impacted passengers", "recovery time"):
         assert f'"{synonym}"' in quick
     assert 'output "quick_topic_id"' in (TF / "outputs.tf").read_text()
+
+
+def test_quick_principals_match_emails_case_insensitively(monkeypatch, capsys):
+    users = {"UserList": [{"Email": "Me@X.io", "Arn": "arn:q:me"}, {"Email": "other@x.io", "Arn": "arn:q:o"}]}
+    seen = []
+    monkeypatch.setattr(
+        deploy.subprocess, "run", lambda cmd, **k: seen.append(cmd) or _completed(cmd, json.dumps(users))
+    )
+    assert deploy._quick_principals("1", ["me@x.io", "nobody@x.io"]) == ["arn:q:me"]
+    assert "No Quick user for nobody@x.io" in capsys.readouterr().out
+    assert seen[0][seen[0].index("--region") + 1] == deploy.QUICK_IDENTITY_REGION == "us-east-1"
+
+
+def _airline_state(tmp_path, monkeypatch, glue_database="lkc-1"):
+    state = tmp_path / "terraform/airline-demo/terraform.tfstate"
+    state.parent.mkdir(parents=True)
+    state.write_text("{}")
+    monkeypatch.setattr(deploy, "run_terraform_output", lambda path: {"glue_database": glue_database})
+    monkeypatch.setattr(deploy, "_aws_account_id", lambda: "1")
+    monkeypatch.delenv("TF_VAR_quick_principal_arns", raising=False)
+
+
+def test_prepare_quick_shares_with_the_matched_users(monkeypatch, tmp_path):
+    _airline_state(tmp_path, monkeypatch)
+    waited = []
+    monkeypatch.setattr(deploy, "_wait_for_glue_tables", lambda *a, **k: waited.append(a) or True)
+    monkeypatch.setattr(deploy, "_quick_principals", lambda account, emails: ["arn:q:me"])
+    deploy._prepare_quick(tmp_path, INFRA, ["me@x.io"])
+    assert json.loads(deploy.os.environ["TF_VAR_quick_principal_arns"]) == ["arn:q:me"]
+    assert waited == [("us-east-1", "lkc-1", deploy.QUICK_TABLES)]
+    monkeypatch.delenv("TF_VAR_quick_principal_arns")
+
+
+def test_prepare_quick_skips_when_glue_tables_never_appear(monkeypatch, tmp_path, capsys):
+    _airline_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(deploy, "_wait_for_glue_tables", lambda *a, **k: False)
+    monkeypatch.setattr(deploy, "_tableflow_errors", lambda infra: {"flight_impact": "Unable to assume the IAM role"})
+    monkeypatch.setattr(deploy, "_quick_principals", lambda *a: pytest.fail("shared without tables"))
+    deploy._prepare_quick(tmp_path, INFRA, ["me@x.io"])
+    out = capsys.readouterr().out
+    assert deploy.os.environ["TF_VAR_quick_principal_arns"] == "[]"
+    assert "Unable to assume the IAM role" in out
+    assert """-replace='confluent_tableflow_topic.analytics["flight_impact"]'""" in out
+    monkeypatch.delenv("TF_VAR_quick_principal_arns")
+
+
+def test_prepare_quick_skips_without_tableflow(monkeypatch, tmp_path, capsys):
+    _airline_state(tmp_path, monkeypatch, glue_database="")
+    monkeypatch.setattr(deploy, "_wait_for_glue_tables", lambda *a, **k: pytest.fail("waited without Tableflow"))
+    deploy._prepare_quick(tmp_path, INFRA, ["me@x.io"])
+    assert deploy.os.environ["TF_VAR_quick_principal_arns"] == "[]"
+    monkeypatch.delenv("TF_VAR_quick_principal_arns")
+
+
+def test_wait_for_glue_tables_polls_until_both_exist(monkeypatch):
+    found = iter([{"flight_impact"}, {"flight_impact", "passenger_recommendations"}])
+    monkeypatch.setattr(deploy, "_glue_tables", lambda region, database: next(found))
+    monkeypatch.setattr(deploy.time, "sleep", lambda seconds: None)
+    assert deploy._wait_for_glue_tables("us-east-1", "lkc-1", deploy.QUICK_TABLES, timeout_s=60)
+
+
+def test_wait_for_glue_tables_gives_up(monkeypatch):
+    monkeypatch.setattr(deploy, "_glue_tables", lambda region, database: set())
+    clock = iter(range(0, 10_000, 30))
+    monkeypatch.setattr(deploy.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(deploy.time, "sleep", lambda seconds: None)
+    assert not deploy._wait_for_glue_tables("us-east-1", "lkc-1", deploy.QUICK_TABLES, timeout_s=90)
+
+
+def test_prepare_quick_keeps_the_existing_quick_when_a_rerun_cant_prepare(monkeypatch, tmp_path, capsys):
+    # "[]" on a rerun would make Terraform delete the datasets and the Topic people already use.
+    _airline_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(deploy, "_wait_for_glue_tables", lambda *a, **k: False)
+    monkeypatch.setattr(deploy, "_tableflow_errors", lambda infra: {})
+    monkeypatch.setattr(deploy, "_always_on_outputs", lambda root: {"quick_principal_arns": ["arn:q:me"]})
+    deploy._prepare_quick(tmp_path, INFRA, ["me@x.io"])
+    assert json.loads(deploy.os.environ["TF_VAR_quick_principal_arns"]) == ["arn:q:me"]
+    assert "keeping the Quick setup" in capsys.readouterr().out
+    monkeypatch.delenv("TF_VAR_quick_principal_arns")
+
+
+def test_always_on_outputs_the_quick_users_it_shared_with():
+    assert re.search(
+        r'output "quick_principal_arns" \{\s*value\s*=\s*var\.quick_principal_arns', (TF / "outputs.tf").read_text()
+    )

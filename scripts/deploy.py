@@ -111,6 +111,11 @@ ALWAYS_ON_NAME = "river-air-demo"  # TF_VAR_deployment_name when none is saved
 DEMO_USER_EMAILS = "DEMO_USER_EMAILS"  # credentials.env: the demo users (invited by hand), comma-separated
 DEMO_USER_ROLE = "EnvironmentAdmin"
 ALWAYS_ON_CARD = "tmp/always-on-card.env"
+# Amazon Quick over the Tableflow history (terraform/always-on/quick.tf). Quick users live in the account's identity
+# region, whatever region the demo runs in; deploy shares Quick with the demo users who have one.
+QUICK_IDENTITY_REGION = "us-east-1"
+QUICK_TABLES = ("flight_impact", "passenger_recommendations")
+GLUE_WAIT_SECONDS = 900  # Tableflow's first sync of a topic takes a few minutes
 # Compacted, so a source feed keeps each flight's, passenger's, and hotel's latest row however long it runs.
 COMPACTED_TOPICS = ("flight_status", "passenger_itineraries", "hotel_inventory")
 # terraform/always-on creates the Lambda and ECS roles, so the operator must be able to.
@@ -120,6 +125,9 @@ ALWAYS_ON_IAM_ACTIONS = (
     "iam:AttachRolePolicy",
     "iam:CreatePolicy",
     "iam:PassRole",
+    "athena:CreateWorkGroup",
+    "quicksight:CreateDataSource",
+    "quicksight:CreateTopic",
 )
 
 # Module-level buffer for Plan B fallback when set_key() fails (e.g. Windows locks).
@@ -940,6 +948,8 @@ def _finish_always_on(root, reset_data: bool = False) -> None:
     _compact_sources(infra)
 
     creds = dotenv_values(str(creds_file))
+    print("\n=== Preparing Amazon Quick over the Tableflow history ===")
+    _prepare_quick(root, infra, _demo_emails(creds))
     key, secret = creds.get("CONFLUENT_RTCE_API_KEY") or "", creds.get("CONFLUENT_RTCE_API_SECRET") or ""
     if not (key and secret):
         sys.exit("No Global API key for Lightning Tables yet, so the flight board can't read. Rerun `uv run deploy`.")
@@ -1003,6 +1013,145 @@ def _compact_sources(infra: dict[str, str]) -> None:
             print(f"✓ {topic} is compacted")
         else:
             print(f"⚠ Could not compact {topic}: {result.stderr.strip()}\n  Run it by hand: {' '.join(cmd)}")
+
+
+def _aws_account_id() -> str:
+    identity = subprocess.run(
+        ["aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return identity.stdout.strip()
+
+
+def _quick_principals(account_id: str, emails: list[str]) -> list[str]:
+    """The Quick user ARNs whose email is one of the demo users'. Prints the demo users who have no Quick user."""
+    listed = subprocess.run(
+        [
+            "aws",
+            "quicksight",
+            "list-users",
+            "--aws-account-id",
+            account_id,
+            "--namespace",
+            "default",
+            "--region",
+            QUICK_IDENTITY_REGION,
+            "--output",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if listed.returncode != 0:
+        print(f"⚠ Couldn't list the Quick users: {listed.stderr.strip()}")
+        return []
+    by_email = {}
+    for user in json.loads(listed.stdout or "{}").get("UserList", []):
+        by_email.setdefault((user.get("Email") or "").lower(), user["Arn"])
+    arns = []
+    for email in emails:
+        if email.lower() in by_email:
+            arns.append(by_email[email.lower()])
+        else:
+            print(
+                f"⚠ No Quick user for {email}, so they won't see the Quick datasets. "
+                "Register them in Quick, then rerun."
+            )
+    return arns
+
+
+def _glue_tables(region: str, database: str) -> set[str]:
+    listed = subprocess.run(
+        ["aws", "glue", "get-tables", "--region", region, "--database-name", database, "--output", "json"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if listed.returncode != 0:
+        return set()  # the database doesn't exist until Tableflow's first sync
+    return {table["Name"] for table in json.loads(listed.stdout or "{}").get("TableList", [])}
+
+
+def _wait_for_glue_tables(
+    region: str, database: str, tables: tuple[str, ...], timeout_s: int = GLUE_WAIT_SECONDS
+) -> bool:
+    """True once Tableflow has synced every table to Glue; False after timeout_s."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        missing = set(tables) - _glue_tables(region, database)
+        if not missing:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        print(f"  Waiting for Tableflow to sync {', '.join(sorted(missing))} to Glue...", flush=True)
+        time.sleep(30)
+
+
+def _tableflow_errors(infra: dict[str, str]) -> dict[str, str]:
+    """topic -> error for each FAILED Tableflow topic."""
+    listed = subprocess.run(
+        [
+            "confluent",
+            "tableflow",
+            "topic",
+            "list",
+            "--environment",
+            infra["env_id"],
+            "--cluster",
+            infra["cluster_id"],
+            "-o",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    try:
+        topics = json.loads(listed.stdout or "[]")
+    except json.JSONDecodeError:
+        return {}
+    return {t["topic_name"]: t.get("error_message", "") for t in topics if t.get("phase") == "FAILED"}
+
+
+def _prepare_quick(root, infra: dict[str, str], emails: list[str]) -> None:
+    """Set TF_VAR_quick_principal_arns for terraform/always-on: the demo users' Quick users, once both Tableflow
+    tables are in Glue. Otherwise the users of the last run, so a rerun never deletes a working Quick setup, or "[]"
+    on a first run, which skips Quick and lets the rest of the always-on deploy finish."""
+    previous = _always_on_outputs(root).get("quick_principal_arns") or []
+    os.environ["TF_VAR_quick_principal_arns"] = json.dumps(previous)
+    if previous:
+        print(
+            f"  (Until this finishes, keeping the Quick setup shared with {len(previous)} user(s) from the last run.)"
+        )
+    state = root / "terraform" / "airline-demo" / "terraform.tfstate"
+    database = (run_terraform_output(state) if state.exists() else {}).get("glue_database", "")
+    if not database:
+        print("⚠ Tableflow isn't deployed (no AWS credentials for it), so Quick is skipped.")
+        return
+    if not _wait_for_glue_tables(infra["region"], database, QUICK_TABLES):
+        failed = _tableflow_errors(infra)
+        print(f"⚠ Tableflow hasn't synced {' and '.join(QUICK_TABLES)} to Glue yet, so Quick is skipped this run.")
+        for topic, error in failed.items():
+            print(f"  {topic} failed: {error}")
+        if failed:
+            replace = " ".join(f"-replace='confluent_tableflow_topic.analytics[\"{topic}\"]'" for topic in failed)
+            print(
+                "  Recreate them (and the Glue integration), then rerun `uv run deploy --always-on`:\n"
+                f"  terraform -chdir=terraform/airline-demo apply {replace} "
+                "-replace='confluent_catalog_integration.glue[0]'"
+            )
+        else:
+            print("  Rerun `uv run deploy --always-on` in a few minutes.")
+        return
+    principals = _quick_principals(_aws_account_id(), emails)
+    if not principals:
+        print("⚠ No demo user has a Quick user, so Quick is skipped.")
+        return
+    os.environ["TF_VAR_quick_principal_arns"] = json.dumps(principals)
+    print(f"✓ Quick will be shared with {len(principals)} demo user(s)")
 
 
 def _always_on_outputs(root) -> dict:
@@ -1184,6 +1333,7 @@ def _write_card(root, outputs: dict, emails: list[str]):
         "ALWAYS_ON_APP_URL": outputs.get("app_url", ""),
         "ALWAYS_ON_APP_PASSWORD": outputs.get("app_password", ""),
         "ALWAYS_ON_DEMO_USERS": ",".join(emails),
+        "ALWAYS_ON_QUICK_TOPIC": outputs.get("quick_topic_id", ""),
     }
     path.write_text("".join(f"{key}='{value}'\n" for key, value in card.items()), encoding="utf-8")
     path.chmod(0o600)  # it holds the flight board's password
