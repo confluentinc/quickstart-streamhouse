@@ -766,3 +766,25 @@ def test_biggest_delays_leave_out_landed_flights(fake):
 
     fake.tables["flight_status"] = [flight("RA101-20260928", 186, "LANDED"), flight("RA102-20260928", 40, "DELAYED")]
     assert [row["key"] for row in airport_app.state()["delays"]] == ["RA102-20260928"]
+
+
+def test_biggest_delays_are_flights_in_the_air_or_still_to_leave(fake):
+    def flight(key, delay, status, origin="ORD", destination="SFO"):
+        return {
+            "key": key,
+            "origin": origin,
+            "destination": destination,
+            "scheduled_time": "2026-09-28 11:00:00.000",
+            "estimated_time": (datetime(2026, 9, 28, 11) + timedelta(minutes=delay)).strftime("%Y-%m-%d %H:%M:%S.000"),
+            "status": status,
+        }
+
+    fake.tables["flight_status"] = [
+        flight("RA601-20260928", 90, "DEPARTED", "SFO", "JFK"),  # left hours ago, no longer reporting
+        flight("RA602-20260928", 60, "DEPARTED", "SFO", "DEN"),  # flying now
+        flight("RA603-20260928", 30, "BOARDING", "SFO", "LAX"),
+        flight("RA101-20260928", 20, "DELAYED"),
+    ]
+    fake.tables["flight_telemetry"] = [_reading("RA602-20260928", 10)]
+    keys = [row["key"] for row in airport_app.state()["delays"]]
+    assert keys == ["RA602-20260928", "RA603-20260928", "RA101-20260928"]
