@@ -197,7 +197,7 @@ def test_lightning_run_returns_rows_like_the_app(monkeypatch):
     assert sent["body"] == {
         "catalog_name": "env-1",
         "database_name": "lkc-1",
-        "query": "SELECT * FROM `hotel_inventory` LIMIT 10",
+        "query": "SELECT * FROM `hotel_inventory` ORDER BY as_of DESC LIMIT 10",
     }
     assert sent["auth"].startswith("Basic ")
 
@@ -222,3 +222,14 @@ def test_workshop_terraform_creates_the_agents_model():
     block = main.split('resource "confluent_flink_statement" "agent_setup" {', 1)[1]
     assert "var.workshop ? { model = local.agent_setup.model }" in block
     assert 'model = "sql/32-model-passenger-recovery-native.sql"' in main
+
+
+def test_the_lightning_command_reads_versioned_tables_newest_first():
+    infra = {"region": "us-east-1", "org_id": "o", "env_id": "env-1", "cluster_id": "lkc-1"}
+    queries = {
+        topic: setup_rtce._lightning_request(infra, "KEY", "SECRET", topic)[1]["query"]
+        for topic in ("hotel_inventory", "flight_telemetry", "passenger_state")
+    }
+    assert queries["flight_telemetry"] == "SELECT * FROM `flight_telemetry` ORDER BY as_of DESC LIMIT 10"
+    assert queries["hotel_inventory"].endswith("ORDER BY as_of DESC LIMIT 10")
+    assert "ORDER BY" not in queries["passenger_state"]

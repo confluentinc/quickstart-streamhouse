@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -152,11 +153,54 @@ def _offer(key, hotel_name, cost, status="OFFERED"):
 GRAND_HYATT = "Grand Hyatt at SFO"
 MARRIOTT = "SFO Airport Marriott Waterfront"
 HILTON = "Hilton SFO Airport Bayfront"
+AS_OF = "2026-09-28 11:59:45"
 HOTELS = [
-    {"key": GRAND_HYATT, "available_rooms": "0", "nightly_rate": "329.00"},
-    {"key": MARRIOTT, "available_rooms": "4", "nightly_rate": "229.00"},
-    {"key": HILTON, "available_rooms": "30", "nightly_rate": "249.00"},
+    {"key": GRAND_HYATT, "available_rooms": "0", "nightly_rate": "329.00", "as_of": AS_OF},
+    {"key": MARRIOTT, "available_rooms": "4", "nightly_rate": "229.00", "as_of": AS_OF},
+    {"key": HILTON, "available_rooms": "30", "nightly_rate": "249.00", "as_of": AS_OF},
 ]
+
+
+def _hotel_versions(updates):
+    """Every update a hotel feed has sent, oldest first: Lightning keeps all of them, not just the latest."""
+    return [
+        {
+            "key": name,
+            "available_rooms": str(rooms),
+            "nightly_rate": rate,
+            "as_of": str(datetime(2026, 9, 28, 10, 0, 0) + timedelta(seconds=15 * n)),
+        }
+        for n in range(updates)
+        for name, rooms, rate in (
+            (GRAND_HYATT, max(0, 40 - n), "329.00"),
+            (MARRIOTT, 150 + n % 4, "229.00"),
+            (HILTON, 120, "249.00"),
+        )
+    ]
+
+
+def test_hotels_show_each_hotels_latest_version_even_past_the_200_row_cap(fake):
+    versions = _hotel_versions(100)  # 300 rows: more than Lightning returns in one query
+    fake.tables["hotel_inventory"] = list(reversed(versions))  # arrival order must not matter
+    hotels = airport_app._hotels()
+    assert {name: row["available_rooms"] for name, row in hotels.items()} == {
+        GRAND_HYATT: "0",
+        MARRIOTT: "153",
+        HILTON: "120",
+    }
+    assert fake.calls[-1]["order_by"] == ("as_of", "DESC")
+
+
+def test_hotels_still_read_a_deployment_from_before_as_of_existed(monkeypatch):
+    rows = [{"key": GRAND_HYATT, "available_rooms": "7", "nightly_rate": "329.00"}]
+
+    def lightning_query(_self, topic, key=None, limit=200, where=(), order_by=None):
+        if order_by:
+            raise airport_app.HTTPException(status_code=502, detail="Column 'AS_OF' not found in any table")
+        return rows
+
+    monkeypatch.setattr(Deployment, "lightning_query", lightning_query)
+    assert airport_app._hotels() == {GRAND_HYATT: rows[0]}
 
 
 def test_selecting_a_sold_out_hotel_offers_a_third_hotel_then_book_closes_other(fake):
@@ -216,9 +260,9 @@ def test_passenger_returns_offers_and_hotel_options_cheapest_first(fake):
     body = TestClient(airport_app.app).get("/api/passenger/P-0928-417-001").json()
     assert [row["key"] for row in body["offers"]] == ["P-0928-417-001-O1", "P-0928-417-001-O2"]
     assert body["hotels"] == [
-        {"key": MARRIOTT, "available_rooms": 4, "nightly_rate": "229.00"},
-        {"key": HILTON, "available_rooms": 30, "nightly_rate": "249.00"},
-        {"key": GRAND_HYATT, "available_rooms": 0, "nightly_rate": "329.00"},
+        {"key": MARRIOTT, "available_rooms": 4, "nightly_rate": "229.00", "as_of": AS_OF},
+        {"key": HILTON, "available_rooms": 30, "nightly_rate": "249.00", "as_of": AS_OF},
+        {"key": GRAND_HYATT, "available_rooms": 0, "nightly_rate": "329.00", "as_of": AS_OF},
     ]
 
 
@@ -485,5 +529,44 @@ def test_state_survives_a_failed_telemetry_read(fake, monkeypatch):
 
 
 def test_state_has_no_notice_when_telemetry_reads(fake):
+    fake.tables["flight_status"] = [
+        {
+            "key": "RA417-20260928",
+            "scheduled_time": "2026-09-28 11:00:00.000",
+            "estimated_time": "2026-09-28 11:00:00.000",
+        }
+    ]
     fake.tables["flight_telemetry"] = [_reading("RA417-20260928", 10)]
     assert airport_app.state()["notice"] is None
+
+
+def test_state_tells_an_empty_dashboard_to_start_the_datagen(fake):
+    assert "uv run airport-datagen" in airport_app.state()["notice"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '{"errors":[{"code":"FE_CUSTOMER_NOT_FOUND"}]}',
+        '{"errors":[{"code":"FE_TABLE_NOT_FOUND","detail":"Table does not exist: \'passenger_state\'"}]}',
+    ],
+)
+def test_a_topic_without_a_lightning_table_names_the_workshop_step(body):
+    message = airport_app._lightning_error("passenger_state", 400, body)
+    assert "passenger_state has no Lightning Table yet" in message
+    assert "Lab 3" in message and "uv run workshop-status" in message
+
+
+def test_other_lightning_errors_keep_the_status_and_body():
+    assert airport_app._lightning_error("hotel_inventory", 500, "boom") == "Lightning query returned HTTP 500: boom"
+
+
+def test_a_topic_with_no_data_yet_reads_as_empty(monkeypatch):
+    deployment = Deployment()
+    deployment._infra = {"region": "us-east-1", "env_id": "env-1", "cluster_id": "lkc-1"}
+    deployment._rtce_key, deployment._rtce_secret = "key", "secret"
+    unavailable = '{"errors":[{"code":"DP_TABLE_NOT_AVAILABLE","detail":"Table data is not yet available."}]}'
+    monkeypatch.setattr(
+        airport_app.requests, "post", lambda *args, **kwargs: SimpleNamespace(status_code=400, text=unavailable)
+    )
+    assert deployment.lightning_query("flight_status") == []

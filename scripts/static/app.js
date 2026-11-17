@@ -145,9 +145,9 @@ function render() {
     : "Lightning Tables";
   if (openFlight) $("flights-show-all").onclick = () => selectFlight(null);
 
-  // "Biggest impact" is the flight putting the most passengers at risk — not
-  // simply the first row of Biggest delays, which is sorted by minutes and is
-  // often a departure with nobody connecting (0 at risk).
+  // "Biggest impact" is the flight putting the most passengers at risk. Biggest
+  // delays is sorted the same way (most at risk first, then longest delay), so
+  // it is that list's first row unless nothing has passengers at risk yet.
   const impactKey = current.flights.reduce((best, row) =>
     row.affected_passengers > (best?.affected_passengers ?? 0) ? row : best, null)?.key;
   const impactTag = (key) => (key === impactKey ? '<span class="impact-tag">Biggest impact</span>' : "");
@@ -342,7 +342,9 @@ async function renderPassenger() {
       <div class="foot-row"><span class="cost">Offered ${esc(hhmm(offer.recommended_at))}</span>
       ${offer.status === "OFFERED" ? `<button class="btn" data-select="${esc(offer.key)}">Select</button>` : ""}
       ${offer.status === "SELECTED" ? `<button class="btn" data-book="${esc(offer.key)}">Book</button>` : ""}</div></div>`).join("")
-    : `<div class="pax-empty">No recovery offers.</div>`;
+    : `<div class="pax-empty">${passenger.risk === "HIGH"
+        ? "No recovery offers yet. If this stays empty, the recovery agent from Lab 4 isn't running: run <code>uv run workshop-status</code> in a terminal."
+        : "No recovery offers."}</div>`;
   card.innerHTML = `<div class="pax-id">${esc(passenger.key)}</div>
     <div class="pax-route"><span class="risk ${riskClass(passenger.risk)}">${esc(label(passenger.risk))}</span></div>
     <div class="facts">${facts}</div>${offerCards}`;

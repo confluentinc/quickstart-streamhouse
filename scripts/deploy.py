@@ -42,6 +42,8 @@ Usage:
   uv run deploy --workshop    # the Flight Disruptions workshop without the lab question
   uv run deploy --automated   # bots: non-interactive from credentials.env, registers Claude Code
   uv run deploy --testing     # bots: non-interactive from credentials.env, no MCP registration
+  uv run deploy --workshop --testing   # test runs: the workshop with no prompts (bots alone deploy the full demo)
+  uv run destroy --testing    # the matching teardown with no prompts; keeps credentials.env, stops the local datagen
 """
 
 import argparse

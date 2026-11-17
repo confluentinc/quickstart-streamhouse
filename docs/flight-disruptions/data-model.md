@@ -66,13 +66,14 @@ Every flight either arrives at or leaves the SFO hub, never both. For an arrival
 
 No names, contact details, or preferences: the join and the risk rule don't need them, and the seats only place the passenger on each flight's seat map.
 
-### `hotel_inventory` (3 columns)
+### `hotel_inventory` (4 columns)
 
 | Column | Type | Purpose |
 | --- | --- | --- |
 | `hotel_name` | STRING, key | `Grand Hyatt at SFO` (on the airport campus), `SFO Airport Marriott Waterfront`, or `Hilton SFO Airport Bayfront`. |
 | `available_rooms` | INT | Zero forces a different choice. |
 | `nightly_rate` | DECIMAL(10,2) | $329 (Grand Hyatt), $229 (Marriott), and $249 (Hilton); the hotel cost of an overnight rebooking. |
+| `as_of` | TIMESTAMP | When the hotel reported these rooms. Lightning Tables return every version of an upsert row, not just the latest, so readers order by `as_of` and take the newest row per hotel. |
 
 ### `flight_telemetry` (11 columns)
 
@@ -138,6 +139,7 @@ erDiagram
         string hotel_name PK
         int available_rooms
         decimal nightly_rate
+        timestamp as_of
     }
     flight_telemetry {
         string flight_id PK

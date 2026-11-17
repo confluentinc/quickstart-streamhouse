@@ -142,7 +142,7 @@ class FlinkSession:
         self._seq += 1
         return f"f1sql-{int(time.time() * 1000) % 10**9}-{self._seq}"
 
-    def submit(self, sql: str) -> str:
+    def submit(self, sql: str, properties: dict[str, str] | None = None) -> str:
         name = self._name()
         body = {
             "name": name,
@@ -152,6 +152,7 @@ class FlinkSession:
                 "properties": {
                     "sql.current-catalog": self.catalog,
                     "sql.current-database": self.database,
+                    **(properties or {}),
                 },
             },
         }

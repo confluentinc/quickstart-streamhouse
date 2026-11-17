@@ -276,6 +276,21 @@ def test_stream_updates_flights_every_30_seconds_and_hotels_every_15(plan):
     assert sum(value["passenger_id"].startswith("P-0928-417-") for value in offers) == 300
 
 
+def test_every_hotel_update_round_covers_all_three_hotels_and_the_agent_query_reads_enough_rounds(plan):
+    """The agent's hotel_query reads the newest rows only; it sees every hotel because each round updates all three."""
+    rounds = {}
+    for at, topic, key, value in g.stream_events(plan, g.STREAM_MINUTES):
+        if topic == g.HOTELS:
+            rounds.setdefault(at, []).append(key)
+            assert value["as_of"] == at
+    assert all(sorted(keys) == sorted(g.HOTEL_ORDER) for keys in rounds.values())
+    sql = (
+        Path(__file__).parent.parent / "terraform/airline-demo/sql/31-insert-passenger-recommendations.sql"
+    ).read_text()
+    limit = int(re.search(r"hotel_inventory` ORDER BY as_of DESC LIMIT (\d+)", sql).group(1))
+    assert limit >= 10 * len(g.HOTEL_ORDER)  # ten rounds of slack for a feed that updates hotels out of step
+
+
 def test_flights_down_before_the_stream_starts_publish_no_telemetry(plan, records):
     airborne = {key for topic, key, _ in records if topic == g.TELEMETRY}
     first = {}
@@ -443,6 +458,23 @@ def test_a_missing_topic_schema_tells_people_to_redeploy(monkeypatch):
     monkeypatch.setattr(publisher.schema_registry, "get_latest_version", missing)
     with pytest.raises(RuntimeError, match="uv run deploy"):
         publisher.publish(g.TELEMETRY, "RA417-20260928", {"stage": "CRUISING"})
+
+
+def test_hotel_rows_say_when_the_hotel_reported_them(plan, records):
+    """as_of is what lets readers pick a hotel's newest row out of the versions Lightning keeps."""
+    assert all(value["as_of"] == plan.start for topic, _, value in records if topic == g.HOTELS)
+    events = g.stream_events(plan, g.STREAM_MINUTES)
+    assert all(value["as_of"] == at for at, topic, _, value in events if topic == g.HOTELS)
+    assert all("as_of" in value for _, topic, _, value in events if topic == g.HOTELS)
+
+
+def test_hotel_warmup_runs_up_to_the_stream_start_in_time_order():
+    plan = g.build_plan(START, history=False)
+    by_hotel = {}
+    for _, name, value in g.hotel_warmup(plan, 200):
+        by_hotel.setdefault(name, []).append(value["as_of"])
+    for times in by_hotel.values():
+        assert times == sorted(set(times)) and times[-1] == plan.start - g.HOTEL_EVERY
 
 
 def test_hotel_warmup_sends_at_least_200_updates_and_ends_at_the_starting_rooms():

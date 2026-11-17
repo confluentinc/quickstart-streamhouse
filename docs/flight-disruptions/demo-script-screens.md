@@ -57,7 +57,7 @@ Start the stream at least 40 minutes before scene 2.4.
 | 1.5 min | 2.2 | Show confluent Assistant prompt to create a webhook connector  Show the connector running in CC Show the topic in CC Enable RTCE in the Topics UI | For example, it needs to know what hotels have availability and their prices. So let’s bring that data into Confluent. We can use the **Webhooks Source Connector**. And this is really simple,  **you don’t need to be a Kafka expert.** Using **Confluent Assistant,** we provision a webhook endpoint and give that endpoint to our hotel partner. They simply send their updates to that endpoint. Every update is automatically ingested into Confluent. **No infrastructure to manage. No Kafka expertise required.** Now we have the hotel data in Confluent, next, we’ll make that real-time data available to the agent via MCP using the **Realtime Context Engine**. |
 | ▶ | 2.2a | **On screen:** Confluent Assistant prompt that creates a webhook connector | 🚧 Draft prompt for Confluent Assistant: *“Create a Webhooks source connector named hotel-partner-webhook that writes hotel availability updates to the hotel_inventory topic, keyed by hotel_name, with available_rooms and nightly_rate in the value.”* Check that the connector can write the raw string key and the Avro value that `hotel_inventory` uses. |
 | ▶ | 2.2b | **On screen:** the connector running in Confluent Cloud | 🚧 **Connectors → hotel-partner-webhook → Running**. Not deployed; today the generator publishes hotel rows directly. |
-| ▶ | 2.2c | **On screen:** the topic in Confluent Cloud | ✅ **Topics → `hotel_inventory` → Messages**:<br>`Grand Hyatt at SFO {"available_rooms": 40, "nightly_rate": "329.00"}`, `SFO Airport Marriott Waterfront {"available_rooms": 150, "nightly_rate": "229.00"}`, and `Hilton SFO Airport Bayfront {"available_rooms": 120, "nightly_rate": "249.00"}`. All three update every 15 s as guests book and cancel; the Grand Hyatt drifts down about a room a minute until 0 at +40. |
+| ▶ | 2.2c | **On screen:** the topic in Confluent Cloud | ✅ **Topics → `hotel_inventory` → Messages**:<br>`Grand Hyatt at SFO {"available_rooms": 40, "nightly_rate": "329.00", "as_of": "…"}`, `SFO Airport Marriott Waterfront {"available_rooms": 150, "nightly_rate": "229.00", "as_of": "…"}`, and `Hilton SFO Airport Bayfront {"available_rooms": 120, "nightly_rate": "249.00", "as_of": "…"}`. All three update every 15 s as guests book and cancel; the Grand Hyatt drifts down about a room a minute until 0 at +40. |
 | ▶ | 2.2d | **On screen:** enable RTCE in the Topics UI | ✅ **Topics → `hotel_inventory` → Real-Time Context Engine**. Deploy has already turned it on, and the agent needs it running, so show it as on (as in 1.2a). |
 | 1.5 min | 2.3 | CREATE MODEL CREATE AGENT (with RTCE) Query to run the agent (ZOOM into AI\_RUN\_AGENT) Show the results on the Flight in question | Next, we create the model that our agent will use. Here, we’re using a model hosted directly in Confluent. So there’s no need to move your data anywhere. Everything stays in Confluent and is fully managed for you. Next, we create the agent. We give it the model we just created, a simple set of instructions, and access to live hotel information through the **Real-Time Context Engine.** Now, our agent is ready,  but it’s not running yet. So we use `AI_RUN_AGENT` to turn it on. And just like that \- we now have an always-on agent that understands what’s happening in the business right now. As flight data changes, the agent continuously adjusts \-  evaluating the latest context, and recommending the best actions to help all the passengers who will miss their connecting flights, in light of the latest data. **Transition:** But identifying the best option is only half the story. Now we need to get that recommendation to the passenger. |
 | ▶ | 2.3a | **On screen:** CREATE MODEL, “a model hosted directly in Confluent” | 🧪 **Flink → Statements → `airport-agent-model`**. [Appendix B](#b-create-model-23a): `passenger_recovery_model`, Claude hosted in Confluent (Native Inference), the model the agent runs on. The workshop ran this model and agent on Confluent Cloud on 2026-10-28; deploy's copy hasn't run yet (see [Gaps](#gaps-to-close-before-rehearsal)). |
@@ -179,9 +179,11 @@ The queries already use the right column names, so run them as given without cal
 2. departures_query returns flights from SFO to the final destination. Offer the first two flights whose
    estimated_time is at least 45 minutes after the inbound estimated_time. Skip CANCELLED flights.
 3. An offered flight that leaves 6 hours or more after the inbound estimated_time needs a hotel.
-   Run hotel_query. List the hotels that have available_rooms above 0 in this order: Grand Hyatt at SFO,
-   SFO Airport Marriott Waterfront, Hilton SFO Airport Bayfront. The first offer uses the
-   first hotel in that list and the second offer uses the second. The hotel cost is that hotel nightly_rate.
+   Run hotel_query. It returns the hotel updates, newest first, so each hotel appears several times:
+   use only the row with the latest as_of for each hotel. List the hotels whose latest available_rooms
+   is above 0 in this order: Grand Hyatt at SFO, SFO Airport Marriott Waterfront, Hilton SFO Airport
+   Bayfront. The first offer uses the first hotel in that list and the second offer uses the second.
+   The hotel cost is that hotel nightly_rate.
    A flight that leaves sooner needs no hotel: write NONE for its hotel and cost.
 
 Reply with exactly one line and nothing else:
@@ -294,7 +296,7 @@ plans AS (
       g.final_destination, ''' AND scheduled_time >= TIMESTAMP ''',
       DATE_FORMAT(g.impacted_at - INTERVAL '1' HOUR, 'yyyy-MM-dd HH:mm:ss'),
       ''' ORDER BY scheduled_time ASC LIMIT 12',
-      '; hotel_query=SELECT * FROM `hotel_inventory` LIMIT 10'
+      '; hotel_query=SELECT * FROM `hotel_inventory` ORDER BY as_of DESC LIMIT 30'
     ),
     g.group_key
   )) AS r(agent_status, response)

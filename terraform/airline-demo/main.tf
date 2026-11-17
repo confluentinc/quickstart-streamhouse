@@ -7,7 +7,7 @@
 # in each statement's `properties`, so the .sql files stay paste-ready.
 #
 # Ordering:
-#   flight_status, passenger_itineraries, hotel_inventory source tables
+#   flight_status, passenger_itineraries, hotel_inventory, flight_telemetry source tables
 #   + the passenger_recommendations table   (for_each, parallel)
 #     -> passenger_state MATERIALIZED TABLE -> flight_impact MATERIALIZED TABLE
 #   recovery agent (gated, see local.agent_enabled):

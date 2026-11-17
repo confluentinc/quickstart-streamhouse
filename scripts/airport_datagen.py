@@ -43,6 +43,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from itertools import pairwise
 from operator import itemgetter
+from pathlib import Path
 
 import requests
 from confluent_kafka import Producer
@@ -161,7 +162,7 @@ GRAND_HYATT_ROOMS = 40
 MARRIOTT_ROOMS = 150
 HILTON_ROOMS = 120
 SELLOUT = timedelta(minutes=40)  # the Grand Hyatt sells out this long after the stream starts
-HOTEL_EVERY = timedelta(seconds=15)  # both hotels publish their rooms this often during the stream
+HOTEL_EVERY = timedelta(seconds=15)  # all three hotels publish their rooms together this often during the stream
 OVERNIGHT = timedelta(hours=6)
 AGENT_LATENCY_SECONDS = (5, 40)
 BOOKING_SHARE = 0.85
@@ -586,8 +587,9 @@ def passenger_to_follow(plan: Plan) -> Passenger:
     return next(p for p in plan.live.passengers if p.inbound is hero and p.impacted_at)
 
 
-def _hotel(name: str, rooms: int) -> dict:
-    return dict(available_rooms=rooms, nightly_rate=HOTEL_RATES[name])
+def _hotel(name: str, rooms: int, at: datetime) -> dict:
+    """One hotel update. as_of orders the row versions Lightning keeps (the webhook path stamps its own)."""
+    return dict(available_rooms=rooms, nightly_rate=HOTEL_RATES[name], as_of=at)
 
 
 def _hotel_rooms(plan: Plan, until: datetime):
@@ -627,9 +629,10 @@ def hotel_warmup(plan: Plan, updates: int = 200):
                 (HILTON, HILTON_ROOMS * 2),
             )
         }
-    for step in reversed(steps):
+    for number, step in enumerate(reversed(steps)):
+        at = plan.start - HOTEL_EVERY * (len(steps) - number)
         for name in HOTEL_ORDER:
-            yield HOTELS, name, _hotel(name, step[name])
+            yield HOTELS, name, _hotel(name, step[name], at)
 
 
 def telemetry_row(flight: Flight, at: datetime) -> dict | None:
@@ -674,7 +677,7 @@ def initial_records(plan: Plan):
     """Every row as of the stream start: history final state, the live day so far, tomorrow's schedule."""
     at = plan.start
     for name, rooms in ((GRAND_HYATT, GRAND_HYATT_ROOMS), (MARRIOTT, MARRIOTT_ROOMS), (HILTON, HILTON_ROOMS)):
-        yield HOTELS, name, _hotel(name, rooms)
+        yield HOTELS, name, _hotel(name, rooms, at)
     for day in [*plan.days, plan.tomorrow]:
         for flight in day.flights:
             yield FLIGHTS, flight.key, flight.row(at)
@@ -708,7 +711,7 @@ def stream_events(plan: Plan, minutes: int) -> list[tuple[datetime, str, str, di
     for flight in plan.live.flights:
         events += [(tick, FLIGHTS, flight.key, flight.row(tick)) for tick in flight.ticks(start, end)]
         events += [(tick, TELEMETRY, flight.key, row) for tick, row in _telemetry_events(flight, start, end)]
-    events += [(at, HOTELS, hotel, _hotel(hotel, rooms)) for at, hotel, rooms in _hotel_rooms(plan, end)]
+    events += [(at, HOTELS, hotel, _hotel(hotel, rooms, at)) for at, hotel, rooms in _hotel_rooms(plan, end)]
     for recovery in plan.recoveries:
         if recovery.passenger.inbound not in plan.live.arrivals:
             continue
@@ -847,9 +850,9 @@ def _start_file():
     return get_project_root() / "tmp" / "datagen.start"
 
 
-def stop_previous_stream() -> None:
+def stop_previous_stream(root: Path | None = None) -> None:
     """Stop a stream left running by an earlier deploy or run, so two streams never interleave."""
-    path = _pid_file()
+    path = _pid_file() if root is None else root / "tmp" / "datagen.pid"
     try:
         pid = int(path.read_text().strip())
     except (OSError, ValueError):
@@ -1037,6 +1040,15 @@ def main(argv: list[str] | None = None) -> None:
         args.speed, args.stream_only = float(speed), True
     setup_logging()
     start = _clock(args.now)
+    if not args.dry_run:
+        from scripts import workshop_checks  # a lighter import than the app's, which this module can't import
+
+        ws = workshop_checks.require_deployment("uv run airport-datagen")
+        if ws.is_workshop and not (args.skip_history or args.stream_only or args.reset):
+            logging.info(
+                "Workshop deployment: skipping the history days, which the workshop doesn't use (--skip-history)"
+            )
+            args.skip_history = True
     try:
         if args.reset:
             reset(start, args.seed, args.dry_run)
