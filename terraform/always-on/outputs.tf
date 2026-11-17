@@ -58,3 +58,8 @@ output "quick_datasets" {
   ] : []
   description = "Quick datasets over the Tableflow history"
 }
+
+output "quick_topic_id" {
+  value       = local.quick_enabled ? local.topic_id : ""
+  description = "The Quick Topic people ask the history questions in"
+}

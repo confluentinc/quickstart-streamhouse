@@ -322,3 +322,107 @@ resource "aws_quicksight_data_set" "passenger_recommendations" {
     }
   }
 }
+
+# ---------------------------------------------------------------------------
+# Quick Topic: what lets people ask the history plain-English questions. The AWS provider has no Topic resource,
+# so this drives the AWS CLI (with the operator's credentials, which deploy exports). Create deletes any
+# leftover topic first, so a rerun after a failed apply doesn't stop on ResourceExistsException.
+# ---------------------------------------------------------------------------
+
+locals {
+  topic_id = "${local.name}-flight-history"
+  topic_actions = [
+    "quicksight:DescribeTopic", "quicksight:DescribeTopicRefresh", "quicksight:ListTopicRefreshSchedules",
+    "quicksight:DescribeTopicPermissions", "quicksight:DescribeTopicRefreshSchedule", "quicksight:DeleteTopic",
+    "quicksight:UpdateTopic", "quicksight:CreateTopicRefreshSchedule", "quicksight:DeleteTopicRefreshSchedule",
+    "quicksight:UpdateTopicRefreshSchedule", "quicksight:UpdateTopicPermissions",
+  ]
+
+  topic_json = local.quick_enabled ? jsonencode({
+    AwsAccountId = local.account_id
+    TopicId      = local.topic_id
+    CustomInstructions = {
+      CustomInstructionsString = join(" ", [
+        "A flight is delayed when delay_minutes is 15 minutes or more (is_delayed = 'Yes').",
+        "Impacted passengers is the sum of affected_passengers. Hotel cost is the sum of hotel_cost",
+        "over passenger recommendations with status BOOKED. Recovery time is the average recovery_seconds",
+        "over recommendations with status BOOKED, in seconds. Last month means the last 30 days.",
+      ])
+    }
+    Topic = {
+      Name                  = "River Air flight history"
+      Description           = "Delays, impacted passengers, hotel cost, and recovery time from the River Air demo"
+      UserExperienceVersion = "NEW_READER_EXPERIENCE"
+      DataSets = [
+        {
+          DatasetArn         = aws_quicksight_data_set.flight_impact[0].arn
+          DatasetName        = "Flight impact"
+          DatasetDescription = "One row per flight: its schedule, delay, and how many passengers it put at risk"
+          Columns = [
+            { ColumnName = "key", ColumnFriendlyName = "Flight", ColumnDataRole = "DIMENSION", ColumnSynonyms = ["flight", "flight id"] },
+            { ColumnName = "origin", ColumnFriendlyName = "Origin", ColumnDataRole = "DIMENSION", ColumnSynonyms = ["from", "departure airport"] },
+            { ColumnName = "destination", ColumnFriendlyName = "Destination", ColumnDataRole = "DIMENSION" },
+            { ColumnName = "scheduled_time", ColumnFriendlyName = "Scheduled time", ColumnDataRole = "DIMENSION", TimeGranularity = "DAY", ColumnSynonyms = ["date", "day"] },
+            { ColumnName = "status", ColumnFriendlyName = "Flight status", ColumnDataRole = "DIMENSION" },
+            { ColumnName = "delay_minutes", ColumnFriendlyName = "Delay (minutes)", ColumnDataRole = "MEASURE", Aggregation = "AVERAGE", ColumnSynonyms = ["delay", "minutes late"] },
+            { ColumnName = "affected_passengers", ColumnFriendlyName = "Impacted passengers", ColumnDataRole = "MEASURE", Aggregation = "SUM", ColumnSynonyms = ["impacted passengers", "passengers at risk", "affected passengers"] },
+            { ColumnName = "is_delayed", ColumnFriendlyName = "Delayed", ColumnDataRole = "DIMENSION", ColumnSynonyms = ["delayed", "late"] },
+          ]
+        },
+        {
+          DatasetArn         = aws_quicksight_data_set.passenger_recommendations[0].arn
+          DatasetName        = "Passenger recommendations"
+          DatasetDescription = "One row per recovery offer to an impacted passenger, with its hotel cost and status"
+          Columns = [
+            { ColumnName = "key", ColumnFriendlyName = "Offer", ColumnDataRole = "DIMENSION" },
+            { ColumnName = "passenger_id", ColumnFriendlyName = "Passenger", ColumnDataRole = "DIMENSION", ColumnSynonyms = ["passenger", "customer"] },
+            { ColumnName = "recommended_flight_id", ColumnFriendlyName = "Rebooked flight", ColumnDataRole = "DIMENSION" },
+            { ColumnName = "hotel_name", ColumnFriendlyName = "Hotel", ColumnDataRole = "DIMENSION" },
+            { ColumnName = "status", ColumnFriendlyName = "Offer status", ColumnDataRole = "DIMENSION", ColumnSynonyms = ["booked", "offer status"] },
+            { ColumnName = "hotel_cost", ColumnFriendlyName = "Hotel cost", ColumnDataRole = "MEASURE", Aggregation = "SUM", ColumnSynonyms = ["hotel spend", "hotel cost", "cost"] },
+            { ColumnName = "impacted_at", ColumnFriendlyName = "Impacted at", ColumnDataRole = "DIMENSION", TimeGranularity = "SECOND" },
+            { ColumnName = "recommended_at", ColumnFriendlyName = "Recommended at", ColumnDataRole = "DIMENSION", TimeGranularity = "SECOND", ColumnSynonyms = ["date", "day"] },
+            { ColumnName = "recovery_seconds", ColumnFriendlyName = "Recovery time (seconds)", ColumnDataRole = "MEASURE", Aggregation = "AVERAGE", ColumnSynonyms = ["recovery time", "time to recover"] },
+          ]
+        },
+      ]
+    }
+  }) : ""
+
+  topic_permissions = jsonencode([for arn in var.quick_principal_arns : { Principal = arn, Actions = local.topic_actions }])
+}
+
+resource "terraform_data" "quick_topic" {
+  count = local.quick_enabled ? 1 : 0
+
+  triggers_replace = [sha256(local.topic_json), local.topic_permissions]
+  input = {
+    topic_id   = local.topic_id
+    account_id = local.account_id
+    region     = local.core.cloud_region
+    # Depends on both datasets, so destroy deletes the topic before them.
+    datasets = [aws_quicksight_data_set.flight_impact[0].arn, aws_quicksight_data_set.passenger_recommendations[0].arn]
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+      aws quicksight delete-topic --aws-account-id ${local.account_id} --topic-id ${local.topic_id} --region ${local.core.cloud_region} >/dev/null 2>&1 || true
+      aws quicksight create-topic --region ${local.core.cloud_region} --cli-input-json "$TOPIC_JSON" >/dev/null
+      aws quicksight update-topic-permissions --aws-account-id ${local.account_id} --topic-id ${local.topic_id} \
+        --region ${local.core.cloud_region} --grant-permissions "$TOPIC_PERMISSIONS" >/dev/null
+      echo "Created the Quick Topic ${local.topic_id}"
+    EOT
+    environment = {
+      TOPIC_JSON        = local.topic_json
+      TOPIC_PERMISSIONS = local.topic_permissions
+    }
+  }
+
+  # Destroy runs before the datasets go, since this depends on them. A topic already deleted by hand is fine.
+  provisioner "local-exec" {
+    when    = destroy
+    command = "aws quicksight delete-topic --aws-account-id ${self.input.account_id} --topic-id ${self.input.topic_id} --region ${self.input.region} >/dev/null 2>&1 || true"
+  }
+}

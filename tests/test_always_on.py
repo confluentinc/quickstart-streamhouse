@@ -559,3 +559,22 @@ def test_quick_is_skipped_without_principals():
     variables = (TF / "variables.tf").read_text()
     assert re.search(r'variable "quick_principal_arns" \{[^}]*default\s*=\s*\[\]', variables, re.S)
     assert "length(var.quick_principal_arns) > 0" in _quick()
+
+
+def test_topic_create_is_idempotent_and_destroy_tolerates_a_missing_topic():
+    # The AWS provider has no Topic resource, so terraform_data drives the CLI.
+    topic = _block(_quick(), "terraform_data.quick_topic")
+    assert "aws quicksight delete-topic" in topic and "aws quicksight create-topic" in topic
+    assert topic.index("delete-topic") < topic.index("create-topic")  # a rerun replaces a leftover topic
+    assert "update-topic-permissions" in topic
+    assert re.search(r"when\s*=\s*destroy", topic) and "|| true" in topic
+    assert "aws_quicksight_data_set.flight_impact[0].arn" in topic
+    assert "aws_quicksight_data_set.passenger_recommendations[0].arn" in topic
+
+
+def test_topic_spells_out_the_demo_definitions():
+    quick = _quick()
+    assert "15 minutes or more" in quick and "BOOKED" in quick
+    for synonym in ("hotel spend", "impacted passengers", "recovery time"):
+        assert f'"{synonym}"' in quick
+    assert 'output "quick_topic_id"' in (TF / "outputs.tf").read_text()
