@@ -48,15 +48,15 @@
       </div>
     </section>
     <div class="data-rail">
-      <section class="panel"><div class="panel-head"><h2>Operations</h2>
-          <div class="tabs" role="tablist">
-            <button class="tab active" role="tab" aria-selected="true" data-ops="air">In the air</button>
-            <button class="tab" role="tab" aria-selected="false" data-ops="day">Day view</button>
-          </div>
-          <span class="src" id="flights-src">Lightning Tables</span></div>
+      <section class="panel"><div class="panel-head"><h2>In the air</h2><span class="src" id="flights-src">Lightning Tables</span></div>
         <div class="table-wrap scroll"><table><thead><tr><th>Flight</th><th>Route</th><th>Scheduled</th><th>Status</th>
           <th>Delay (min)</th><th>At risk</th></tr></thead>
         <tbody id="flights"></tbody></table></div>
+      </section>
+      <section class="panel"><div class="panel-head"><h2>Day view</h2><span class="src">Lightning Tables</span></div>
+        <div class="table-wrap scroll"><table><thead><tr><th>Flight</th><th>Route</th><th>Scheduled</th><th>Status</th>
+          <th>Delay (min)</th><th>At risk</th></tr></thead>
+        <tbody id="day-flights"></tbody></table></div>
       </section>
       <section class="panel"><div class="panel-head"><h2 id="flight-title">Flight passengers</h2><span class="src" id="flight-sub"></span></div>
         <div id="flight-empty" class="pax-empty">Select a flight.</div>

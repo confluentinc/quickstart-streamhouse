@@ -8,8 +8,7 @@ let openFlight = null;
 let selected = null;
 let lastUpdated = null;
 let noticeUntil = 0; // an offer action's message holds the status line until then, instead of the next poll's
-let scrollToNow = true; // on load and after "Show all", scroll Operations to the flights around now
-let opsTab = "air"; // Operations: "air" (flights in the air, biggest impact first) or "day" (every flight by schedule)
+let scrollToNow = true; // on load and after "Show all", scroll the day view to the flights around now
 const rowWatermarks = new Map(); // key -> "status|delay_minutes|affected_passengers", for flash-on-change
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
@@ -137,14 +136,14 @@ function render() {
   animateNumber($("count-affected"), counts.affected ?? 0);
   animateNumber($("count-booked"), counts.booked ?? 0);
 
-  // Selecting a flight (map or table) filters this table down to it, same
+  // Selecting a flight (map or table) filters the In the air table down to it, same
   // as the map hiding every other plane — both reflect the one shared
   // openFlight selection, not two independent states.
-  const tabFlights = opsTab === "air" ? (current.in_air || []) : current.flights;
-  const shownFlights = openFlight ? current.flights.filter((row) => row.key === openFlight) : tabFlights;
+  const inAir = current.in_air || [];
+  const shownFlights = openFlight ? current.flights.filter((row) => row.key === openFlight) : inAir;
   $("flights-src").innerHTML = openFlight
     ? `Filtered to 1 of ${current.flights.length} · <button class="link" id="flights-show-all">Show all</button>`
-    : opsTab === "air" ? `${tabFlights.length} in the air · Lightning Tables` : "Lightning Tables";
+    : `${inAir.length} flying · Lightning Tables`;
   if (openFlight) $("flights-show-all").onclick = () => selectFlight(null);
 
   // "Biggest impact" is the flight putting the most passengers at risk. Biggest
@@ -154,16 +153,20 @@ function render() {
     row.affected_passengers > (best?.affected_passengers ?? 0) ? row : best, null)?.key;
   const impactTag = (key) => (key === impactKey ? '<span class="impact-tag">Biggest impact</span>' : "");
   const rowClass = (key) => [key === openFlight ? "selected" : "", key === impactKey ? "top-delay" : ""].join(" ").trim();
-
-  $("flights").innerHTML = shownFlights.map((row) => `<tr id="flight-row-${esc(row.key)}" class="${rowClass(row.key)}">
+  const flightRow = (row, prefix) => `<tr id="${prefix}-${esc(row.key)}" class="${rowClass(row.key)}">
     <td>${flightButton(row.key)}${impactTag(row.key)}</td><td>${esc(row.origin)} → ${esc(row.destination)}</td>
     <td>${esc(hhmm(row.scheduled_time))}</td>
     <td><span class="risk ${FlightMap.flightColorClass(row)}">${esc(label(row.status))}</span></td>
-    <td>${esc(row.delay_minutes)}</td><td>${esc(row.affected_passengers)}</td></tr>`).join("")
+    <td>${esc(row.delay_minutes)}</td><td>${esc(row.affected_passengers)}</td></tr>`;
+  const watermark = (row) => `${row.status}|${row.delay_minutes}|${row.affected_passengers}`;
+
+  $("flights").innerHTML = shownFlights.map((row) => flightRow(row, "flight-row")).join("")
     || `<tr class="empty-row"><td colspan="6">No flights in the air right now.</td></tr>`;
-  shownFlights.forEach((row) =>
-    flashIfChanged($(`flight-row-${row.key}`), `flight:${row.key}`, `${row.status}|${row.delay_minutes}|${row.affected_passengers}`));
-  if (scrollToNow && !openFlight && opsTab === "day") scrollFlightsToNow();
+  shownFlights.forEach((row) => flashIfChanged($(`flight-row-${row.key}`), `flight:${row.key}`, watermark(row)));
+
+  $("day-flights").innerHTML = current.flights.map((row) => flightRow(row, "day-row")).join("");
+  current.flights.forEach((row) => flashIfChanged($(`day-row-${row.key}`), `day:${row.key}`, watermark(row)));
+  if (scrollToNow) scrollDayToNow();
 
   $("delays").innerHTML = current.delays.map((row) => `<tr id="delay-row-${esc(row.key)}" class="${rowClass(row.key)}">
     <td>${flightButton(row.key)}${impactTag(row.key)}</td>
@@ -180,22 +183,10 @@ function render() {
   });
 }
 
-// The list starts 18 hours back, so put the first flight scheduled from 30 minutes ago at the top.
-document.querySelectorAll("[data-ops]").forEach((tab) => {
-  tab.onclick = () => {
-    opsTab = tab.dataset.ops;
-    document.querySelectorAll("[data-ops]").forEach((other) => {
-      other.classList.toggle("active", other === tab);
-      other.setAttribute("aria-selected", String(other === tab));
-    });
-    scrollToNow = opsTab === "day"; // the day view opens on the flights around now
-    render();
-  };
-});
-
-function scrollFlightsToNow() {
+// The day view starts 18 hours back, so put the first flight scheduled from 30 minutes ago at the top.
+function scrollDayToNow() {
   const since = utcMs(current.now) - 30 * 60 * 1000;
-  const row = $("flights").rows[current.flights.findIndex((flight) => utcMs(flight.scheduled_time) >= since)];
+  const row = $("day-flights").rows[current.flights.findIndex((flight) => utcMs(flight.scheduled_time) >= since)];
   if (!row) return;
   const wrap = row.closest(".table-wrap");
   wrap.scrollTop = row.offsetTop - wrap.querySelector("thead").offsetHeight;
