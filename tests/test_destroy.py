@@ -82,3 +82,15 @@ def test_release_only_when_integration_and_tags_are_all_that_is_left(tmp_path, m
 
     assert destroy.release_provider_integration(tmp_path) is expected
     assert (any(cmd[:3] == ["terraform", "state", "rm"] for cmd in calls)) is expected
+
+
+def test_destroy_stops_the_local_datagen_stream(tmp_path, monkeypatch):
+    _deployment(tmp_path, monkeypatch)
+    monkeypatch.setattr(destroy, "run_terraform_destroy", lambda env_path: True)
+    pid_file = tmp_path / "tmp" / "datagen.pid"
+    pid_file.parent.mkdir()
+    pid_file.write_text("999999")  # not a process that exists, so nothing is killed
+
+    destroy.main()
+
+    assert not pid_file.exists()

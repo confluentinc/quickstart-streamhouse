@@ -26,8 +26,8 @@ and the [data model](./data-model.md) explains every field.
 90-minute live stream in the background (log: `tmp/datagen.log`), enables Lightning Tables and RTCE,
 and offers to start the app at http://127.0.0.1:8000.
 
-RA417 is scheduled 50 minutes after the stream starts. From +5 to +25 minutes its delay grows every
-30 seconds, and the Grand Hyatt at SFO sells out at +40. To restart the scene, run `uv run airport-datagen`; it
+RA417 is scheduled 50 minutes after the stream starts. It starts 10 minutes late; from +8 its delay grows every
+30 seconds (red on the map from about +8:30, all 150 connections at risk by +30), and the Grand Hyatt at SFO sells out at +40. To restart the scene, run `uv run airport-datagen`; it
 stops any stream already running, republishes the data, and streams for another 90 minutes. For a
 quicker rehearsal, add `--skip-history`, and `--speed 5` plays the stream five times faster (the 90 minutes take 18). `--dry-run` prints the records without publishing, and
 `--reset` writes tombstones for every generated key.
@@ -117,6 +117,10 @@ uv run deploy --with-labs
 > Deploy mints an org-wide (Global) API key for the reader service account and writes it to the
 > git-ignored `credentials.env`. It's the key the app and Lightning queries authenticate with —
 > keep it out of screenshots and recordings.
+
+### Updating an existing deployment
+
+After you pull a change that adds a topic (the `flight_telemetry` feed, for example), run `uv run deploy` again before `uv run airport-datagen`. Deploy creates the new topic and its schema; until then the generator stops with a "No schema" error. If you deployed the workshop starting point or the full demo, rerun it the same way (`--workshop` or `--with-labs`).
 
 ### Fixed resource names
 

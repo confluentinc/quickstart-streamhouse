@@ -4,6 +4,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -112,7 +113,7 @@ def test_workshop_terraform_builds_only_the_source_tables():
         assert block.lstrip().startswith("count = var.workshop ? 0 : 1")
     tables = re.search(r"tables = merge\((.*?)\n  \)", main, re.S).group(1)
     always, unless_workshop = tables.split("var.workshop ? {} :")
-    assert set(re.findall(r"sql/(\d+)-", always)) == {"20", "21", "22", "23"}
+    assert set(re.findall(r"sql/(\d+)-", always)) == {"20", "21", "22", "23", "35"}
     assert set(re.findall(r"sql/(\d+)-", unless_workshop)) == {"33"}
 
 
@@ -134,6 +135,10 @@ def test_resume_picks_up_the_last_streams_clock(monkeypatch, tmp_path):
     monkeypatch.setattr(airport_datagen, "get_project_root", lambda: tmp_path)
     runs = []
     monkeypatch.setattr(airport_datagen, "run", lambda start, *args, **kwargs: runs.append((start, kwargs)))
+    # No real deployment in tmp_path: stand in for the check, which isn't what this test is about.
+    monkeypatch.setattr(
+        "scripts.workshop_checks.require_deployment", lambda command: SimpleNamespace(is_workshop=False)
+    )
     with pytest.raises(SystemExit):
         airport_datagen.main(["--resume"])
     (tmp_path / "tmp").mkdir()
@@ -197,7 +202,7 @@ def test_lightning_run_returns_rows_like_the_app(monkeypatch):
     assert sent["body"] == {
         "catalog_name": "env-1",
         "database_name": "lkc-1",
-        "query": "SELECT * FROM `hotel_inventory` LIMIT 10",
+        "query": "SELECT * FROM `hotel_inventory` ORDER BY as_of DESC LIMIT 10",
     }
     assert sent["auth"].startswith("Basic ")
 
@@ -222,3 +227,14 @@ def test_workshop_terraform_creates_the_agents_model():
     block = main.split('resource "confluent_flink_statement" "agent_setup" {', 1)[1]
     assert "var.workshop ? { model = local.agent_setup.model }" in block
     assert 'model = "sql/32-model-passenger-recovery-native.sql"' in main
+
+
+def test_the_lightning_command_reads_versioned_tables_newest_first():
+    infra = {"region": "us-east-1", "org_id": "o", "env_id": "env-1", "cluster_id": "lkc-1"}
+    queries = {
+        topic: setup_rtce._lightning_request(infra, "KEY", "SECRET", topic)[1]["query"]
+        for topic in ("hotel_inventory", "flight_telemetry", "passenger_state")
+    }
+    assert queries["flight_telemetry"] == "SELECT * FROM `flight_telemetry` ORDER BY as_of DESC LIMIT 10"
+    assert queries["hotel_inventory"].endswith("ORDER BY as_of DESC LIMIT 10")
+    assert "ORDER BY" not in queries["passenger_state"]

@@ -36,7 +36,7 @@ plans AS (
       g.final_destination, ''' AND scheduled_time >= TIMESTAMP ''',
       DATE_FORMAT(g.impacted_at - INTERVAL '1' HOUR, 'yyyy-MM-dd HH:mm:ss'),
       ''' ORDER BY scheduled_time ASC LIMIT 12',
-      '; hotel_query=SELECT * FROM `hotel_inventory` LIMIT 10'
+      '; hotel_query=SELECT * FROM `hotel_inventory` ORDER BY as_of DESC LIMIT 30'
     ),
     g.group_key
   )) AS r(agent_status, response)

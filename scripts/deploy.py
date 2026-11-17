@@ -21,9 +21,9 @@ Flight Disruptions runs, in order:
 
 Both labs deploy their attendee starting point by default and prebuild the rest with
 --with-labs. Flight Disruptions' starting point is the workshop: steps 1 and 2 build only
-the three source feeds, passenger_recommendations, and the agent's hosted model, and deploy
-stops after the Global API key. Attendees publish the data, build passenger_state, flight_impact,
-and the recovery agent, and turn on Lightning Tables and RTCE themselves
+the source feeds (flights, itineraries, hotels, flight telemetry), passenger_recommendations,
+and the agent's hosted model, and deploy stops after the Global API key. Attendees publish the
+data, build passenger_state, flight_impact, and the recovery agent, and turn on Lightning Tables and RTCE themselves
 (docs/flight-disruptions/workshop.md). Steps 1 to 4 above are the full demo, which
 --with-labs, --video-2, and the bots deploy. The choice is saved to credentials.env, so
 later runs stay in workshop mode, and a checkout that already has the full demo keeps it.
@@ -44,6 +44,8 @@ Usage:
   uv run deploy --testing     # bots: non-interactive from credentials.env, no MCP registration
   uv run deploy --always-on   # operators: the full demo running around the clock on AWS (Lambda + ECS)
   uv run deploy --always-on --reset-data   # same, after tombstoning every generated key
+  uv run deploy --workshop --testing   # test runs: the workshop with no prompts (bots alone deploy the full demo)
+  uv run destroy --testing    # the matching teardown with no prompts; keeps credentials.env, stops the local datagen
 """
 
 import argparse
@@ -769,6 +771,7 @@ def _wait_for_demo_schemas(root) -> None:
         "flight_status-value",
         "passenger_itineraries-value",
         "hotel_inventory-value",
+        "flight_telemetry-value",
         "passenger_recommendations-value",
     )
     for attempt in range(30):
