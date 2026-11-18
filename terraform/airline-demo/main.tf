@@ -64,6 +64,13 @@ locals {
     "sql.current-database" = local.database
   }
 
+  # The stateful statements (joins, aggregations, TO_CHANGELOG grouping) also expire idle state after
+  # three days; the default of 0 keeps it forever, which grows without bound in always-on mode. An
+  # itinerary is written once and published up to about two days before its flight, so three days
+  # leaves a day of margin before a late delay needs it. Statement properties are fixed once a
+  # statement runs, so this applies on a fresh deploy only (ignore_changes below keeps running ones).
+  stateful_sql_props = merge(local.sql_props, { "sql.state-ttl" = "3 d" })
+
   # Demo 3's S3/Glue path needs both the toggle AND AWS Tableflow creds in core.
   # Leave the creds empty and this cleanly skips instead of failing terraform
   # apply. aws_tableflow_credentials_present is a boolean, not a secret, but
@@ -147,7 +154,7 @@ resource "confluent_flink_statement" "passenger_state" {
 
   statement_name = "airport-materialize-passenger-state"
   statement      = file("${path.module}/sql/24-serving-passenger-state.sql")
-  properties     = local.sql_props
+  properties     = local.stateful_sql_props
   lifecycle { ignore_changes = [properties] }
 
   depends_on = [confluent_flink_statement.tables]
@@ -171,7 +178,7 @@ resource "confluent_flink_statement" "flight_impact" {
 
   statement_name = "airport-materialize-flight-impact"
   statement      = file("${path.module}/sql/25-serving-flight-impact.sql")
-  properties     = local.sql_props
+  properties     = local.stateful_sql_props
   lifecycle { ignore_changes = [properties] }
 
   depends_on = [confluent_flink_statement.passenger_state]
@@ -225,7 +232,7 @@ resource "confluent_flink_statement" "passenger_state_changes" {
 
   statement_name = "airport-agent-passenger-state-changes"
   statement      = file("${path.module}/sql/26-staging-passenger-state-changes.sql")
-  properties     = local.sql_props
+  properties     = local.stateful_sql_props
   lifecycle { ignore_changes = [properties] }
 
   depends_on = [confluent_flink_statement.passenger_state]
@@ -246,7 +253,7 @@ resource "confluent_flink_statement" "impacted_passengers" {
 
   statement_name = "airport-agent-impacted-passengers"
   statement      = var.continuous ? replace(file("${path.module}/sql/27-staging-impacted-passengers.sql"), local.agent_flight_filter, "") : file("${path.module}/sql/27-staging-impacted-passengers.sql")
-  properties     = local.sql_props
+  properties     = local.stateful_sql_props
   lifecycle { ignore_changes = [properties] }
 
   depends_on = [confluent_flink_statement.passenger_state_changes]
@@ -288,7 +295,7 @@ resource "confluent_flink_statement" "recovery_offers" {
 
   statement_name = "airport-agent-insert-passenger-recommendations"
   statement      = file("${path.module}/sql/31-insert-passenger-recommendations.sql")
-  properties     = local.sql_props
+  properties     = local.stateful_sql_props
   lifecycle { ignore_changes = [properties] }
 
   depends_on = [
