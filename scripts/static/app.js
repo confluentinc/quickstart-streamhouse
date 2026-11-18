@@ -154,13 +154,13 @@ function render() {
   const rowClass = (key) => [key === openFlight ? "selected" : "", key === impactKey ? "top-delay" : ""].join(" ").trim();
   const flightRow = (row, prefix) => `<tr id="${prefix}-${esc(row.key)}" class="${rowClass(row.key)}">
     <td>${flightButton(row.key)}${impactTag(row.key)}</td><td>${esc(row.origin)} → ${esc(row.destination)}</td>
-    <td>${esc(hhmm(row.scheduled_time))}</td>
+    <td>${esc(hhmm(row.scheduled_departure))}</td><td>${esc(hhmm(row.scheduled_arrival))}</td>
     <td><span class="risk ${FlightMap.flightColorClass(row)}">${esc(label(row.status))}</span></td>
     <td>${esc(row.delay_minutes)}</td><td>${esc(row.affected_passengers)}</td></tr>`;
   const watermark = (row) => `${row.status}|${row.delay_minutes}|${row.affected_passengers}`;
 
   $("flights").innerHTML = shownFlights.map((row) => flightRow(row, "flight-row")).join("")
-    || `<tr class="empty-row"><td colspan="6">No flights in the air right now.</td></tr>`;
+    || `<tr class="empty-row"><td colspan="7">No flights in the air right now.</td></tr>`;
   shownFlights.forEach((row) => flashIfChanged($(`flight-row-${row.key}`), `flight:${row.key}`, watermark(row)));
 
   $("day-flights").innerHTML = current.flights.map((row) => flightRow(row, "day-row")).join("");
@@ -185,7 +185,7 @@ function render() {
 // The day view starts 18 hours back, so put the first flight scheduled from 30 minutes ago at the top.
 function scrollDayToNow() {
   const since = utcMs(current.now) - 30 * 60 * 1000;
-  const row = $("day-flights").rows[current.flights.findIndex((flight) => utcMs(flight.scheduled_time) >= since)];
+  const row = $("day-flights").rows[current.flights.findIndex((flight) => utcMs(FlightMap.sfoTime(flight)) >= since)];
   if (!row) return;
   const wrap = row.closest(".table-wrap");
   wrap.scrollTop = row.offsetTop - wrap.querySelector("thead").offsetHeight;
@@ -206,7 +206,7 @@ async function refreshFlight(opening = false) {
   const { flight, passengers, seats } = body;
   $("flight-title").textContent = `${flight.key} passengers`;
   $("flight-sub").textContent = `${flight.origin} → ${flight.destination} · ${flight.status} · `
-    + `${flight.delay_minutes} min delay · est. ${hhmm(flight.estimated_time)}`;
+    + `${flight.delay_minutes} min delay · departs ${hhmm(flight.estimated_departure)} · arrives ${hhmm(flight.estimated_arrival)}`;
   $("flight-empty").classList.add("hidden");
   $("seat-map").classList.remove("hidden");
   $("flight-table").classList.remove("hidden");

@@ -34,6 +34,11 @@ def records(plan):
     return list(g.initial_records(plan))
 
 
+def _sfo(value: dict, kind: str):
+    """A flight_status row's scheduled or estimated time at SFO: its arrival there, or its departure from it."""
+    return value[f"{kind}_arrival"] if value["destination"] == g.HUB else value[f"{kind}_departure"]
+
+
 def test_each_day_has_180_river_air_flights_through_sfo(plan):
     for day in [*plan.days, plan.tomorrow]:
         assert len(day.flights) == 180
@@ -245,7 +250,7 @@ def test_initial_records_stay_within_lightning_row_cap(plan, records):
     expected = {p.key for d in plan.days for p in d.passengers if d.live or p.connecting}
     assert written == expected
     assert all(
-        value["scheduled_time"] <= START + timedelta(days=2) for topic, _, value in records if topic == g.FLIGHTS
+        _sfo(value, "scheduled") <= START + timedelta(days=2) for topic, _, value in records if topic == g.FLIGHTS
     )
 
 
@@ -261,7 +266,7 @@ def test_stream_updates_flights_every_30_seconds_and_hotels_every_15(plan):
     assert all(later - earlier == g.UPDATE_EVERY for times in updates.values() for earlier, later in pairwise(times))
     hero_updates = [value for _, topic, key, value in events if topic == g.FLIGHTS and key == hero.key]
     assert len(hero_updates) == 2 * g.STREAM_MINUTES
-    assert hero_updates[-1]["estimated_time"] == hero.scheduled + timedelta(minutes=115)
+    assert hero_updates[-1]["estimated_arrival"] == hero.scheduled + timedelta(minutes=115)
     rooms = {
         hotel: [
             (at, value["available_rooms"]) for at, topic, key, value in events if topic == g.HOTELS and key == hotel

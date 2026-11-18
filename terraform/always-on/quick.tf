@@ -203,7 +203,11 @@ resource "aws_quicksight_data_set" "flight_impact" {
         type = "STRING"
       }
       input_columns {
-        name = "scheduled_time"
+        name = "scheduled_departure"
+        type = "DATETIME"
+      }
+      input_columns {
+        name = "scheduled_arrival"
         type = "DATETIME"
       }
       input_columns {
@@ -362,7 +366,8 @@ locals {
             { ColumnName = "key", ColumnFriendlyName = "Flight", ColumnDataRole = "DIMENSION", ColumnSynonyms = ["flight", "flight id"] },
             { ColumnName = "origin", ColumnFriendlyName = "Origin", ColumnDataRole = "DIMENSION", ColumnSynonyms = ["from", "departure airport"] },
             { ColumnName = "destination", ColumnFriendlyName = "Destination", ColumnDataRole = "DIMENSION" },
-            { ColumnName = "scheduled_time", ColumnFriendlyName = "Scheduled time", ColumnDataRole = "DIMENSION", TimeGranularity = "DAY", ColumnSynonyms = ["date", "day"] },
+            { ColumnName = "scheduled_departure", ColumnFriendlyName = "Scheduled departure", ColumnDataRole = "DIMENSION", TimeGranularity = "DAY", ColumnSynonyms = ["date", "day", "departure time"] },
+            { ColumnName = "scheduled_arrival", ColumnFriendlyName = "Scheduled arrival", ColumnDataRole = "DIMENSION", TimeGranularity = "DAY", ColumnSynonyms = ["arrival time", "landing time"] },
             { ColumnName = "status", ColumnFriendlyName = "Flight status", ColumnDataRole = "DIMENSION" },
             { ColumnName = "delay_minutes", ColumnFriendlyName = "Delay (minutes)", ColumnDataRole = "MEASURE", Aggregation = "AVERAGE", ColumnSynonyms = ["delay", "minutes late"] },
             { ColumnName = "affected_passengers", ColumnFriendlyName = "Impacted passengers", ColumnDataRole = "MEASURE", Aggregation = "SUM", ColumnSynonyms = ["impacted passengers", "passengers at risk", "affected passengers"] },

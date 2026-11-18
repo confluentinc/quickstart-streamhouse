@@ -44,10 +44,10 @@ def test_agent_handles_the_generators_agent_flights():
 def test_agent_filter_keeps_the_live_flights_and_drops_history_at_any_hour():
     """sql/27 keeps a HIGH passenger only while their inbound flight is still due to land, not by UTC date."""
     sql = _sql("27")
-    assert "CAST($rowtime AS TIMESTAMP(3)) < inbound_estimated_time" in sql
+    assert "CAST($rowtime AS TIMESTAMP(3)) < inbound_estimated_arrival" in sql
     assert "CURRENT_TIMESTAMP" not in sql
-    assert "inbound.estimated_time AS inbound_estimated_time" in _sql("24")
-    assert "  inbound_estimated_time\nFROM TO_CHANGELOG(" in _sql("26")
+    assert "inbound.estimated_arrival AS inbound_estimated_arrival" in _sql("24")
+    assert "  inbound_estimated_arrival\nFROM TO_CHANGELOG(" in _sql("26")
     # Noon, and a start whose agent flights turn HIGH after UTC midnight.
     for start in (datetime(2026, 9, 28, 12, 0), datetime(2026, 9, 28, 23, 40)):
         plan = airport_datagen.build_plan(start)

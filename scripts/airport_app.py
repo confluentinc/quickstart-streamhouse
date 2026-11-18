@@ -248,21 +248,35 @@ def _hotel_options() -> list[dict]:
     )
 
 
+# Every flight starts or ends at SFO: an arrival's time at SFO is its scheduled arrival, a departure's its scheduled
+# departure. The day's board and its paging go by that time.
+SFO_TIME = (("destination", "scheduled_arrival"), ("origin", "scheduled_departure"))
+
+
+def _sfo_time(row: dict):
+    return row.get("scheduled_arrival") if row.get("destination") == HUB else row.get("scheduled_departure")
+
+
 def _scheduled_rows(topic: str, start: datetime, end: datetime) -> list[dict]:
-    """Every row scheduled in [start, end), paging on scheduled_time past Lightning's 200-row cap."""
+    """Every row at SFO in [start, end): arrivals by scheduled arrival, departures by scheduled departure.
+
+    Each side pages on its own column past Lightning's 200-row cap.
+    """
     rows: dict[tuple, dict] = {}
-    since = start
-    while True:
-        page = _rows(
-            topic,
-            where=[("scheduled_time", ">=", since), ("scheduled_time", "<", end)],
-            order_by=("scheduled_time", "ASC"),
-        )
-        rows.update((tuple(row.items()), row) for row in page)  # each page repeats the last one's final time
-        last = _timestamp(page[-1].get("scheduled_time")) if page else None
-        if len(page) < PAGE_SIZE or last is None or last == since:
-            return list(rows.values())
-        since = last
+    for side, column in SFO_TIME:
+        since = start
+        while True:
+            page = _rows(
+                topic,
+                where=[(side, "=", HUB), (column, ">=", since), (column, "<", end)],
+                order_by=(column, "ASC"),
+            )
+            rows.update((tuple(row.items()), row) for row in page)  # each page repeats the last one's final time
+            last = _timestamp(page[-1].get(column)) if page else None
+            if len(page) < PAGE_SIZE or last is None or last == since:
+                break
+            since = last
+    return list(rows.values())
 
 
 def _live_copies(flights: list[dict], impact: dict[str, dict]) -> list[dict]:
@@ -282,7 +296,7 @@ def _live_copies(flights: list[dict], impact: dict[str, dict]) -> list[dict]:
         chosen.append(
             max(
                 matching or rows,
-                key=lambda row: (STAGES.get(row.get("status"), 0), row["estimated_time"] or datetime.min),
+                key=lambda row: (STAGES.get(row.get("status"), 0), row["estimated_arrival"] or datetime.min),
             )
         )
     return chosen
@@ -302,13 +316,14 @@ def _flights(key: str | None = None, window: tuple[datetime, datetime] | None = 
     impact = _pool.submit(read, "flight_impact")
     flights = []
     for row in read("flight_status"):
-        scheduled, estimated = _timestamp(row.get("scheduled_time")), _timestamp(row.get("estimated_time"))
+        # The arrival delay; a flight leaving SFO is late by the same minutes at both ends.
+        scheduled, estimated = _timestamp(row.get("scheduled_arrival")), _timestamp(row.get("estimated_arrival"))
         delay = round((estimated - scheduled) / timedelta(minutes=1)) if scheduled and estimated else 0
-        flights.append({**row, "estimated_time": estimated, "delay_minutes": delay})
+        flights.append({**row, "estimated_arrival": estimated, "delay_minutes": delay})
     impact = {row["key"]: row for row in impact.result()}
     flights = sorted(
         _live_copies(flights, impact),
-        key=lambda row: (_timestamp(row.get("scheduled_time")) or datetime.min, row["key"]),
+        key=lambda row: (_timestamp(_sfo_time(row)) or datetime.min, row["key"]),
     )
     return [
         {**row, "affected_passengers": _int(impact.get(row["key"], {}).get("affected_passengers"))} for row in flights
@@ -407,7 +422,7 @@ def _live_passengers(rows: list[dict]) -> list[dict]:
 
     def progress(row: dict):
         minutes = row.get("connection_minutes")
-        return (_timestamp(row.get("inbound_estimated_time")) or datetime.min, _int(minutes) if minutes else -1)
+        return (_timestamp(row.get("inbound_estimated_arrival")) or datetime.min, _int(minutes) if minutes else -1)
 
     latest: dict[str, dict] = {}
     for row in rows:

@@ -9,11 +9,12 @@
 // flies the plane on from that reading (planeState). The readings are
 // synthetic, not real tracking data.
 //
-// flight_status only carries ONE meaningful timestamp per flight (see
-// airport_datagen.py Flight.estimated_at): the arrival time for a flight
-// landing at the SFO hub, or the departure time for a flight leaving it. The
-// info box's other times come from the real distance between the two
-// airports at a plausible cruise speed (estimateDurationMs).
+// flight_status carries each flight's scheduled and estimated departure and
+// arrival. The generator plans every flight from its time at the SFO hub (the
+// arrival for a flight landing there, the departure for one leaving it), so the
+// info box starts from that time too (sfoTime) and derives the far end from the
+// real distance between the two airports at a plausible cruise speed
+// (estimateDurationMs).
 
 const HUB = "SFO";
 const CRUISE_KMH = 850; // typical narrow-body cruise speed
@@ -141,18 +142,23 @@ const NM_PX = MAP_H / (BOUNDS.latMax - BOUNDS.latMin) / 60;
 const FRESH_MS = 15000;
 const clampAge = (ms) => Math.max(0, Math.min(FRESH_MS, ms));
 
-// The route's curve and the three moments the info box shows. Only the
-// departure OR arrival instant is real data (see file header); the other two
-// are derived from the estimated duration, so they're approximations, not
-// authoritative times. A late arrival keeps its scheduled takeoff and circles
+// The flight's scheduled time at SFO: its arrival there, or its departure from it.
+function sfoTime(row) {
+  return row.destination === HUB ? row.scheduled_arrival : row.scheduled_departure;
+}
+
+// The route's curve and the three moments the info box shows. They start from
+// the flight's time at SFO (see file header); the other two are derived from
+// the estimated duration, so they're approximations of the generator's own
+// times, not copies of them. A late arrival keeps its scheduled takeoff and circles
 // until it can land at its estimated time, the same rule the generator flies.
 function flightTimes(row) {
   const a = AIRPORTS[row.origin], b = AIRPORTS[row.destination];
   if (!a || !b) return null;
   const duration = estimateDurationMs(row.origin, row.destination);
-  const known = parseTsMs(row.scheduled_time);
-  if (known == null) return null;
   const isArrival = row.destination === HUB;
+  const known = parseTsMs(sfoTime(row));
+  if (known == null) return null;
   const delayMs = (Number(row.delay_minutes) || 0) * 60000;
 
   let departureMs, scheduledArrivalMs, estimatedArrivalMs;
@@ -672,4 +678,4 @@ function buildMapSvg(svgSelector) {
   svg.dataset.built = "1";
 }
 
-window.FlightMap = { buildMapSvg, renderFlightMap, flightColorClass };
+window.FlightMap = { buildMapSvg, renderFlightMap, flightColorClass, sfoTime };

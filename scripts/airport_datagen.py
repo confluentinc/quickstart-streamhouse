@@ -221,6 +221,10 @@ STREAM_MINUTES = 90
 SEED = 42
 
 
+def _minute(moment: datetime) -> datetime:
+    return moment.replace(second=0, microsecond=0)
+
+
 @dataclass
 class Flight:
     key: str
@@ -253,12 +257,35 @@ class Flight:
             return "BOARDING"
         return "DELAYED" if self.delay_at(at) >= DELAYED_AT else "ON_TIME"
 
+    def times_at(self, at: datetime) -> tuple[datetime, datetime, datetime, datetime]:
+        """(scheduled departure, scheduled arrival, estimated departure, estimated arrival) as known at `at`.
+
+        `scheduled` is the time at SFO; the far end is the gate-to-gate time away, cut to the minute so a delay is
+        the same whole minutes at both ends. A late arrival keeps its scheduled takeoff and circles until it can
+        land, the way its telemetry flies, unless it takes off late instead (flies_to). Such a flight's delay is
+        announced bit by bit, so until it takes off its estimated departure follows the announced arrival, and the
+        two ends never disagree on the board; from takeoff it is the real one.
+        """
+        duration = flight_profile.flight_duration(self.origin, self.destination)
+        estimated = self.estimated_at(at)
+        if self.arrival:
+            if self.flies_to:
+                takeoff = self.flies_to - duration
+                departure = takeoff if at >= takeoff else min(takeoff, max(self.scheduled, estimated) - duration)
+            else:
+                departure = min(self.scheduled, estimated) - duration
+            return _minute(self.scheduled - duration), self.scheduled, _minute(departure), estimated
+        return self.scheduled, _minute(self.scheduled + duration), estimated, _minute(estimated + duration)
+
     def row(self, at: datetime) -> dict:
+        scheduled_departure, scheduled_arrival, estimated_departure, estimated_arrival = self.times_at(at)
         return dict(
             origin=self.origin,
             destination=self.destination,
-            scheduled_time=self.scheduled,
-            estimated_time=self.estimated_at(at),
+            scheduled_departure=scheduled_departure,
+            scheduled_arrival=scheduled_arrival,
+            estimated_departure=estimated_departure,
+            estimated_arrival=estimated_arrival,
             status=self.status_at(at),
         )
 
@@ -574,7 +601,7 @@ def hero_departure(arrival: datetime) -> datetime:
     The flight and passenger keys carry its date and time, so a key says when the plane takes off. The
     first two RA417s of a UTC day leave the evening before, so their keys name the day before.
     """
-    return arrival - flight_profile.flight_duration(HERO_ORIGIN, HUB)
+    return _minute(arrival - flight_profile.flight_duration(HERO_ORIGIN, HUB))
 
 
 def build_day(
@@ -947,7 +974,7 @@ def telemetry_row(flight: Flight, at: datetime) -> dict | None:
     if flight.flies_to:
         scheduled = estimated = flight.flies_to
     else:
-        scheduled, estimated = flight.scheduled, status["estimated_time"]
+        scheduled, estimated = flight.scheduled, flight.estimated_at(at)
     found = flight_profile.reading(
         flight.key, flight.origin, flight.destination, scheduled, estimated, status["status"], at
     )

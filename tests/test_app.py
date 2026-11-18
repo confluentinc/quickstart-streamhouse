@@ -27,19 +27,19 @@ def test_builder_renders_timestamp_in_numbers_and_order():
         "flight_impact",
         limit=200,
         where=[
-            ("scheduled_time", ">=", datetime(2026, 9, 1, 0, 0, 0, 999)),
+            ("scheduled_departure", ">=", datetime(2026, 9, 1, 0, 0, 0, 999)),
             ("delay_minutes", ">", 15),
             ("hotel_cost", "<=", Decimal("189.50")),
             ("status", "IN", ["DELAYED", "BOARDING"]),
             ("key", "LIKE", "RA4%"),
         ],
-        order_by=("scheduled_time", "desc"),
+        order_by=("scheduled_departure", "desc"),
     )
     assert query == (
-        "SELECT * FROM `flight_impact` WHERE scheduled_time >= TIMESTAMP '2026-09-01 00:00:00'"
+        "SELECT * FROM `flight_impact` WHERE scheduled_departure >= TIMESTAMP '2026-09-01 00:00:00'"
         " AND delay_minutes > 15 AND hotel_cost <= 189.50"
         " AND status IN ('DELAYED', 'BOARDING') AND \"KEY\" LIKE 'RA4%'"
-        " ORDER BY scheduled_time DESC LIMIT 200"
+        " ORDER BY scheduled_departure DESC LIMIT 200"
     )
 
 
@@ -311,12 +311,29 @@ def test_write_offer_passes_nulls_and_parses_timestamps(monkeypatch):
     assert second["recommended_at"] == datetime(2026, 9, 21, 14, 13, 20)
 
 
+def _at(scheduled, estimated):
+    """A flight_status row's four times as Lightning returns them. Both ends share one time, since these tests
+    are about the app, not flight lengths: the board pages and sorts on the end at SFO either way."""
+    return {
+        "scheduled_departure": scheduled,
+        "scheduled_arrival": scheduled,
+        "estimated_departure": estimated,
+        "estimated_arrival": estimated,
+    }
+
+
+def _late(delay):
+    """11:00 on the test day, `delay` minutes late, as Lightning returns a timestamp."""
+    return (datetime(2026, 9, 28, 11) + timedelta(minutes=delay)).strftime("%Y-%m-%d %H:%M:%S.000")
+
+
 def _flight(n, scheduled, delay, affected, status="ON_TIME", origin="SFO", destination="SEA"):
     """The flight's flight_status row and its flight_impact row, as Lightning returns them."""
-    row = {"key": f"RA{n}-20260928", "origin": origin, "destination": destination, "scheduled_time": scheduled}
+    row = {"key": f"RA{n}-20260928", "origin": origin, "destination": destination}
+    row |= {"scheduled_departure": scheduled, "scheduled_arrival": scheduled}
     estimated = datetime.fromisoformat(scheduled) + timedelta(minutes=delay)
     return (
-        {**row, "estimated_time": f"{estimated:%Y-%m-%d %H:%M:%S}.000000", "status": status},
+        {**row, **_at(scheduled, f"{estimated:%Y-%m-%d %H:%M:%S}.000000"), "status": status},
         {**row, "status": status, "delay_minutes": str(delay), "affected_passengers": str(affected)},
     )
 
@@ -350,7 +367,12 @@ def test_state_counts_and_delays(fake):
     # Most passengers at risk first, then the longest delay; only flights 15+ minutes late.
     assert [row["key"] for row in body["delays"]] == ["RA417-20260928", "RA418-20260928"]
     for topic in ("flight_status", "flight_impact"):
-        assert next(call for call in fake.calls if call["topic"] == topic)["order_by"] == ("scheduled_time", "ASC")
+        # Arrivals page on their scheduled arrival at SFO, departures on their scheduled departure from it.
+        windows = [(call["where"][0], call["order_by"]) for call in fake.calls if call["topic"] == topic]
+        assert windows[:2] == [
+            (("destination", "=", "SFO"), ("scheduled_arrival", "ASC")),
+            (("origin", "=", "SFO"), ("scheduled_departure", "ASC")),
+        ]
 
 
 def test_biggest_delays_puts_a_flight_with_passengers_at_risk_above_a_longer_delay(fake):
@@ -377,8 +399,9 @@ def test_flights_show_live_status_and_delay_with_flinks_at_risk_count(fake):
 
 def _copy(status_row, delay, status):
     """Another flight_status row for the same flight, like the frozen copy Lightning can keep beside the live one."""
-    estimated = datetime.fromisoformat(status_row["scheduled_time"]) + timedelta(minutes=delay)
-    return {**status_row, "estimated_time": f"{estimated:%Y-%m-%d %H:%M:%S}.000000", "status": status}
+    estimated = datetime.fromisoformat(status_row["scheduled_arrival"]) + timedelta(minutes=delay)
+    estimated = f"{estimated:%Y-%m-%d %H:%M:%S}.000000"
+    return {**status_row, "estimated_departure": estimated, "estimated_arrival": estimated, "status": status}
 
 
 def test_each_flight_shows_once_with_its_live_copy_past_the_200_row_cap(fake):
@@ -392,7 +415,7 @@ def test_each_flight_shows_once_with_its_live_copy_past_the_200_row_cap(fake):
     }  # Flink hasn't caught up with the landing yet
     frozen = []
     for n, ((old_delay, old_status), (delay, status), reported) in cases.items():
-        live, impact = _flight(n, flights[n][0]["scheduled_time"], delay, 9, status)
+        live, impact = _flight(n, flights[n][0]["scheduled_arrival"], delay, 9, status)
         flights[n] = (live, {**impact, "delay_minutes": str(reported)})
         frozen.append(_copy(live, old_delay, old_status))
     frozen += [dict(live) for live, _ in flights[:32]]  # copies that never diverged
@@ -433,7 +456,7 @@ def test_flight_passengers_high_risk_first(fake):
     client = TestClient(airport_app.app)
     body = client.get("/api/flight/RA417-20260928").json()
     assert body["flight"]["delay_minutes"] == 95
-    assert body["flight"]["estimated_time"] == "2026-09-28T12:35:00"
+    assert body["flight"]["estimated_arrival"] == "2026-09-28T12:35:00"
     assert body["flight"]["arrival"] is True
     assert [(row["key"], row["seat"]) for row in body["passengers"]] == [
         ("P-0928-2", "3A"),
@@ -457,9 +480,14 @@ def test_a_stale_passenger_state_copy_never_hides_a_high_risk_seat(fake):
         "connecting_flight_id": "RA681-20260928",
         "risk": "HIGH",
         "connection_minutes": "30",
-        "inbound_estimated_time": "2026-09-28 11:40:00.000000",
+        "inbound_estimated_arrival": "2026-09-28 11:40:00.000000",
     }
-    stale = {**live, "risk": "OK", "connection_minutes": "60", "inbound_estimated_time": "2026-09-28 11:10:00.000000"}
+    stale = {
+        **live,
+        "risk": "OK",
+        "connection_minutes": "60",
+        "inbound_estimated_arrival": "2026-09-28 11:10:00.000000",
+    }
     fake.tables["passenger_state"] = [live, stale]
     client = TestClient(airport_app.app)
     rows = client.get("/api/flight/RA417-20260928").json()["passengers"]
@@ -622,8 +650,9 @@ def test_state_survives_a_failed_telemetry_read(fake, monkeypatch):
     fake.tables["flight_status"] = [
         {
             "key": "RA417-20260928",
-            "scheduled_time": "2026-09-28 11:00:00.000",
-            "estimated_time": "2026-09-28 11:00:00.000",
+            "origin": "ORD",
+            "destination": "SFO",
+            **_at("2026-09-28 11:00:00.000", "2026-09-28 11:00:00.000"),
         }
     ]
     healthy = fake.query
@@ -644,8 +673,9 @@ def test_state_has_no_notice_when_telemetry_reads(fake):
     fake.tables["flight_status"] = [
         {
             "key": "RA417-20260928",
-            "scheduled_time": "2026-09-28 11:00:00.000",
-            "estimated_time": "2026-09-28 11:00:00.000",
+            "origin": "ORD",
+            "destination": "SFO",
+            **_at("2026-09-28 11:00:00.000", "2026-09-28 11:00:00.000"),
         }
     ]
     fake.tables["flight_telemetry"] = [_reading("RA417-20260928", 10)]
@@ -719,8 +749,7 @@ def test_state_lists_the_flights_in_the_air_biggest_impact_first(fake):
             "key": key,
             "origin": "ORD",
             "destination": "SFO",
-            "scheduled_time": "2026-09-28 11:00:00.000",
-            "estimated_time": (datetime(2026, 9, 28, 11) + timedelta(minutes=delay)).strftime("%Y-%m-%d %H:%M:%S.000"),
+            **_at("2026-09-28 11:00:00.000", _late(delay)),
             "status": "DELAYED" if delay else "ON_TIME",
         }
 
@@ -758,8 +787,7 @@ def test_biggest_delays_leave_out_landed_flights(fake):
             "key": key,
             "origin": "ORD",
             "destination": "SFO",
-            "scheduled_time": "2026-09-28 11:00:00.000",
-            "estimated_time": (datetime(2026, 9, 28, 11) + timedelta(minutes=delay)).strftime("%Y-%m-%d %H:%M:%S.000"),
+            **_at("2026-09-28 11:00:00.000", _late(delay)),
             "status": status,
         }
 
@@ -773,8 +801,7 @@ def test_biggest_delays_are_flights_in_the_air_or_still_to_leave(fake):
             "key": key,
             "origin": origin,
             "destination": destination,
-            "scheduled_time": "2026-09-28 11:00:00.000",
-            "estimated_time": (datetime(2026, 9, 28, 11) + timedelta(minutes=delay)).strftime("%Y-%m-%d %H:%M:%S.000"),
+            **_at("2026-09-28 11:00:00.000", _late(delay)),
             "status": status,
         }
 

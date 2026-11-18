@@ -2,8 +2,10 @@ CREATE TABLE IF NOT EXISTS flight_status (
   `key` STRING NOT NULL,
   origin STRING,
   destination STRING,
-  scheduled_time TIMESTAMP(3),
-  estimated_time TIMESTAMP(3),
+  scheduled_departure TIMESTAMP(3),
+  scheduled_arrival TIMESTAMP(3),
+  estimated_departure TIMESTAMP(3),
+  estimated_arrival TIMESTAMP(3),
   status STRING,
   PRIMARY KEY (`key`) NOT ENFORCED
 ) DISTRIBUTED BY (`key`) INTO 1 BUCKETS

@@ -1,11 +1,13 @@
 -- One row per flight: its latest status, delay, and how many passengers it puts at HIGH risk.
 -- Tableflow syncs this table to Iceberg for the historical questions. passenger_state is read
 -- uncommitted so a new HIGH count doesn't wait for that table's once-a-minute Flink commit.
+-- delay_minutes is the arrival delay; for a flight leaving SFO it equals the departure delay.
 CREATE OR ALTER MATERIALIZED TABLE flight_impact (
   `key` STRING NOT NULL,
   origin STRING,
   destination STRING,
-  scheduled_time TIMESTAMP(3),
+  scheduled_departure TIMESTAMP(3),
+  scheduled_arrival TIMESTAMP(3),
   status STRING,
   delay_minutes INT,
   affected_passengers INT,
@@ -22,9 +24,10 @@ AS SELECT
   f.`key`,
   f.origin,
   f.destination,
-  f.scheduled_time,
+  f.scheduled_departure,
+  f.scheduled_arrival,
   f.status,
-  TIMESTAMPDIFF(MINUTE, f.scheduled_time, f.estimated_time) AS delay_minutes,
+  TIMESTAMPDIFF(MINUTE, f.scheduled_arrival, f.estimated_arrival) AS delay_minutes,
   COALESCE(impact.affected_passengers, 0) AS affected_passengers
 FROM flight_status f
 LEFT JOIN (

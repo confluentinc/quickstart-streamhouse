@@ -228,7 +228,7 @@ Use Flink to join each itinerary with the live status of both flights. Connectio
       final_destination STRING,
       connection_minutes INT,
       risk STRING,
-      inbound_estimated_time TIMESTAMP(3),
+      inbound_estimated_arrival TIMESTAMP(3),
       PRIMARY KEY (`key`) NOT ENFORCED
     ) DISTRIBUTED BY (`key`) INTO 1 BUCKETS
     WITH (
@@ -245,13 +245,13 @@ Use Flink to join each itinerary with the live status of both flights. Connectio
       p.connecting_flight_id,
       p.connecting_seat,
       COALESCE(onward.destination, inbound.destination) AS final_destination,
-      TIMESTAMPDIFF(MINUTE, inbound.estimated_time, onward.estimated_time) AS connection_minutes,
+      TIMESTAMPDIFF(MINUTE, inbound.estimated_arrival, onward.estimated_departure) AS connection_minutes,
       CASE
         WHEN p.connecting_flight_id IS NULL THEN 'NO_CONNECTION'
-        WHEN TIMESTAMPDIFF(MINUTE, inbound.estimated_time, onward.estimated_time) < 45 THEN 'HIGH'
+        WHEN TIMESTAMPDIFF(MINUTE, inbound.estimated_arrival, onward.estimated_departure) < 45 THEN 'HIGH'
         ELSE 'OK'
       END AS risk,
-      inbound.estimated_time AS inbound_estimated_time
+      inbound.estimated_arrival AS inbound_estimated_arrival
     FROM passenger_itineraries p
     JOIN flight_status inbound ON p.inbound_flight_id = inbound.`key`
     LEFT JOIN flight_status onward ON p.connecting_flight_id = onward.`key`;
@@ -277,7 +277,8 @@ Use Flink to join each itinerary with the live status of both flights. Connectio
       `key` STRING NOT NULL,
       origin STRING,
       destination STRING,
-      scheduled_time TIMESTAMP(3),
+      scheduled_departure TIMESTAMP(3),
+      scheduled_arrival TIMESTAMP(3),
       status STRING,
       delay_minutes INT,
       affected_passengers INT,
@@ -294,9 +295,10 @@ Use Flink to join each itinerary with the live status of both flights. Connectio
       f.`key`,
       f.origin,
       f.destination,
-      f.scheduled_time,
+      f.scheduled_departure,
+      f.scheduled_arrival,
       f.status,
-      TIMESTAMPDIFF(MINUTE, f.scheduled_time, f.estimated_time) AS delay_minutes,
+      TIMESTAMPDIFF(MINUTE, f.scheduled_arrival, f.estimated_arrival) AS delay_minutes,
       COALESCE(impact.affected_passengers, 0) AS affected_passengers
     FROM flight_status f
     LEFT JOIN (
@@ -425,7 +427,7 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
       connecting_flight_id STRING,
       final_destination STRING,
       risk STRING,
-      inbound_estimated_time TIMESTAMP(3)
+      inbound_estimated_arrival TIMESTAMP(3)
     ) DISTRIBUTED BY (`key`) INTO 4 BUCKETS
     WITH (
       'changelog.mode' = 'append',
@@ -439,7 +441,7 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
       connecting_flight_id,
       final_destination,
       risk,
-      inbound_estimated_time
+      inbound_estimated_arrival
     FROM TO_CHANGELOG(
       input      => TABLE passenger_state PARTITION BY `key`,
       op_mapping => MAP['INSERT, UPDATE_AFTER', 'UPSERT']
@@ -474,7 +476,7 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
       FROM passenger_state_changes
       WHERE risk = 'HIGH'
         AND SPLIT_INDEX(inbound_flight_id, '-', 0) IN ('RA417', 'RA183', 'RA185')
-        AND CAST($rowtime AS TIMESTAMP(3)) < inbound_estimated_time
+        AND CAST($rowtime AS TIMESTAMP(3)) < inbound_estimated_arrival
       GROUP BY `key`, inbound_flight_id, connecting_flight_id, final_destination
     )
     SELECT `key`, inbound_flight_id, connecting_flight_id, final_destination, impacted_at
@@ -517,10 +519,10 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
     Use the queryData tool (arguments: topic_name, query, max_result_rows) to run the three queries in the task.
     The queries already use the right column names, so run them as given without calling getMetadata first.
 
-    1. inbound_query returns the inbound flight. Its estimated_time is when the passenger lands at SFO.
+    1. inbound_query returns the inbound flight. Its estimated_arrival is when the passenger lands at SFO.
     2. departures_query returns flights from SFO to the final destination. Offer the first two flights whose
-       estimated_time is at least 45 minutes after the inbound estimated_time. Skip CANCELLED flights.
-    3. An offered flight that leaves 6 hours or more after the inbound estimated_time needs a hotel.
+       estimated_departure is at least 45 minutes after the inbound estimated_arrival. Skip CANCELLED flights.
+    3. An offered flight whose estimated_departure is 6 hours or more after the inbound estimated_arrival needs a hotel.
        Run hotel_query. It returns the hotel updates, newest first, so each hotel appears several times:
        use only the row with the latest as_of for each hotel. List the hotels whose latest available_rooms
        is above 0 in this order: Grand Hyatt at SFO, SFO Airport Marriott Waterfront, Hilton SFO Airport
@@ -579,9 +581,9 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
           '; final_destination=', g.final_destination,
           '; inbound_query=SELECT * FROM `flight_status` WHERE "KEY" = ''', g.inbound_flight_id, ''' LIMIT 1',
           '; departures_query=SELECT * FROM `flight_status` WHERE origin = ''SFO'' AND destination = ''',
-          g.final_destination, ''' AND scheduled_time >= TIMESTAMP ''',
+          g.final_destination, ''' AND scheduled_departure >= TIMESTAMP ''',
           DATE_FORMAT(g.impacted_at - INTERVAL '1' HOUR, 'yyyy-MM-dd HH:mm:ss'),
-          ''' ORDER BY scheduled_time ASC LIMIT 12',
+          ''' ORDER BY scheduled_departure ASC LIMIT 12',
           '; hotel_query=SELECT * FROM `hotel_inventory` ORDER BY as_of DESC LIMIT 30'
         ),
         g.group_key

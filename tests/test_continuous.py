@@ -15,6 +15,11 @@ def around_the_clock_day():
     return g.build_day(g.SEED, DAY, MIDNIGHT, live=True, schedule=g.AROUND_THE_CLOCK)
 
 
+def _sfo(value: dict, kind: str):
+    """A flight_status row's scheduled or estimated time at SFO: its arrival there, or its departure from it."""
+    return value[f"{kind}_arrival"] if value["destination"] == g.HUB else value[f"{kind}_departure"]
+
+
 def test_around_the_clock_has_180_flights_spread_over_24_hours():
     day = around_the_clock_day()
     assert len(day.arrivals) == 90 and len(day.departures) == 90
@@ -81,6 +86,21 @@ def test_every_ra417_strands_60_of_80_passengers():
         assert len(riders) == g.CONTINUOUS_HERO_CONNECTING + g.HERO_LOCAL == 80
         assert sum(1 for p in riders if p.impacted_at) == 60
         assert hero.delay_at(datetime.max) == g.HERO_DELAY
+
+
+def test_a_late_taking_off_ra417_never_shows_a_late_departure_with_an_on_time_arrival():
+    # An always-on RA417 takes off late (flies_to), but its delay is announced bit by bit. Until takeoff the
+    # estimated departure follows the announced arrival, so the board's two ends agree; from takeoff it's the real one.
+    hero = next(f for f in g.continuous_day(g.SEED, DAY).heroes if f.flies_to)
+    takeoff = hero.flies_to - g.flight_profile.flight_duration(hero.origin, hero.destination)
+    at = hero.scheduled - timedelta(hours=6)
+    while at < hero.flies_to:
+        scheduled_departure, scheduled_arrival, estimated_departure, estimated_arrival = hero.times_at(at)
+        if at < takeoff:
+            assert estimated_departure - scheduled_departure == estimated_arrival - scheduled_arrival, at
+        else:
+            assert estimated_departure == takeoff.replace(second=0, microsecond=0), at
+        at += timedelta(minutes=1)
 
 
 def test_ra417_passenger_keys_name_the_flight_time_and_are_unique():
@@ -168,7 +188,7 @@ def test_restart_republishes_the_same_state():
         # aren't checked: an early-arrival notice plus a minute's revision can move them by a few minutes.)
         if row["status"] == "DELAYED":
             assert after[key]["status"] != "ON_TIME"
-            assert after[key]["estimated_time"] >= row["estimated_time"] - timedelta(minutes=3)
+            assert after[key]["estimated_arrival"] >= row["estimated_arrival"] - timedelta(minutes=3)
 
 
 def test_state_has_current_hotels_and_every_live_days_itineraries():
@@ -230,10 +250,10 @@ def test_history_is_finished_and_has_completed_offers():
     assert offers and {v["status"] for v in offers} == {"BOOKED", "CLOSED"}
     flights = [(k, v) for t, k, v in rows if t == g.FLIGHTS]
     assert len(flights) == 29 * 180
-    assert all(v["estimated_time"] < NOW and v["status"] in ("LANDED", "DEPARTED") for _, v in flights)
+    assert all(_sfo(v, "estimated") < NOW and v["status"] in ("LANDED", "DEPARTED") for _, v in flights)
     assert all(v["connecting_flight_id"] for t, _, v in rows if t == g.ITINERARIES)
     # The day a flight belongs to is its scheduled time's, not its key's: an RA417 key names its departure.
-    dates = {v["scheduled_time"].strftime("%Y%m%d") for _, v in flights}
+    dates = {_sfo(v, "scheduled").strftime("%Y%m%d") for _, v in flights}
     assert min(dates) == "20261013" and max(dates) == "20261110"
 
 
@@ -358,7 +378,7 @@ def test_run_continuous_publishes_the_state_then_the_missed_tombstones(monkeypat
     assert published[: len(state)] == state
     assert published[len(state) + 1 :] == [*g.startup_tombstones(g.SEED, NOW), "flush"]
     tomorrow = DAY + timedelta(days=1)
-    assert sum(1 for t, _, v in state if t == g.FLIGHTS and v["scheduled_time"].date() == tomorrow) == 180
+    assert sum(1 for t, _, v in state if t == g.FLIGHTS and _sfo(v, "scheduled").date() == tomorrow) == 180
 
 
 def test_grand_hyatt_drains_gradually_through_the_day():
@@ -401,7 +421,7 @@ def test_continuous_history_publishes_the_seeded_days():
     rows = g.continuous_history(g.SEED, NOW)
     ra417 = [value for topic, key, value in rows if topic == g.FLIGHTS and key.startswith("RA417-")]
     assert len(ra417) == 8 * (g.HISTORY_DAYS - 1)
-    late = [v for v in ra417 if v["estimated_time"] - v["scheduled_time"] >= timedelta(minutes=g.DELAYED_AT)]
+    late = [v for v in ra417 if v["estimated_arrival"] - v["scheduled_arrival"] >= timedelta(minutes=g.DELAYED_AT)]
     assert len(late) <= g.HISTORY_DAYS
 
 

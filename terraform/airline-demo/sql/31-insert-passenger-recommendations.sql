@@ -33,9 +33,9 @@ plans AS (
       '; final_destination=', g.final_destination,
       '; inbound_query=SELECT * FROM `flight_status` WHERE "KEY" = ''', g.inbound_flight_id, ''' LIMIT 1',
       '; departures_query=SELECT * FROM `flight_status` WHERE origin = ''SFO'' AND destination = ''',
-      g.final_destination, ''' AND scheduled_time >= TIMESTAMP ''',
+      g.final_destination, ''' AND scheduled_departure >= TIMESTAMP ''',
       DATE_FORMAT(g.impacted_at - INTERVAL '1' HOUR, 'yyyy-MM-dd HH:mm:ss'),
-      ''' ORDER BY scheduled_time ASC LIMIT 12',
+      ''' ORDER BY scheduled_departure ASC LIMIT 12',
       '; hotel_query=SELECT * FROM `hotel_inventory` ORDER BY as_of DESC LIMIT 30'
     ),
     g.group_key
