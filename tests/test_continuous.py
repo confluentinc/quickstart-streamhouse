@@ -41,7 +41,7 @@ def test_continuous_days_have_eight_ra417s_from_chicago_every_three_hours():
     assert [f.number for f in heroes] == [g.HERO_NUMBER] * 8
     assert all(f.origin == g.HERO_ORIGIN and f.destination == g.HUB for f in heroes)
     assert [f.scheduled for f in heroes] == [MIDNIGHT + timedelta(minutes=m) for m in g.CONTINUOUS_HERO_MINUTES]
-    assert heroes[0].key == "RA417-20261112-0040"
+    assert heroes[0].key == "RA417-20261111-2045"
     assert len({f.key for f in day.flights}) == 180
     assert day.agent_flights == []
 
@@ -87,7 +87,7 @@ def test_ra417_passenger_keys_name_the_flight_time_and_are_unique():
     day = g.continuous_day(g.SEED, DAY)
     first = day.heroes[0]
     riders = [p for p in day.passengers if p.inbound is first]
-    assert riders and all(p.key.startswith("P-1112-417-0040-") for p in riders)
+    assert riders and all(p.key.startswith("P-1111-417-2045-") for p in riders)
     keys = [p.key for p in day.passengers]
     assert len(keys) == len(set(keys))
 
@@ -208,9 +208,12 @@ def test_hotels_refill_at_midnight_once():
 
 def test_midnight_tombstones_the_day_past_retention():
     events = g.continuous_events(g.SEED, datetime(2026, 11, 12, 23, 59), datetime(2026, 11, 13, 0, 1))
-    old = (date(2026, 11, 13) - timedelta(days=g.RETENTION_DAYS)).strftime("%Y%m%d")
+    old = date(2026, 11, 13) - timedelta(days=g.RETENTION_DAYS)
     tombstones = {(t, k) for _, t, k, v in events if v is None}
-    assert sum(1 for t, k in tombstones if t == g.FLIGHTS and k.split("-")[1] == old) == 180
+    # An RA417's key names its departure, so the old day's flights are found through the day, not the key's date.
+    expected = {f.key for f in g.continuous_day(g.SEED, old).flights}
+    assert len(expected) == 180
+    assert {k for t, k in tombstones if t == g.FLIGHTS} >= expected
     assert any(t == g.ITINERARIES for t, _ in tombstones)
     assert any(t == g.OFFERS and k.endswith("-O1") for t, k in tombstones)
     assert any(t == g.OFFERS and k.endswith("-O2") for t, k in tombstones)
@@ -229,7 +232,8 @@ def test_history_is_finished_and_has_completed_offers():
     assert len(flights) == 29 * 180
     assert all(v["estimated_time"] < NOW and v["status"] in ("LANDED", "DEPARTED") for _, v in flights)
     assert all(v["connecting_flight_id"] for t, _, v in rows if t == g.ITINERARIES)
-    dates = {k.split("-")[1] for k, _ in flights}
+    # The day a flight belongs to is its scheduled time's, not its key's: an RA417 key names its departure.
+    dates = {v["scheduled_time"].strftime("%Y%m%d") for _, v in flights}
     assert min(dates) == "20261013" and max(dates) == "20261110"
 
 
@@ -324,12 +328,12 @@ def test_flush_gives_up_after_its_total_limit(monkeypatch):
 
 def test_start_tombstones_the_days_a_missed_midnight_would_have():
     tombstones = g.startup_tombstones(g.SEED, NOW)
-    days = {(DAY - timedelta(days=g.RETENTION_DAYS + k)).strftime("%Y%m%d"): 0 for k in range(g.MISSED_MIDNIGHTS)}
-    for topic, key, value in tombstones:
-        assert value is None
-        if topic == g.FLIGHTS:
-            days[key.split("-")[1]] += 1
-    assert days == dict.fromkeys(days, 180)
+    days = [DAY - timedelta(days=g.RETENTION_DAYS + k) for k in range(g.MISSED_MIDNIGHTS)]
+    # An RA417's key names its departure, so a day's flights are found through the day, not the key's date.
+    expected = {f.key for d in days for f in g.continuous_day(g.SEED, d).flights}
+    assert len(expected) == 180 * len(days)
+    assert all(value is None for _, _, value in tombstones)
+    assert {key for topic, key, _ in tombstones if topic == g.FLIGHTS} == expected
     assert {t for t, _, _ in tombstones} == {g.FLIGHTS, g.ITINERARIES, g.OFFERS}
 
 
@@ -353,8 +357,8 @@ def test_run_continuous_publishes_the_state_then_the_missed_tombstones(monkeypat
     state = g.continuous_state(g.SEED, NOW)
     assert published[: len(state)] == state
     assert published[len(state) + 1 :] == [*g.startup_tombstones(g.SEED, NOW), "flush"]
-    tomorrow = (DAY + timedelta(days=1)).strftime("%Y%m%d")
-    assert sum(1 for t, k, _ in state if t == g.FLIGHTS and k.split("-")[1] == tomorrow) == 180
+    tomorrow = DAY + timedelta(days=1)
+    assert sum(1 for t, _, v in state if t == g.FLIGHTS and v["scheduled_time"].date() == tomorrow) == 180
 
 
 def test_grand_hyatt_drains_gradually_through_the_day():
@@ -414,8 +418,8 @@ def test_expired_keys_cover_passengers_older_settings_wrote():
     keys = set(g._expired_keys(g.SEED, DAY))
     day = g.continuous_day(g.SEED, DAY)
     hero = day.heroes[0]
-    assert (g.OFFERS, f"P-{DAY:%m%d}-417-{hero.scheduled:%H%M}-150-O1") in keys
-    assert (g.ITINERARIES, f"P-{DAY:%m%d}-417-{hero.scheduled:%H%M}-{len(g.SEATS):03d}") in keys
+    assert (g.OFFERS, f"P-{g.hero_departure(hero.scheduled):%m%d-417-%H%M}-150-O1") in keys
+    assert (g.ITINERARIES, f"P-{g.hero_departure(hero.scheduled):%m%d-417-%H%M}-{len(g.SEATS):03d}") in keys
     quiet = next(p for p in day.passengers if not p.impacted_at)
     assert {(g.OFFERS, f"{quiet.key}-O1"), (g.OFFERS, f"{quiet.key}-O2")} <= keys
 

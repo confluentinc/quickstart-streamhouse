@@ -223,7 +223,7 @@ uv run airport-datagen --reset         # tombstone every generated key
 
 ### Continuous mode (always-on demo)
 
-`uv run airport-datagen --continuous` streams forever instead of for 90 minutes, for the [always-on demo](./always-on.md). Each UTC day has 180 flights and eight RA417s from Chicago O'Hare at 00:40, 03:40, ... 21:40 UTC (keys like `RA417-20261112-0040`); the Grand Hyatt sells out at 18:00 UTC and refills at midnight. Every row follows from the seed and the wall clock, so a restarted stream resumes where it was. At each UTC midnight it publishes the day after next and tombstones the day 35 days back (`RETENTION_DAYS`). `--history` first publishes the 29 finished days before yesterday.
+`uv run airport-datagen --continuous` streams forever instead of for 90 minutes, for the [always-on demo](./always-on.md). Each UTC day has 180 flights and eight RA417s from Chicago O'Hare that land at 00:40, 03:40, ... 21:40 UTC (keys carry the departure date and time, so the first is `RA417-20261111-2045`: it leaves at 20:45 the evening before it lands); the Grand Hyatt sells out at 18:00 UTC and refills at midnight. Every row follows from the seed and the wall clock, so a restarted stream resumes where it was. At each UTC midnight it publishes the day after next and tombstones the day 35 days back (`RETENTION_DAYS`). `--history` first publishes the 29 finished days before yesterday.
 
 The generator writes no live offers: the recovery agent handles every flight (`TF_VAR_continuous` drops `sql/27`'s three-flight filter). Simulated customers answer the offers ([`offer_customers.py`](../../scripts/offer_customers.py)): about 85% book, the rest expire after 90 minutes, unless someone decided in the app first.
 

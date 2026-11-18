@@ -501,7 +501,7 @@ def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[P
         seats = seat_rng.sample(SEATS, len(plan))
         for seq, (connects, seat) in enumerate(zip(plan, seats, strict=True), start=1):
             if flight.number == HERO_NUMBER and not day.schedule.scripted:
-                key = f"P-{day.service_date:%m%d}-417-{flight.scheduled:%H%M}-{seq:03d}"
+                key = f"P-{hero_departure(flight.scheduled):%m%d-417-%H%M}-{seq:03d}"
             else:
                 key = f"P-{day.service_date:%m%d}-{flight.number:03d}-{seq:03d}"
             passenger = Passenger(key, flight, seat)
@@ -568,6 +568,15 @@ def _revise_estimates(day: Day, rng: random.Random, start: datetime, end: dateti
             flight.reveals = sorted([*flight.reveals, *revisions, settle])
 
 
+def hero_departure(arrival: datetime) -> datetime:
+    """When an around-the-clock RA417 leaves Chicago for this scheduled arrival: the gate-to-gate time earlier.
+
+    The flight and passenger keys carry its date and time, so a key says when the plane takes off. The
+    first two RA417s of a UTC day leave the evening before, so their keys name the day before.
+    """
+    return arrival - flight_profile.flight_duration(HERO_ORIGIN, HUB)
+
+
 def build_day(
     seed: int,
     service_date: date,
@@ -596,7 +605,8 @@ def build_day(
         number = HERO_NUMBER if hero else next(numbers)
         key = f"{AIRLINE}{number}-{suffix}"
         if hero and not schedule.scripted:
-            key += f"-{minute // 60:02d}{minute % 60:02d}"
+            departs = hero_departure(midnight + timedelta(minutes=minute))
+            key = f"{AIRLINE}{number}-{departs:%Y%m%d-%H%M}"
         arrivals.append(
             Flight(
                 key,
@@ -818,7 +828,7 @@ def _expired_keys(seed: int, service_date: date) -> list[tuple[str, str]]:
     keys = [(FLIGHTS, f.key) for f in day.flights]
     for flight in day.arrivals:
         if flight.number == HERO_NUMBER:
-            prefix = f"P-{service_date:%m%d}-417-{flight.scheduled:%H%M}"
+            prefix = f"P-{hero_departure(flight.scheduled):%m%d-417-%H%M}"
         else:
             prefix = f"P-{service_date:%m%d}-{flight.number:03d}"
         for seq in range(1, len(SEATS) + 1):
