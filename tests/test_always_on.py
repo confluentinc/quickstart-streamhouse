@@ -70,7 +70,12 @@ def test_flight_board_is_a_lambda_behind_a_public_function_url():
 
     role = _block(aws, "aws_iam_role.flight_board")
     assert "lambda.amazonaws.com" in role
-    assert "AWSLambdaBasicExecutionRole" in aws
+    # It writes only to its own log group and can't create one, so an instance still shutting down after a
+    # destroy can't re-create the group and break the next deploy.
+    write_logs = _block(aws, "aws_iam_role_policy.flight_board_logs")
+    assert '"logs:CreateLogStream", "logs:PutLogEvents"' in write_logs
+    assert "aws_cloudwatch_log_group.flight_board.arn" in write_logs
+    assert "policy/service-role/AWSLambdaBasicExecutionRole" not in aws and '"logs:CreateLogGroup"' not in aws
     logs = _block(aws, "aws_cloudwatch_log_group.flight_board")
     assert '"/aws/lambda/' in logs and re.search(r"retention_in_days\s*=\s*14", logs)
 
