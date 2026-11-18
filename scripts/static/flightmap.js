@@ -147,11 +147,11 @@ function sfoTime(row) {
   return row.destination === HUB ? row.scheduled_arrival : row.scheduled_departure;
 }
 
-// The route's curve and the three moments the info box shows. They start from
-// the flight's time at SFO (see file header); the other two are derived from
-// the estimated duration, so they're approximations of the generator's own
-// times, not copies of them. A late arrival keeps its scheduled takeoff and circles
-// until it can land at its estimated time, the same rule the generator flies.
+// The route's curve and the moments the info box shows: the scheduled and
+// estimated departure and arrival, as flight_status reports them. Only a row
+// missing one falls back to deriving it from the flight's time at SFO and the
+// estimated duration: a late arrival keeps its scheduled takeoff and circles
+// until it can land at its estimated time.
 function flightTimes(row) {
   const a = AIRPORTS[row.origin], b = AIRPORTS[row.destination];
   if (!a || !b) return null;
@@ -171,9 +171,16 @@ function flightTimes(row) {
     scheduledArrivalMs = known + duration;
     estimatedArrivalMs = departureMs + duration;
   }
+  let scheduledDepartureMs = isArrival ? scheduledArrivalMs - duration : known;
+  scheduledDepartureMs = parseTsMs(row.scheduled_departure) ?? scheduledDepartureMs;
+  departureMs = parseTsMs(row.estimated_departure) ?? departureMs;
+  scheduledArrivalMs = parseTsMs(row.scheduled_arrival) ?? scheduledArrivalMs;
+  estimatedArrivalMs = parseTsMs(row.estimated_arrival) ?? estimatedArrivalMs;
   const [x0, y0] = project(a), [x1, y1] = project(b);
   const { cx, cy } = routeCurve(x0, y0, x1, y1);
-  return { isArrival, x0, y0, cx, cy, x1, y1, departureMs, scheduledArrivalMs, estimatedArrivalMs };
+  return {
+    isArrival, x0, y0, cx, cy, x1, y1, scheduledDepartureMs, departureMs, scheduledArrivalMs, estimatedArrivalMs,
+  };
 }
 
 // "waiting" at the gate, "enroute", or "done", from flight_status alone.
@@ -439,14 +446,16 @@ function renderInfoBox(svg, row, pos) {
 
   // Same thresholds as the rest of the app: delayed from 15 min (the
   // "Delayed" count), at risk of missed connections from 45.
-  const delay = Number(row.delay_minutes) || 0;
-  const lateClass = delay >= 45 ? "miss" : delay >= 15 ? "tight" : "";
+  const lateness = (minutes) => (minutes >= 45 ? "miss" : minutes >= 15 ? "tight" : "");
+  const lateClass = lateness(Number(row.delay_minutes) || 0);
+  const departureLate = lateness((pos.departureMs - pos.scheduledDepartureMs) / 60000);
 
   box.innerHTML = "";
   box.appendChild(el("infobox-title", row.key));
   box.appendChild(el("infobox-route", `${row.origin} → ${row.destination}`));
   for (const [label, ms, valueClass] of [
-    ["Departure", pos.departureMs, ""],
+    ["Sched. departure", pos.scheduledDepartureMs, ""],
+    ["Est. departure", pos.departureMs, departureLate],
     ["Sched. arrival", pos.scheduledArrivalMs, ""],
     ["Est. arrival", pos.estimatedArrivalMs, lateClass],
   ]) {
