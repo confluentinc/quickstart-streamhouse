@@ -333,85 +333,45 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
 
 ## Lab 3 — Power a live operations dashboard with Lightning Tables
 
-This is where River Air finally gets its answer to *"How many flights are delayed right now?"* In Lab 2, you turned raw feeds into live connection risk. Now you put that state in front of the people and agents who act on it: an operations dashboard that's always on and always current, answering in milliseconds, with no extra database, cache, or sync pipeline to build.
+Lightning Tables keep a low-latency table of each topic's latest rows in Confluent Cloud. Your operations dashboard and the Lab 4 recovery agent both read this live state.
 
-One click per topic does it. Enabling a topic's **Lightning Table** keeps a low-latency table of its latest rows that apps query directly, and the Real-Time Context Engine (RTCE) exposes the same table to AI agents over MCP. The dashboard you open in this lab and the recovery agent you build in Lab 4 read the same live state, each in the form it needs.
+1. In the cluster sidebar, open **Lightning Tables** and click **Add Lightning Table**.
 
-1. Back in the Console, open **[Topics](https://confluent.cloud/go/topics)** and select your **environment** (`streamhouse-…-env`) and **cluster** (`streamhouse-…-cluster`). `passenger_state` and `flight_impact` are there now; we created them with Flink in Lab 2.
+2. Enable `flight_status`, `flight_impact`, `hotel_inventory`, `passenger_itineraries`, `passenger_recommendations`, and `passenger_state`.
 
-2. Find the **Lightning Table** column (scroll right if you need to) and click **+ Enable** for `flight_status`.
+3. Close the picker and wait until all six show **Active**.
 
-    <img src="../images/flight-disruptions/enable-lightning-tables.png" alt="The cluster&#x27;s Topics list, with + Enable in the Lightning Tables column" width="750">
+    ![All six Lightning Tables active](../images/flight-disruptions/lightning-tables-workshop.png)
 
-3. In the **Enable Lightning Table** panel, click **Enable**. It may take a minute for the query engine and infrastructure to be finalized, but you can go ahead and **close the panel and enable the next topics**.
+4. Use the **Preview** column on `hotel_inventory` to run ``SELECT * FROM `hotel_inventory` LIMIT 100;`` if it does not run automatically. It returns three rows, and running it again later shows room counts changing as inventory updates.
 
-    <img src="../images/flight-disruptions/lightning-tables-panel.png" alt="The Enable a Lightning Table for flight_status? panel" width="750">
+    ![Hotel inventory preview query](../images/flight-disruptions/lightning-hotel-preview.png)
 
-4. Repeat for `passenger_itineraries`, `passenger_state`, `flight_impact`, `passenger_recommendations`, and `hotel_inventory`.
-
-    <img src="../images/flight-disruptions/lightning-tables-active.png" alt="The Topics list with all six Lightning Tables Active" width="750">
-
-> [!NOTE]
->
-> Each topic shows **Provisioning** while Confluent loads its rows, then **Active**. Wait until all six show **Active** before you continue.
-
-5. Run your first Lightning Query. **In a terminal window, run**:
-
-    ```bash
-    uv run setup-rtce --lightning hotel_inventory --run
-    ```
-
-    It prints the three hotels' current rows and the round-trip time. Wait one minute, then run the command again and you'll see that the Grand Hyatt has fewer rooms.
-
-    <img src="../images/flight-disruptions/lightning-query-test.png" alt="Output of uv run setup-rtce --lightning hotel_inventory --run: the three hotels&#x27; rows and the round-trip time" width="750">
-
-6. Open a **new terminal window** in the `quickstart-streamhouse` folder and start the dashboard app:
+5. In a new terminal in the repo folder, start the dashboard app.
 
     ```bash
     uv run airport-app
     ```
 
-    <img src="../images/flight-disruptions/uv-run-airport-app.png" alt="Output of uv run airport-app, with Uvicorn running on http://127.0.0.1:8000" width="750">
+    Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser, and leave both datagen and the app running.
 
-    Open [http://127.0.0.1:8000](http://127.0.0.1:8000). **Leave this terminal running too.**
+    ![Operations dashboard overview](../images/flight-disruptions/dashboard-workshop.png)
 
-    <img src="../images/flight-disruptions/dashboard-view.png" alt="The River Air app: the live flight map, Operations, and Biggest delays, with RA417 tagged Biggest impact" width="750">
+6. Check **Operations** and **Biggest delays**, then select **RA417** (it may be on time initially). Hover a seat on the seat map to view that passenger's itinerary, and watch the live map telemetry update as the flight moves.
 
-7. Explore the operations view:
-
-    - **The counts bar** answers "what's our on-time performance today?" with **Flights today**, **Delayed**, **Passengers at risk**, and **Booked**.
-    - **Operations** lists today's flights. Status and delay come straight from `flight_status`, so they change within seconds; **At risk** comes from Flink's `flight_impact`.
-    - **Biggest delays** lists the ten latest flights. RA417 (ORD → SFO, up to 115 minutes late) is the one tagged **Biggest impact**.
-    - Click **RA417-…**. The seat map colors every seat red (at risk), green (not at risk), or grey (open). Hover a seat to see that passenger's itinerary. The table below lists RA417's passengers, `HIGH` first.
-    - The flight's box on the map also shows **Live telemetry** that updates every second: altitude, speed, heading, position, and time to arrival.
-
-    <img src="../images/flight-disruptions/dashboard-live-telemetry.png" alt="RA417&#x27;s box on the live flight map with Live telemetry: altitude, ground speed, vertical speed, heading, position, miles to go, and time to arrival" width="750">
-
-    RA417's seat map is in the top-right corner. Hover a seat to see that passenger's itinerary:
-
-    <img src="../images/flight-disruptions/dashboard-seating-chart.png" alt="RA417&#x27;s seat map, with at-risk seats in red and a passenger&#x27;s itinerary shown on hover" width="750">
+    ![RA417 seat map and live telemetry](../images/flight-disruptions/dashboard-ra417-workshop.png)
 
 ## Lab 4 — Build the recovery agent
 
-Now for River Air's second challenge. RA417 is running almost two hours late, 150 passengers are about to miss their connections, and the Grand Hyatt's rooms are going fast. A team working through them one call at a time won't rebook everyone before the hotels sell out. **An agent can!**
+Next you will build a Flink SQL recovery agent that checks live flights and hotel inventory through RTCE and writes rebooking offers for disrupted passengers.
 
-In this lab, you build a streaming agent that runs inside Flink, on Claude hosted in Confluent Cloud. The moment a passenger turns HIGH risk, it checks live flights and hotel rooms through the Real-Time Context Engine (RTCE) and writes two rebooking offers: the next two flights to their final destination, with a hotel when the wait is overnight. No batch job, no polling, and no model keys to manage: the agent itself is a few SQL statements.
-
-1. Connect Flink to RTCE, so the agent can look up live flights and hotel rooms. In a terminal, from the repo's root folder (`quickstart-streamhouse`), run:
+1. In your commands terminal, run this command from the repo folder to create the Flink connection to RTCE.
 
     ```bash
     uv run setup-rtce --agent-connection
     ```
 
-    It creates `rtce-connection`, which the agent's tool uses in step 3. The API key stays in the connection, so your SQL holds no secrets.
-
-    <img src="../images/flight-disruptions/setup-rtce-agent-connection.png" alt="Output of uv run setup-rtce --agent-connection, confirming that the Flink connection rtce-connection points at the RTCE endpoint" width="750">
-
-2. Give the agent a feed of impacted passengers. `AI_RUN_AGENT` reads only append-only input, and `passenger_state` is an upsert table, so two staging tables turn its changes into new rows. 
-
-    Back in your [Flink SQL workspace](https://confluent.cloud/go/flink), run each statement in its own cell:
-
-    `passenger_state_changes` records every change to a passenger's connection risk as a new row:
+2. Return to your existing Flink SQL workspace. Click **+** to add a fresh SQL cell, and use a separate cell for every SQL block in this lab. `passenger_state` updates rows in place as an upsert table, and the Flink agent reads append-only input, so `passenger_state_changes` turns each state update into an append-only row.
 
     ```sql
     CREATE OR ALTER MATERIALIZED TABLE passenger_state_changes (
@@ -440,9 +400,8 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
       op_mapping => MAP['INSERT, UPDATE_AFTER', 'UPSERT']
     );
     ```
-    <img src="../images/flight-disruptions/passenger-state-changes-creation.png" alt="The passenger_state_changes statement, with Successfully created materialized table passenger_state_changes" width="750">
 
-    `impacted_passengers` keeps one row per passenger on RA417, RA183, and RA185, from the moment they first turn `HIGH` while their inbound flight is still due to land. This is the agent's to-do list:
+3. Create `impacted_passengers` to keep one append-only row per newly `HIGH`-risk passenger. Leave the UTC `SET` statement in its cell so time filters run in UTC.
 
     ```sql
     SET 'sql.local-time-zone' = 'UTC';
@@ -478,13 +437,8 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
       op_mapping => MAP['INSERT', 'FIRST_HIGH']
     );
     ```
-    <img src="../images/flight-disruptions/impacted-passengers-creation.png" alt="The impacted_passengers statement, with Successfully created materialized table impacted_passengers" width="750">
 
-    > [!NOTE]
-    >
-    > For this workshop only, the filter keeps the agent to three flights to reduce LLM requests. In production, you would open it up to all flights.
-
-3. Create the tool that gives the agent live context. It exposes RTCE's `getMetadata` and `queryData` tools through `rtce-connection`:
+4. Run `CREATE TOOL` to give Flink live access to RTCE, and wait for **Completed**.
 
     ```sql
     CREATE TOOL IF NOT EXISTS hotel_inventory_live_context
@@ -495,14 +449,8 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
       'request_timeout' = '30'
     );
     ```
-    <img src="../images/flight-disruptions/hotel-inventory-tool-creation.png" alt="The CREATE TOOL statement for hotel_inventory_live_context, Completed" width="750">
 
-4. Create the agent. Its model, `passenger_recovery_model`, is a Claude model hosted in Confluent Cloud. It's already deployed for you.
-
-    Its prompt tells it to:
-    - Offer the first two flights that leave 45+ minutes after the passenger lands.
-    - Add a hotel if the flight leaves 6+ hours later.
-    - Pick hotels in order, skipping sold-out ones.
+5. Run `CREATE AGENT` to define the recovery agent and its booking rules, and confirm it finishes as **Completed**.
 
     ```sql
     CREATE AGENT IF NOT EXISTS passenger_recovery_agent
@@ -530,18 +478,15 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
     );
     ```
 
-5. Confirm the agent exists:
+6. Run `SHOW AGENTS` to confirm your new agent appears in the workspace.
 
     ```sql
     SHOW AGENTS;
     ```
-    <img src="../images/flight-disruptions/show-agents.png" alt="SHOW AGENTS results listing passenger_recovery_agent" width="750">
 
-> [!NOTE]
->
-> You could set up this agent for passengers connecting in any city. This workshop sets it up for SFO, River Air's hub, to keep the scope small.
+    ![SHOW AGENTS results](../images/flight-disruptions/flink-workshop-agent.png)
 
-6. Start the agent:
+7. Start the long-running `INSERT` statement with its UTC `SET` line kept in the cell. Wait for the cell status to show **Running**, and keep this `INSERT` running.
 
     ```sql
     SET 'sql.local-time-zone' = 'UTC';
@@ -570,7 +515,7 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
         CONCAT(
           'inbound_flight_id=', g.inbound_flight_id,
           '; final_destination=', g.final_destination,
-          '; inbound_query=SELECT * FROM `flight_status` WHERE "KEY" = ''', g.inbound_flight_id, ''' LIMIT 1',
+          '; inbound_query=SELECT * FROM `flight_status` WHERE "KEY" = ''', g.inbound_flight_id, ''' ORDER BY estimated_time DESC LIMIT 1',
           '; departures_query=SELECT * FROM `flight_status` WHERE origin = ''SFO'' AND destination = ''',
           g.final_destination, ''' AND scheduled_time >= TIMESTAMP ''',
           DATE_FORMAT(g.impacted_at - INTERVAL '1' HOUR, 'yyyy-MM-dd HH:mm:ss'),
@@ -583,6 +528,8 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
     offers AS (
       SELECT
         h.`key` AS passenger_id,
+        h.inbound_flight_id,
+        h.final_destination,
         h.impacted_at,
         o.n,
         NULLIF(REGEXP_EXTRACT(p.response, CONCAT('O', o.n, '_FLIGHT=([^;\s]+)'), 1), 'NONE') AS recommended_flight_id,
@@ -602,15 +549,26 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
       hotel_cost,
       impacted_at,
       CAST(CURRENT_TIMESTAMP AS TIMESTAMP(3)) AS recommended_at
-    FROM offers
-    WHERE recommended_flight_id IS NOT NULL;
+    FROM offers AS o
+    JOIN LATERAL SNAPSHOT(
+      input => TABLE flight_status,
+      on_time => DESCRIPTOR($rowtime),
+      load_completed_idle_timeout => INTERVAL '10' SECOND
+    ) AS inbound ON o.inbound_flight_id = inbound.`key`
+    JOIN LATERAL SNAPSHOT(
+      input => TABLE flight_status,
+      on_time => DESCRIPTOR($rowtime),
+      load_completed_idle_timeout => INTERVAL '10' SECOND
+    ) AS onward ON o.recommended_flight_id = onward.`key`
+    WHERE onward.origin = 'SFO'
+      AND onward.destination = o.final_destination
+      AND onward.status NOT IN ('CANCELLED', 'DEPARTED')
+      AND onward.estimated_time >= inbound.estimated_time + INTERVAL '45' MINUTE;
     ```
 
-> [!WARNING]
->
-> This statement must keep running for the rest of the workshop. Don't stop it.
+    ![Running INSERT statement](../images/flight-disruptions/flink-workshop-running.png)
 
-7. Watch the offers arrive:
+8. Query `passenger_recommendations` for RA417 offers and check a passenger such as seat `6B`.
 
     ```sql
     SELECT `key`, recommended_flight_id, hotel_name, hotel_cost, status
@@ -618,9 +576,9 @@ In this lab, you build a streaming agent that runs inside Flink, on Claude hoste
     WHERE passenger_id LIKE 'P-____-417-%';
     ```
 
-    Within a few minutes, each of RA417's 150 at-risk passengers has two offers for tomorrow morning: the first with the Grand Hyatt at SFO ($329), the second with the SFO Airport Marriott Waterfront ($229). If the Grand Hyatt had already sold out when your agent ran, it offers the Marriott and the Hilton instead. The agent also writes offers for RA183 from Boston (40 passengers, who turn HIGH 26 to 32 minutes into the stream) and RA185 from Las Vegas (30 passengers, 52 to 55 minutes in, after the Grand Hyatt sells out, so they get the Marriott and the Hilton). To see them, change `417` in the query to `183` or `185`.
+    Offers arrive in waves as passengers reach `HIGH` risk and the agent finishes its live lookups. Some offers have no hotel for shorter layovers, and the agent can filter out unsafe flights with delays, cancellations, or tight connections.
 
-    <img src="../images/flight-disruptions/passenger-recommendations-query.png" alt="Query results from passenger_recommendations: RA417 passengers&#x27; offers with the Grand Hyatt at SFO and the SFO Airport Marriott Waterfront" width="750">
+    ![RA417 recovery offer rows](../images/flight-disruptions/flink-workshop-offers.png)
 
 ## Lab 5 — Recover a passenger
 
