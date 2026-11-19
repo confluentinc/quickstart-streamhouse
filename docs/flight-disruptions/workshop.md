@@ -339,13 +339,25 @@ Lightning Tables keep a low-latency table of each topic's latest rows in Conflue
 
 2. Enable `flight_status`, `flight_impact`, `hotel_inventory`, `passenger_itineraries`, `passenger_recommendations`, and `passenger_state`.
 
+    You can also enable each table from the cluster's **Topics** page. In the **Lightning Tables** column, click **+ Enable**, then **Enable** in the confirmation panel.
+
+    ![Enable Lightning Tables from the Topics list](../images/flight-disruptions/enable-lightning-tables.png)
+
+    ![Confirm that you want to enable the Lightning Table](../images/flight-disruptions/lightning-tables-panel.png)
+
 3. Close the picker and wait until all six show **Active**.
 
-    ![All six Lightning Tables active](../images/flight-disruptions/lightning-tables-workshop.png)
+    ![All six Lightning Tables active in the Topics list](../images/flight-disruptions/lightning-tables-active.png)
 
 4. Use the **Preview** column on `hotel_inventory` to run ``SELECT * FROM `hotel_inventory` LIMIT 100;`` if it does not run automatically. It returns three rows, and running it again later shows room counts changing as inventory updates.
 
-    ![Hotel inventory preview query](../images/flight-disruptions/lightning-hotel-preview.png)
+    You can run the same inventory check from your terminal.
+
+    ```bash
+    uv run setup-rtce --lightning hotel_inventory --run
+    ```
+
+    ![Hotel inventory query results in the terminal](../images/flight-disruptions/lightning-query-test.png)
 
 5. In a new terminal in the repo folder, start the dashboard app.
 
@@ -484,7 +496,7 @@ Next you will build a Flink SQL recovery agent that checks live flights and hote
     SHOW AGENTS;
     ```
 
-    ![SHOW AGENTS results](../images/flight-disruptions/flink-workshop-agent.png)
+    ![SHOW AGENTS results](../images/flight-disruptions/show-agents.png)
 
 7. Start the long-running `INSERT` statement with its UTC `SET` line kept in the cell. Wait for the cell status to show **Running**, and keep this `INSERT` running.
 
