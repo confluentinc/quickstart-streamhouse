@@ -1,3 +1,4 @@
+import base64
 from datetime import datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -73,6 +74,8 @@ def test_builder_rejects_invalid_input(kwargs):
 
 
 def _compare(row_value, op, value):
+    if op == "IN":
+        return row_value in value
     if isinstance(value, datetime):
         row_value = airport_app._timestamp(row_value)
     elif isinstance(value, (int, float, Decimal)):
@@ -141,7 +144,7 @@ def _offer(key, hotel_name, cost, status="OFFERED"):
     return {
         "key": key,
         "passenger_id": "P-0928-417-001",
-        "recommended_flight_id": "RA88-20260929",
+        "recommended_flight_id": "RA88-20260928",
         "hotel_name": hotel_name,
         "status": status,
         "hotel_cost": cost,
@@ -204,6 +207,7 @@ def test_hotels_still_read_a_deployment_from_before_as_of_existed(monkeypatch):
 
 
 def test_selecting_a_sold_out_hotel_offers_a_third_hotel_then_book_closes_other(fake):
+    _seed_offer_flights(fake)
     fake.tables["hotel_inventory"] = HOTELS
     fake.tables["passenger_recommendations"] = [
         _offer("P-0928-417-001-O1", GRAND_HYATT, "329.00"),
@@ -231,6 +235,7 @@ def test_selecting_a_sold_out_hotel_offers_a_third_hotel_then_book_closes_other(
 
 
 def test_sold_out_hotel_falls_back_to_the_other_offers_hotel_when_nothing_else_has_rooms(fake):
+    _seed_offer_flights(fake)
     fake.tables["hotel_inventory"] = [
         {**row, "available_rooms": "0" if row["key"] != MARRIOTT else "4"} for row in HOTELS
     ]
@@ -243,6 +248,7 @@ def test_sold_out_hotel_falls_back_to_the_other_offers_hotel_when_nothing_else_h
 
 
 def test_book_rejects_sold_out_hotel(fake):
+    _seed_offer_flights(fake)
     fake.tables["hotel_inventory"] = HOTELS
     fake.tables["passenger_recommendations"] = [_offer("P-0928-417-001-O1", GRAND_HYATT, "329.00", status="SELECTED")]
     with pytest.raises(airport_app.HTTPException) as error:
@@ -251,7 +257,7 @@ def test_book_rejects_sold_out_hotel(fake):
 
 
 def test_passenger_returns_offers_and_hotel_options_cheapest_first(fake):
-    fake.tables["passenger_state"] = [{"key": "P-0928-417-001", "risk": "HIGH"}]
+    _seed_offer_flights(fake)
     fake.tables["passenger_recommendations"] = [
         _offer("P-0928-417-001-O2", MARRIOTT, "229.00"),
         _offer("P-0928-417-001-O1", GRAND_HYATT, "329.00"),
@@ -267,6 +273,7 @@ def test_passenger_returns_offers_and_hotel_options_cheapest_first(fake):
 
 
 def test_select_and_book_offer_without_hotel(fake):
+    _seed_offer_flights(fake)
     fake.tables["hotel_inventory"] = [{**row, "available_rooms": "0"} for row in HOTELS]
     fake.tables["passenger_recommendations"] = [_offer("P-0928-417-001-O1", None, None)]
     chosen = airport_app.select_offer("P-0928-417-001", "P-0928-417-001-O1")
@@ -323,6 +330,35 @@ def _flight(n, scheduled, delay, affected, status="ON_TIME", origin="SFO", desti
 def _set_flights(fake, *flights):
     fake.tables["flight_status"] = [status for status, _ in flights]
     fake.tables["flight_impact"] = [impact for _, impact in flights]
+
+
+def _seed_offer_flights(fake):
+    _set_flights(
+        fake,
+        _flight(417, "2026-09-28 12:00:00", 60, 1, "DELAYED", origin="ORD", destination="SFO"),
+        _flight(88, "2026-09-28 13:45:00", 0, 0),
+    )
+    fake.tables["passenger_state"] = [
+        {"key": "P-0928-417-001", "inbound_flight_id": "RA417-20260928", "final_destination": "SEA", "risk": "HIGH"}
+    ]
+
+
+def test_recovery_rechecks_connection_at_selection_and_booking(fake):
+    _seed_offer_flights(fake)
+    passenger_id = "P-0928-417-001"
+    key = passenger_id + "-O1"
+    fake.tables["passenger_recommendations"] = [_offer(key, None, None)]
+    client = TestClient(airport_app.app)
+    path = f"/api/passenger/{passenger_id}"
+
+    assert client.get(path).json()["offers"][0]["key"] == key  # exactly 45 minutes is eligible
+    delayed = _flight(417, "2026-09-28 12:00:00", 61, 1, "DELAYED", origin="ORD", destination="SFO")
+    fake.tables["flight_status"][0], fake.tables["flight_impact"][0] = delayed
+    assert client.get(path).json()["offers"] == []
+    assert client.post(f"{path}/select/{key}").status_code == 409
+    fake.tables["passenger_recommendations"][0]["status"] = "SELECTED"
+    assert client.post(f"{path}/book/{key}").status_code == 409
+    assert fake.writes == []
 
 
 def test_state_counts_and_delays(fake):
@@ -446,6 +482,26 @@ def test_flight_passengers_high_risk_first(fake):
     assert client.get("/api/passenger/P-missing").status_code == 404
 
 
+def test_flight_and_passenger_choose_the_same_current_risk(fake, monkeypatch):
+    monkeypatch.setattr(airport_app, "PAGE_SIZE", 2)
+    _set_flights(
+        fake,
+        _flight(417, "2026-09-28 11:00:00", 40, 1, "DELAYED", origin="ORD", destination="SFO"),
+        _flight(680, "2026-09-28 12:10:00", 0, 0),
+    )
+    passenger = _passenger(1, "RA417-20260928", "RA680-20260928", "OK")
+    stale = {**passenger, "inbound_estimated_time": "2026-09-28 11:00:00", "connection_minutes": 70}
+    live = {**passenger, "inbound_estimated_time": "2026-09-28 11:40:00", "connection_minutes": 30, "risk": "HIGH"}
+    stale_onward = {**live, "connection_minutes": 55, "risk": "OK"}
+    fake.tables["passenger_state"] = [stale_onward, live, stale]
+    client = TestClient(airport_app.app)
+    flight = client.get("/api/flight/RA417-20260928").json()
+    assert [(p["key"], p["risk"], p["connection_minutes"]) for p in flight["passengers"]] == [
+        (passenger["key"], "HIGH", 30)
+    ]
+    assert client.get(f"/api/passenger/{passenger['key']}").json()["passenger"] == live
+
+
 def test_a_stale_passenger_state_copy_never_hides_a_high_risk_seat(fake):
     # Lightning can keep a frozen copy of a passenger_state row beside the live one; the live one has the
     # later inbound estimate, since delays only grow.
@@ -478,6 +534,118 @@ def test_departure_shows_passengers_connecting_onto_it(fake):
         ("P-0928-5", "6F"),
         ("P-0928-1", "2F"),
     ]
+
+
+def test_app_reads_lightning_settings_from_env(monkeypatch):
+    monkeypatch.setattr(airport_app.rtce, "_find_credentials_file", lambda: pytest.fail("read a file"))
+    for name, value in {
+        "STREAMHOUSE_ENVIRONMENT_ID": "env-1",
+        "STREAMHOUSE_CLUSTER_ID": "lkc-1",
+        "STREAMHOUSE_REGION": "us-east-1",
+        "CONFLUENT_RTCE_API_KEY": "k",
+        "CONFLUENT_RTCE_API_SECRET": "s",
+    }.items():
+        monkeypatch.setenv(name, value)
+    assert Deployment().lightning_url == "https://sql.us-east-1.aws.confluent.cloud/query/v1alpha1"
+
+
+# --- optional shared password ------------------------------------------------
+
+
+def test_no_password_means_no_login(monkeypatch):
+    monkeypatch.delenv("APP_PASSWORD", raising=False)
+    assert TestClient(airport_app.app).get("/").status_code == 200
+
+
+def test_password_required_when_set(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    client = TestClient(airport_app.app)
+    login = client.get("/")
+    assert login.status_code == 200 and 'action="/login"' in login.text and "<title>River Air sign in" in login.text
+    assert client.get("/api/state").status_code == 401
+    assert client.get("/", auth=("demo", "wrong")).status_code == 200  # wrong password: login page again
+    assert "Wrong" not in client.get("/", auth=("demo", "wrong")).text
+    assert client.get("/", auth=("demo", "wrong")).text == login.text
+    assert client.get("/", auth=("demo", "s3cret")).status_code == 200
+    assert client.get("/static/app.js").status_code == 401
+
+
+def test_malformed_authorization_header_gets_401(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    client = TestClient(airport_app.app)
+    for header in ["Basic !!!not-base64!!!", "Basic " + base64.b64encode(b"nocolonhere").decode(), "Bearer s3cret"]:
+        response = client.get("/static/app.js", headers={"Authorization": header})
+        assert response.status_code == 401, header
+        assert response.headers["WWW-Authenticate"] == 'Basic realm="River Air"'
+
+
+def _cookie_value(response):
+    return response.cookies.get("river_air_session")
+
+
+def test_login_sets_cookie_that_authorizes_everything(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    client = TestClient(airport_app.app, base_url="https://testserver")
+    response = client.post("/login", data={"password": "s3cret"}, follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/"
+    header = response.headers["set-cookie"].lower()
+    for attribute in ["httponly", "secure", "samesite=lax", "path=/", f"max-age={30 * 86400}"]:
+        assert attribute in header
+    assert "river_air_session=" in header
+    assert client.get("/").text.lstrip().lower().startswith("<!doctype html>")
+    assert 'action="/login"' not in client.get("/").text
+    assert client.get("/static/app.js").status_code == 200
+    assert client.get("/api/state").status_code != 401
+
+
+def test_login_page_logo_is_public_but_other_static_is_not(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    client = TestClient(airport_app.app)
+    assert client.get("/static/river-air-logo.svg").status_code == 200
+    assert client.get("/static/app.js").status_code == 401
+
+
+def test_api_without_sign_in_is_json_401(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    response = TestClient(airport_app.app).get("/api/state")
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Sign in"}
+    assert response.headers["WWW-Authenticate"] == 'Basic realm="River Air"'
+
+
+def test_wrong_login_password_shows_error_without_cookie(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    response = TestClient(airport_app.app).post("/login", data={"password": "nope"}, follow_redirects=False)
+    assert response.status_code == 401
+    assert "Wrong password" in response.text and 'action="/login"' in response.text
+    assert "set-cookie" not in response.headers
+
+
+def test_cookie_from_old_password_is_rejected_after_rotation(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "old")
+    client = TestClient(airport_app.app, base_url="https://testserver")
+    client.post("/login", data={"password": "old"}, follow_redirects=False)
+    assert client.get("/static/app.js").status_code == 200
+    monkeypatch.setenv("APP_PASSWORD", "new")
+    assert client.get("/static/app.js").status_code == 401
+    assert 'action="/login"' in client.get("/").text
+
+
+def test_logout_clears_cookie(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    client = TestClient(airport_app.app, base_url="https://testserver")
+    client.post("/login", data={"password": "s3cret"}, follow_redirects=False)
+    response = client.get("/logout", follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/"
+    assert "max-age=0" in response.headers["set-cookie"].lower()
+    assert client.get("/static/app.js").status_code == 401
+
+
+def test_no_password_mode_has_no_login_routes(monkeypatch):
+    monkeypatch.delenv("APP_PASSWORD", raising=False)
+    client = TestClient(airport_app.app)
+    assert 'action="/login"' not in client.get("/").text
+    assert client.get("/static/app.js").status_code == 200
 
 
 def _reading(key, seconds_ago, **extra):

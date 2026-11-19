@@ -27,9 +27,20 @@ those three flights stay open for the presenter. When the recovery agent runs in
     uv run airport-datagen --resume         # pick a stopped stream back up on its original clock
     uv run airport-datagen --dry-run --skip-history --minutes 5
     uv run airport-datagen --reset          # tombstone every generated key
+
+The continuous mode runs around the clock instead: each UTC day has 180 flights, eight RA417s from Chicago
+three hours apart, and a Grand Hyatt that sells out at 18:00 and refills at midnight. Every row follows from
+the seed and the wall clock, so a restarted stream picks up where it was. The recovery agent writes every offer;
+the stream answers them as the customers would, unless someone already decided in the app. At each UTC
+midnight it publishes the day after next and tombstones the day RETENTION_DAYS back.
+
+    uv run airport-datagen --continuous                # stream forever from now
+    uv run airport-datagen --continuous --history      # first publish the 29 finished days before yesterday
+    uv run airport-datagen --continuous --dry-run --now 2026-11-12T14:00:00Z  # print an hour as JSON
 """
 
 import argparse
+import heapq
 import json
 import logging
 import os
@@ -41,7 +52,8 @@ from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from itertools import pairwise
+from functools import lru_cache
+from itertools import count, pairwise
 from operator import itemgetter
 from pathlib import Path
 
@@ -91,6 +103,30 @@ DEPARTURE_MINUTES = (
 )
 LAST_BANK = 75
 
+# The around-the-clock template: 90 arrivals 16 minutes apart. Each destination's 6 departures run
+# 3 h 24 m apart with one 7-hour overnight gap, and the gaps start 96 minutes apart.
+CONTINUOUS_ARRIVAL_MINUTES = tuple(i * 16 for i in range(90))
+
+
+def _continuous_departure(i: int) -> int:
+    destination, k = i % 15, i // 15
+    return ((destination * 96 + 420) % 1440 + k * 204) % 1440
+
+
+CONTINUOUS_DEPARTURE_MINUTES = tuple(_continuous_departure(i) for i in range(90))
+
+
+@dataclass(frozen=True)
+class Schedule:
+    arrivals: tuple[int, ...]
+    departures: tuple[int, ...]
+    scripted: bool
+    variant: str
+
+
+SCRIPTED = Schedule(ARRIVAL_MINUTES, DEPARTURE_MINUTES, True, "")
+AROUND_THE_CLOCK = Schedule(CONTINUOUS_ARRIVAL_MINUTES, CONTINUOUS_DEPARTURE_MINUTES, False, "continuous")
+
 # Every flight's seat map, modeled after a two-class Boeing 737-900ER: First in rows 1-5
 # (A C | D F) and Economy in rows 6-32 (A B C | D E F), 182 seats.
 SEATS = tuple(f"{row}{letter}" for row in range(1, 33) for letter in ("ACDF" if row <= 5 else "ABCDEF"))
@@ -98,6 +134,7 @@ SEATS = tuple(f"{row}{letter}" for row in range(1, 33) for letter in ("ACDF" if 
 HERO_NUMBER = 417
 HERO_ORIGIN = "ORD"
 HERO_MINUTE = 21 * 60 + 40
+CONTINUOUS_HERO_MINUTES = tuple(40 + 180 * k for k in range(8))  # 00:40, 03:40, ... 21:40
 HERO_LEAD = timedelta(minutes=50)
 # RA417's delay in stream minutes, as (minutes in, delay) points it climbs between on each 30-second update.
 # It's already 10 minutes late when the stream starts, with nobody at risk yet (HERO_BUFFER). It holds at
@@ -113,6 +150,9 @@ HERO_DELAY = HERO_CLIMB[-1][1]
 HERO_CONNECTING = 150
 HERO_LOCAL = 20
 HERO_BUFFER = (56, 110)  # minutes RA417's connections have to spare: none at risk until it's 12 late
+CONTINUOUS_HERO_BUFFER = (50, 110)
+# On an around-the-clock day each RA417's delay climbs from 75 to 25 minutes before its scheduled arrival.
+CONTINUOUS_HERO_RAMP = (timedelta(minutes=-75), timedelta(minutes=-25))
 
 
 # Two later arrivals the recovery agent also handles (sql/27-staging-impacted-passengers.sql), so its
@@ -138,6 +178,7 @@ CONNECTING_SHARE = 0.3
 CONNECTION_BUFFER = (60, 180)
 PASSENGERS_PER_FLIGHT = (120, 180)
 SEVERE_PER_DAY = 10
+CONTINUOUS_SEVERE_PER_DAY = 14  # an around-the-clock day has no forced last bank, so it needs more to strand as many
 SEVERE_DELAY = (90, 240)
 MODERATE_SHARE = 0.25
 MODERATE_DELAY = (15, 60)
@@ -170,6 +211,7 @@ DECISION_SECONDS = (3 * 60, 90 * 60)
 OFFER_EXPIRY = timedelta(minutes=90)
 
 HISTORY_DAYS = 30
+RETENTION_DAYS = 35  # the continuous stream tombstones a service day this many days after it
 STREAM_MINUTES = 90
 SEED = 42
 
@@ -274,6 +316,7 @@ class Day:
     arrivals: list[Flight]
     departures: list[Flight]
     passengers: list[Passenger]
+    schedule: Schedule = SCRIPTED
 
     @property
     def flights(self) -> list[Flight]:
@@ -281,11 +324,22 @@ class Day:
 
     @property
     def hero(self) -> Flight:
+        if not self.schedule.scripted:
+            raise ValueError("an around-the-clock day has several RA417s; use heroes")
         return self.arrivals[ARRIVAL_MINUTES.index(HERO_MINUTE)]
+
+    @property
+    def heroes(self) -> list[Flight]:
+        """The RA417s: the one scripted flight, or the eight of an around-the-clock day."""
+        if self.schedule.scripted:
+            return [self.hero]
+        return [f for f in self.arrivals if f.number == HERO_NUMBER]
 
     @property
     def agent_flights(self) -> list[Flight]:
         """The live day's flights the recovery agent writes offers for: RA417, then AGENT_FLIGHTS."""
+        if not self.schedule.scripted:
+            return []
         return [self.hero, *(f for f in self.arrivals if f.number in AGENT_FLIGHTS)]
 
 
@@ -302,12 +356,18 @@ class Plan:
         return self.days[-1]
 
 
-def _clock(value: str | None) -> datetime:
-    """Stream start as naive UTC, trimmed to the minute."""
-    dt = datetime.fromisoformat(value.replace("Z", "+00:00")) if value else datetime.now(timezone.utc)
+def _utc(value: str) -> datetime:
+    """An ISO-8601 time as naive UTC; one without a zone is taken as UTC."""
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _clock(value: str | None) -> datetime:
+    """Stream start as naive UTC, trimmed to the minute."""
+    dt = _utc(value) if value else datetime.now(timezone.utc).replace(tzinfo=None)
+    return dt.replace(second=0, microsecond=0)
 
 
 def _climb(first: datetime, last: datetime, delay: int) -> list[tuple[datetime, int]]:
@@ -330,11 +390,17 @@ def _delays(flight: Flight, steps, climb: bool = False) -> None:
 
 
 def _assign_delays(day: Day, rng: random.Random) -> None:
-    hero = day.hero if day.live else None
-    scripted = {f.key: AGENT_FLIGHTS[f.number] for f in day.agent_flights[1:]} if day.live else {}
-    forced = {f.key for f in day.departures[LAST_BANK:]} if day.live else set()
-    pool = [f for f in day.flights if f is not hero and f.key not in forced and f.key not in scripted]
-    severe = {f.key for f in rng.sample(pool, SEVERE_PER_DAY - (1 if hero else 0))}
+    story = day.live and day.schedule.scripted
+    hero = day.hero if story else None
+    scripted = {f.key: AGENT_FLIGHTS[f.number] for f in day.agent_flights[1:]} if story else {}
+    forced = {f.key for f in day.departures[LAST_BANK:]} if story else set()
+    # An around-the-clock live day climbs each of its eight RA417s the same way, relative to its own schedule.
+    ramps = {id(f) for f in day.heroes} if day.live and not day.schedule.scripted else set()
+    pool = [
+        f for f in day.flights if f is not hero and id(f) not in ramps and f.key not in forced and f.key not in scripted
+    ]
+    severe_count = CONTINUOUS_SEVERE_PER_DAY if ramps else SEVERE_PER_DAY - (1 if hero else 0)
+    severe = {f.key for f in rng.sample(pool, severe_count)}
     # The live day streams its updates, so its delays climb the way RA417's does. History days
     # publish only their final rows, so they keep their two or three notices and the
     # historical answers stay the same.
@@ -347,6 +413,9 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
                 for (first, base), (last, peak) in pairwise(HERO_CLIMB)
                 for when, delay in _climb(start + first, start + last, peak - base)
             ]
+        elif id(flight) in ramps:
+            first, last = CONTINUOUS_HERO_RAMP
+            flight.reveals = _climb(flight.scheduled + first, flight.scheduled + last, HERO_DELAY)
         elif flight.key in scripted:
             # On the minute, like RA417, so its passengers turn HIGH at the same stream minutes every day.
             script, flight.offset, start = scripted[flight.key], 0, hero.scheduled - HERO_LEAD
@@ -390,13 +459,15 @@ def _risk_flip(inbound: Flight, onward: Flight) -> tuple[bool, datetime | None]:
 def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[Passenger]:
     passengers = []
     open_seats = {d.key: seat_rng.sample(SEATS, len(SEATS)) for d in day.departures}
+    story = day.live and day.schedule.scripted
+    ramps = {id(f) for f in day.heroes} if day.live and not day.schedule.scripted else set()
     for flight in day.arrivals:
-        hero = day.live and flight is day.hero
-        script = AGENT_FLIGHTS.get(flight.number) if day.live else None
-        if hero:
+        hero = story and flight is day.hero
+        script = AGENT_FLIGHTS.get(flight.number) if story else None
+        if hero or id(flight) in ramps:
             plan = [True] * HERO_CONNECTING + [False] * HERO_LOCAL
             rng.shuffle(plan)
-            low, high = HERO_BUFFER
+            low, high = HERO_BUFFER if hero else CONTINUOUS_HERO_BUFFER
         elif script:
             plan = [True] * script.connecting + [False] * script.local
             rng.shuffle(plan)
@@ -412,11 +483,17 @@ def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[P
         ]
         seats = seat_rng.sample(SEATS, len(plan))
         for seq, (connects, seat) in enumerate(zip(plan, seats, strict=True), start=1):
-            passenger = Passenger(f"P-{day.service_date:%m%d}-{flight.number:03d}-{seq:03d}", flight, seat)
+            if flight.number == HERO_NUMBER and not day.schedule.scripted:
+                key = f"P-{day.service_date:%m%d}-417-{flight.scheduled:%H%M}-{seq:03d}"
+            else:
+                key = f"P-{day.service_date:%m%d}-{flight.number:03d}-{seq:03d}"
+            passenger = Passenger(key, flight, seat)
             if connects and candidates:
-                for onward in rng.sample(candidates, min(3, len(candidates))):
+                # An around-the-clock RA417 tries every onward flight, so each of its connections turns HIGH.
+                tries = len(candidates) if id(flight) in ramps else min(3, len(candidates))
+                for onward in rng.sample(candidates, tries):
                     valid, flip = _risk_flip(flight, onward)
-                    if valid:
+                    if valid and open_seats[onward.key]:
                         passenger.connecting, passenger.impacted_at = onward, flip
                         passenger.connecting_seat = open_seats[onward.key].pop()
                         break
@@ -440,15 +517,13 @@ def _keeps_risk(inbound: Flight, onward, at: datetime, until: datetime, base: in
     return True
 
 
-def _revise_estimates(day: Day, rng: random.Random) -> None:
+def _revise_estimates(day: Day, rng: random.Random, start: datetime, end: datetime) -> None:
     """Live-stream arrival-time revisions that never change a status, map color, or connection's risk."""
-    start = day.hero.scheduled - HERO_LEAD
-    end = start + timedelta(minutes=STREAM_MINUTES)
     onward: dict[str, dict[str, Flight]] = {}
     for passenger in day.passengers:
         if passenger.connecting:
             onward.setdefault(passenger.inbound.key, {})[passenger.connecting.key] = passenger.connecting
-    scripted = {f.key for f in day.agent_flights}
+    scripted = {f.key for f in day.agent_flights + day.heroes}
     for flight in day.arrivals:
         updates = list(flight.ticks(start, flight.estimated_at() - SETTLE_BEFORE))
         if flight.key in scripted or len(updates) < 2:
@@ -477,20 +552,36 @@ def _revise_estimates(day: Day, rng: random.Random) -> None:
 
 
 def build_day(
-    seed: int, service_date: date, midnight: datetime, live: bool = False, schedule_only: bool = False
+    seed: int,
+    service_date: date,
+    midnight: datetime,
+    live: bool = False,
+    schedule_only: bool = False,
+    schedule: Schedule = SCRIPTED,
 ) -> Day:
     """One service day. The same seed, date, and variant always produce the same keys and values."""
     variant = "live" if live else "schedule" if schedule_only else "history"
-    rng = random.Random(f"{seed}:{service_date.isoformat()}:{variant}")
+    rng = random.Random(f"{seed}:{service_date.isoformat()}:{schedule.variant or variant}")
     suffix = f"{service_date:%Y%m%d}"
-    numbers = iter(range(101, 101 + len(ARRIVAL_MINUTES)))
+    numbers = (n for n in count(101) if n != HERO_NUMBER)
+    if schedule.scripted:
+        hero_slots = {i: HERO_MINUTE for i, minute in enumerate(schedule.arrivals) if minute == HERO_MINUTE}
+    else:  # the arrival slot nearest each RA417 time becomes that RA417, scheduled exactly on it
+        hero_slots = {}
+        for target in CONTINUOUS_HERO_MINUTES:
+            free = (i for i in range(len(schedule.arrivals)) if i not in hero_slots)
+            hero_slots[min(free, key=lambda i: abs(schedule.arrivals[i] - target))] = target
     arrivals = []
-    for i, minute in enumerate(ARRIVAL_MINUTES):
-        hero = minute == HERO_MINUTE
+    for i, slot in enumerate(schedule.arrivals):
+        hero = i in hero_slots
+        minute = hero_slots[i] if hero else slot
         number = HERO_NUMBER if hero else next(numbers)
+        key = f"{AIRLINE}{number}-{suffix}"
+        if hero and not schedule.scripted:
+            key += f"-{minute // 60:02d}{minute % 60:02d}"
         arrivals.append(
             Flight(
-                f"{AIRLINE}{number}-{suffix}",
+                key,
                 number,
                 HERO_ORIGIN if hero else SPOKES[i % 15],
                 HUB,
@@ -507,13 +598,27 @@ def build_day(
             midnight + timedelta(minutes=minute),
             rng.randrange(60),
         )
-        for i, minute in enumerate(DEPARTURE_MINUTES)
+        for i, minute in enumerate(schedule.departures)
     ]
-    day = Day(service_date, live, arrivals, departures, [])
+    day = Day(service_date, live, arrivals, departures, [], schedule)
     if not schedule_only:
         _assign_delays(day, rng)
         # Seats draw from their own stream, so they never shift delays, connections, or offers.
         day.passengers = _passengers(day, rng, random.Random(f"{seed}:{service_date.isoformat()}:{variant}:seats"))
+    return day
+
+
+@lru_cache(maxsize=8)
+def continuous_day(seed: int, service_date: date) -> Day:
+    """One around-the-clock service day (UTC), streamed live the way today's scripted day is."""
+    midnight = datetime.combine(service_date, datetime.min.time())
+    day = build_day(seed, service_date, midnight, live=True, schedule=AROUND_THE_CLOCK)
+    _revise_estimates(
+        day,
+        random.Random(f"{seed}:{service_date.isoformat()}:continuous:revisions"),
+        midnight - ACTIVE_BEFORE,
+        midnight + timedelta(days=1),
+    )
     return day
 
 
@@ -573,7 +678,13 @@ def build_plan(start: datetime, seed: int = SEED, history: bool = True) -> Plan:
         for back in range(HISTORY_DAYS if history else 0, 0, -1)
     ]
     days.append(build_day(seed, today, midnight, live=True))
-    _revise_estimates(days[-1], random.Random(f"{seed}:{today.isoformat()}:live:revisions"))
+    window = days[-1].hero.scheduled - HERO_LEAD
+    _revise_estimates(
+        days[-1],
+        random.Random(f"{seed}:{today.isoformat()}:live:revisions"),
+        window,
+        window + timedelta(minutes=STREAM_MINUTES),
+    )
     tomorrow = build_day(seed, today + timedelta(days=1), midnight + timedelta(days=1), schedule_only=True)
     recoveries = []
     for day, next_day in zip(days, [*days[1:], tomorrow], strict=True):
@@ -608,6 +719,160 @@ def _hotel_rooms(plan: Plan, until: datetime):
         yield at, GRAND_HYATT, hyatt
         yield at, MARRIOTT, marriott
         yield at, HILTON, hilton
+
+
+CONTINUOUS_SELLOUT_HOUR = 18  # the Grand Hyatt is sold out from 18:00 UTC until it refills at midnight
+HYATT_BAND = 5  # through the day the Grand Hyatt's rooms stay within this many of a steady drain to the sellout
+
+
+@lru_cache(maxsize=8)
+def continuous_hotel_rooms(seed: int, service_date: date) -> list[tuple[datetime, str, int]]:
+    """(time, hotel, rooms) for all three hotels every HOTEL_EVERY from midnight to the next midnight.
+
+    Each day starts from the full counts. The Grand Hyatt drains to 0 by CONTINUOUS_SELLOUT_HOUR and stays there:
+    its walk stays within HYATT_BAND rooms under a line from full at midnight to 0 at the sellout, so the rooms go
+    down visibly all day rather than hitting 1 within the first hour."""
+    rng = random.Random(f"{seed}:{service_date.isoformat()}:continuous:hotels")
+    midnight = datetime.combine(service_date, datetime.min.time())
+    sellout_step = timedelta(hours=CONTINUOUS_SELLOUT_HOUR) // HOTEL_EVERY
+    hyatt, marriott, hilton = GRAND_HYATT_ROOMS, MARRIOTT_ROOMS, HILTON_ROOMS
+    rows = []
+    for step in range(1, timedelta(days=1) // HOTEL_EVERY + 1):
+        left = sellout_step - step
+        if left > 0:
+            ceiling = -(-GRAND_HYATT_ROOMS * left // sellout_step)  # ceil: at least 1 until the sellout
+            walk = hyatt + rng.choices((-1, 0, 1), (45, 35, 20))[0]
+            hyatt = max(1, ceiling - HYATT_BAND, min(ceiling, walk))
+        else:
+            hyatt = 0
+        marriott = max(1, marriott + rng.choices((-1, 0, 1), (25, 55, 20))[0])
+        hilton = max(1, hilton + rng.choices((-1, 0, 1), (25, 55, 20))[0])
+        at = midnight + HOTEL_EVERY * step
+        rows += [(at, GRAND_HYATT, hyatt), (at, MARRIOTT, marriott), (at, HILTON, hilton)]
+    return rows
+
+
+@lru_cache(maxsize=8)
+def _continuous_room_times(seed: int, service_date: date) -> list[datetime]:
+    return [at for at, _, _ in continuous_hotel_rooms(seed, service_date)]
+
+
+def rooms_at(seed: int, at: datetime) -> dict[str, int]:
+    """Rooms per hotel as of `at` (UTC): the day's latest row at or before it, or the full counts at midnight."""
+    rooms = {GRAND_HYATT: GRAND_HYATT_ROOMS, MARRIOTT: MARRIOTT_ROOMS, HILTON: HILTON_ROOMS}
+    service_date = at.date()
+    rows = continuous_hotel_rooms(seed, service_date)
+    last = bisect_right(_continuous_room_times(seed, service_date), at)  # rows come three to a timestamp
+    for _, hotel, count_ in rows[max(0, last - 3) : last]:
+        rooms[hotel] = count_
+    return rooms
+
+
+def _midnight(service_date: date) -> datetime:
+    return datetime.combine(service_date, datetime.min.time())
+
+
+def continuous_state(seed: int, now: datetime) -> list[tuple[str, str, dict]]:
+    """Every live row as of `now` (UTC): the hotels, then each flight and passenger of yesterday, today, and tomorrow.
+
+    It depends only on the seed and `now`, so a restarted stream republishes what it last streamed, and a later
+    `now` never moves a flight back."""
+    days = [continuous_day(seed, now.date() + timedelta(days=n)) for n in (-1, 0, 1)]
+    rooms = rooms_at(seed, now)
+    rows = [(HOTELS, name, _hotel(name, rooms[name], now)) for name in HOTEL_ORDER]
+    rows += [(FLIGHTS, flight.key, flight.row(now)) for day in days for flight in day.flights]
+    rows += [(ITINERARIES, p.key, _itinerary(p)) for day in days for p in day.passengers]
+    for day in days:
+        for flight in day.flights:
+            if (reading := telemetry_row(flight, now)) and reading["stage"] != "LANDED":
+                rows.append((TELEMETRY, flight.key, reading))
+    return rows
+
+
+def _expired_keys(seed: int, service_date: date) -> list[tuple[str, str]]:
+    """Every flight, telemetry, itinerary, and offer key a continuous day wrote."""
+    day = continuous_day.__wrapped__(seed, service_date)  # uncached: an old day is needed once
+    keys = [(topic, f.key) for f in day.flights for topic in (FLIGHTS, TELEMETRY)]
+    keys += [(ITINERARIES, p.key) for p in day.passengers]
+    for passenger in day.passengers:
+        if passenger.impacted_at:
+            keys += [(OFFERS, f"{passenger.key}-O1"), (OFFERS, f"{passenger.key}-O2")]
+    return keys
+
+
+MISSED_MIDNIGHTS = 3  # a starting stream tombstones the days the last this many midnights would have
+
+
+def startup_tombstones(seed: int, now: datetime) -> list[tuple[str, str, None]]:
+    """Tombstones for the days past retention at today's and the two previous midnights.
+
+    The stream tombstones a day only at a midnight it streams through, so a generator down at midnight would skip
+    it forever. Republishing a tombstone is harmless, so every start sends these. (The day after next needs no
+    catch-up: continuous_state always covers tomorrow.)"""
+    rows = []
+    for k in range(MISSED_MIDNIGHTS):
+        expired = now.date() - timedelta(days=RETENTION_DAYS + k)
+        rows += [(topic, key, None) for topic, key in _expired_keys(seed, expired)]
+    return rows
+
+
+def continuous_events(seed: int, start: datetime, end: datetime) -> list[tuple[datetime, str, str, dict | None]]:
+    """Timed updates in (start, end]: flight ticks, hotel rooms, and at each UTC midnight the day after next's
+    schedule and passengers plus tombstones for the day past RETENTION_DAYS. Offers come from the agent."""
+    first = start.date() - timedelta(days=1)
+    days = [continuous_day(seed, first + timedelta(days=n)) for n in range((end.date() - first).days + 2)]
+    events = [
+        (tick, FLIGHTS, flight.key, flight.row(tick))
+        for day in days
+        for flight in day.flights
+        for tick in flight.ticks(start, end)
+    ]
+    events += [
+        (tick, TELEMETRY, flight.key, row)
+        for day in days
+        for flight in day.flights
+        for tick, row in _telemetry_events(flight, start, end)
+    ]
+    for n in range((end.date() - start.date()).days + 1):
+        service_date = start.date() + timedelta(days=n)
+        rows, times = continuous_hotel_rooms(seed, service_date), _continuous_room_times(seed, service_date)
+        # A day's last row is stamped the next midnight, when the next day refills the hotels instead.
+        for at, hotel, rooms in rows[bisect_right(times, start) : bisect_right(times, end)]:
+            if at.date() == service_date:
+                events.append((at, HOTELS, hotel, _hotel(hotel, rooms, at)))
+    midnight = _midnight(start.date() + timedelta(days=1))
+    while midnight <= end:
+        rooms = rooms_at(seed, midnight)
+        events += [(midnight, HOTELS, name, _hotel(name, rooms[name], midnight)) for name in HOTEL_ORDER]
+        upcoming = continuous_day(seed, midnight.date() + timedelta(days=1))
+        events += [(midnight, FLIGHTS, f.key, f.row(midnight)) for f in upcoming.flights]
+        events += [(midnight, ITINERARIES, p.key, _itinerary(p)) for p in upcoming.passengers]
+        expired = midnight.date() - timedelta(days=RETENTION_DAYS)
+        events += [(midnight, topic, key, None) for topic, key in _expired_keys(seed, expired)]
+        midnight += timedelta(days=1)
+    events.sort(key=itemgetter(0))
+    return events
+
+
+def continuous_history(seed: int, now: datetime) -> list[tuple[str, str, dict]]:
+    """The finished days before yesterday (D-30 to D-2): final flight rows, connecting passengers, completed offers."""
+    today = now.date()
+    dates = [today - timedelta(days=back) for back in range(HISTORY_DAYS, 1, -1)]
+
+    def build(service_date: date) -> Day:  # uncached, so 29 old days don't push the live ones out of the cache
+        return continuous_day.__wrapped__(seed, service_date)
+
+    rows = []
+    day = build(dates[0])
+    for service_date in dates:
+        following = service_date + timedelta(days=1)
+        next_day = continuous_day(seed, following) if following == today - timedelta(days=1) else build(following)
+        rows += [(FLIGHTS, f.key, f.row(datetime.max)) for f in day.flights]
+        rows += [(ITINERARIES, p.key, _itinerary(p)) for p in day.passengers if p.connecting]
+        for recovery in _recoveries(day, next_day, seed, None):
+            rows += [(OFFERS, key, value) for key, value in recovery.rows(datetime.max)]
+        day = next_day
+    return rows
 
 
 def hotel_warmup(plan: Plan, updates: int = 200):
@@ -665,12 +930,26 @@ def _telemetry_events(flight: Flight, after: datetime, until: datetime):
     if (down := telemetry_row(flight, after)) and down["stage"] == "LANDED":
         return
     tick = after + timedelta(seconds=flight.offset % 5 or 5)
+    earliest = flight.scheduled + timedelta(minutes=min(0, min((delay for _, delay in flight.reveals), default=0)))
+    if flight.arrival:
+        earliest -= flight_profile.flight_duration(flight.origin, flight.destination)
+    if tick < earliest:
+        tick += TELEMETRY_EVERY * ((earliest - tick) // TELEMETRY_EVERY)
     while tick <= until:
         if row := telemetry_row(flight, tick):
             yield tick, row
             if row["stage"] == "LANDED":
                 return
         tick += TELEMETRY_EVERY
+
+
+def _itinerary(passenger: Passenger) -> dict:
+    return dict(
+        inbound_flight_id=passenger.inbound.key,
+        inbound_seat=passenger.inbound_seat,
+        connecting_flight_id=passenger.connecting.key if passenger.connecting else None,
+        connecting_seat=passenger.connecting_seat,
+    )
 
 
 def initial_records(plan: Plan):
@@ -685,16 +964,7 @@ def initial_records(plan: Plan):
         for passenger in day.passengers:
             # History keeps only connecting passengers; nobody else can be impacted.
             if day.live or passenger.connecting:
-                yield (
-                    ITINERARIES,
-                    passenger.key,
-                    dict(
-                        inbound_flight_id=passenger.inbound.key,
-                        inbound_seat=passenger.inbound_seat,
-                        connecting_flight_id=passenger.connecting.key if passenger.connecting else None,
-                        connecting_seat=passenger.connecting_seat,
-                    ),
-                )
+                yield ITINERARIES, passenger.key, _itinerary(passenger)
     for flight in plan.live.flights:
         row = telemetry_row(flight, at)
         if row and row["stage"] != "LANDED":
@@ -738,6 +1008,11 @@ def reset_keys(start: datetime, seed: int = SEED) -> dict[str, set[str]]:
                 if passenger.impacted_at:
                     keys[OFFERS].update({f"{passenger.key}-O1", f"{passenger.key}-O2"})
     return keys
+
+
+FLUSH_ROUND_SECONDS = 30  # Publisher.flush waits this long per round
+FLUSH_STALLED_ROUNDS = 3  # ...and gives up after this many rounds in a row that deliver nothing
+FLUSH_LIMIT = timedelta(minutes=15)  # ...or after this long in all
 
 
 class Publisher:
@@ -835,10 +1110,23 @@ class Publisher:
             time.sleep(2**attempt)  # a retry can duplicate a record; hotel_inventory keeps only the latest
 
     def flush(self) -> None:
-        if not self.dry_run:
-            pending = self.producer.flush(60)
-            if pending:
+        """Wait until every record is delivered, for as long as delivery keeps making progress.
+
+        A month of history from a laptop takes minutes to drain. Give up only when FLUSH_STALLED_ROUNDS rounds in a
+        row deliver nothing, or after FLUSH_LIMIT in all."""
+        if self.dry_run:
+            return
+        deadline = time.monotonic() + FLUSH_LIMIT.total_seconds()
+        last, stalled = None, 0
+        while True:
+            pending = self.producer.flush(FLUSH_ROUND_SECONDS)
+            if not pending:
+                return
+            stalled = stalled + 1 if last is not None and pending >= last else 0
+            if stalled >= FLUSH_STALLED_ROUNDS or time.monotonic() >= deadline:
                 raise RuntimeError(f"{pending} records were not delivered")
+            logging.info("%d records still to deliver", pending)
+            last = pending
 
 
 def _pid_file():
@@ -981,6 +1269,124 @@ def run(
             pid_file.unlink()
 
 
+CONTINUOUS_WINDOW = timedelta(hours=1)  # the continuous stream works out its events an hour at a time
+WATCH_EVERY = 1.0  # seconds between offer polls while the stream waits
+
+
+def _wall_clock() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _stream_continuous(seed: int, start: datetime, until: datetime | None, publish, watcher=None, clock=None) -> None:
+    """Publish continuous_events after `start` (until `until`, or forever), plus the customers' answers to offers.
+
+    `clock` returns the current UTC time; without one nothing waits. The watcher's rows join the pending heap.
+    Right before a customer's first row goes out, the watcher must still see the offers it answered open and
+    unchanged: if someone booked in the app first, or the app rewrote an offer, every pending row for that
+    passenger is dropped.
+    """
+    pending: list[tuple[datetime, int, str, str, dict | None, str | None]] = []
+    order = count()
+    loaded = start
+    approved: set[str] = set()
+    dropped: set[str] = set()
+    minute, sent = None, 0
+
+    def push(rows) -> None:
+        for at, key, value in rows:
+            heapq.heappush(pending, (at, next(order), OFFERS, key, value, value["passenger_id"]))
+
+    while True:
+        # Keep the next hour of events on hand, so a customer row due later never jumps ahead of them.
+        while (until is None or loaded < until) and (not pending or pending[0][0] > loaded):
+            window_end = loaded + CONTINUOUS_WINDOW if until is None else min(loaded + CONTINUOUS_WINDOW, until)
+            for at, topic, key, value in continuous_events(seed, loaded, window_end):
+                heapq.heappush(pending, (at, next(order), topic, key, value, None))
+            loaded = window_end
+        if not pending or (until is not None and pending[0][0] > until):
+            break
+        at = pending[0][0]
+        wait = (at - clock()).total_seconds() if clock else 0.0
+        if watcher is not None:
+            rows = watcher.poll(max(0.0, min(wait, WATCH_EVERY)))
+            push(rows)
+            if rows or (clock and at > clock()):
+                continue  # look again: a customer row may be due first, and the poll may not have waited enough
+        elif wait > 0:
+            time.sleep(wait)
+        at, _, topic, key, value, passenger = heapq.heappop(pending)
+        if passenger is not None:
+            if passenger in dropped:
+                continue
+            if passenger not in approved:
+                if not watcher.still_open(passenger):
+                    dropped.add(passenger)
+                    logging.info("%s already decided in the app; dropping the simulated answer", passenger)
+                    continue
+                approved.add(passenger)  # our own first row closes the offers, so check only once
+        publish(topic, key, value)
+        sent += 1
+        if minute != at.replace(second=0, microsecond=0):
+            if minute is not None:
+                logging.info("%s UTC: %d updates", f"{minute:%H:%M}", sent)
+            minute, sent = at.replace(second=0, microsecond=0), 0
+
+
+def run_continuous(
+    seed: int = SEED,
+    now: datetime | None = None,
+    history: bool = False,
+    dry_run: bool = False,
+    until: datetime | None = None,
+) -> None:
+    """The always-on stream: publish the state as of `now` (and history), then stream on the wall clock forever.
+
+    The state depends only on the seed and the clock, so a restart picks up where the last stream was.
+    """
+    now = now or _wall_clock().replace(microsecond=0)
+    if dry_run and until is None:
+        until = now + CONTINUOUS_WINDOW  # a dry run prints an hour rather than forever
+    credentials = None if dry_run else extract_kafka_credentials("aws", get_project_root())
+    publisher = Publisher(credentials, dry_run)
+    if not dry_run:
+        stop_previous_stream()
+    if history:
+        rows = continuous_history(seed, now)
+        for topic, key, value in rows:
+            publisher.publish(topic, key, value)
+        publisher.flush()
+        logging.info("Published %d history records for the %d days before yesterday", len(rows), HISTORY_DAYS - 1)
+    rows = continuous_state(seed, now)
+    for topic, key, value in rows:
+        publisher.publish(topic, key, value)
+    publisher.flush()
+    logging.info("Published %d records: the hotels, yesterday, today, and tomorrow as of %s UTC", len(rows), now)
+    if not dry_run:  # a dry run prints the live rows only
+        tombstones = startup_tombstones(seed, now)
+        for topic, key, value in tombstones:
+            publisher.publish(topic, key, value)
+        publisher.flush()
+        logging.info("Published %d tombstones for the days past retention", len(tombstones))
+    if until is not None and until <= now:
+        return
+    watcher = None
+    pid_file = _pid_file()
+    if not dry_run:
+        from .offer_customers import OfferWatcher  # it imports this module
+
+        watcher = OfferWatcher(credentials, seed)
+        pid_file.parent.mkdir(exist_ok=True)
+        pid_file.write_text(str(os.getpid()))
+    logging.info("Streaming continuously%s", f" until {until} UTC" if until else "; Ctrl-C stops it")
+    try:
+        _stream_continuous(seed, now, until, publisher.publish, watcher, None if dry_run else _wall_clock)
+        publisher.flush()
+        logging.info("Stream finished")
+    finally:
+        if not dry_run and pid_file.exists() and pid_file.read_text().strip() == str(os.getpid()):
+            pid_file.unlink()
+
+
 def reset(start: datetime, seed: int, dry_run: bool) -> None:
     publisher = Publisher(None if dry_run else extract_kafka_credentials("aws", get_project_root()), dry_run)
     if not dry_run:
@@ -997,15 +1403,24 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--now", help="ISO-8601 UTC stream start (default: now)")
     parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="stream around the clock: every flight's state follows the seed and the UTC wall clock",
+    )
+    parser.add_argument(
+        "--history", action="store_true", help=f"with --continuous, first publish {HISTORY_DAYS - 1} finished days"
+    )
+    parser.add_argument("--until", help=argparse.SUPPRESS)  # with --continuous: stop streaming at this UTC time
+    parser.add_argument(
         "--minutes",
         type=int,
-        default=STREAM_MINUTES,
+        default=None,
         help=f"minutes of live updates to stream (default: {STREAM_MINUTES}; 0 exits after publishing)",
     )
     parser.add_argument(
         "--speed",
         type=float,
-        default=1.0,
+        default=None,
         help="play the stream this many times faster, e.g. 5 runs 90 minutes in 18 (default: 1). "
         "Event timestamps keep stream time, so the dashboard's clock runs ahead of the wall clock",
     )
@@ -1018,7 +1433,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--offers",
         choices=("auto", "agent", "generator"),
-        default="auto",
+        default=None,
         help="who writes the offers for RA417, RA183, and RA185 (default auto: the agent when Terraform runs it)",
     )
     parser.add_argument(
@@ -1028,6 +1443,31 @@ def main(argv: list[str] | None = None) -> None:
         "without republishing; with --offers generator, the agent flights' missed offers arrive at once",
     )
     args = parser.parse_args(argv)
+    if args.continuous:
+        scripted = {
+            "--minutes": args.minutes is not None,
+            "--speed": args.speed is not None,
+            "--resume": args.resume,
+            "--stream-only": args.stream_only,
+            "--offers": args.offers is not None,
+            "--reset": args.reset,
+            "--skip-history": args.skip_history,
+        }
+        given = [flag for flag, used in scripted.items() if used]
+        if given:
+            parser.error(f"--continuous can't be combined with {', '.join(given)}")
+        setup_logging()
+        now = _utc(args.now) if args.now else None
+        try:
+            run_continuous(args.seed, now, args.history, args.dry_run, _utc(args.until) if args.until else None)
+        except KeyboardInterrupt:
+            logging.info("Stopped")
+        return
+    if args.history or args.until:
+        parser.error("--history and --until only apply with --continuous")
+    args.minutes = STREAM_MINUTES if args.minutes is None else args.minutes
+    args.speed = 1.0 if args.speed is None else args.speed
+    args.offers = args.offers or "auto"
     if args.speed <= 0:
         parser.error("--speed must be greater than 0")
     if args.resume:
