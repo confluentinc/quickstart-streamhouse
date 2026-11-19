@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 import requests
+from confluent_kafka.schema_registry.error import SchemaRegistryError
 
 from scripts import airport_datagen as g
 
@@ -54,12 +55,31 @@ def test_hero_flight_strands_150_of_170_passengers(plan):
     assert sum(p.connecting is None for p in passengers) == 20
     impacted = [p for p in passengers if p.impacted_at]
     assert len(impacted) == 150
-    first, last = g.HERO_RAMP
-    assert all(START + first < p.impacted_at <= START + last for p in impacted)
-    assert len({p.impacted_at for p in impacted}) == 11  # one wave per destination
-    assert [when for when, _ in hero.reveals] == [START + first + g.UPDATE_EVERY * k for k in range(1, 41)]
+    assert all(START + timedelta(minutes=8) < p.impacted_at <= START + timedelta(minutes=30) for p in impacted)
+    assert len({p.connecting.key for p in impacted}) == 10  # one wave per destination
+    assert len({p.impacted_at for p in impacted}) == 10
+    times = [when for when, _ in hero.reveals]
+    assert times == [START + g.UPDATE_EVERY * k for k in range(len(times))]
     delays = [delay for _, delay in hero.reveals]
-    assert delays == sorted(delays) and delays[-1] == g.HERO_DELAY == 115
+    assert delays == sorted(delays) and delays[0] == 10 and delays[-1] == g.HERO_DELAY == 115
+
+
+def test_hero_starts_10_minutes_late_and_strands_passengers_steadily_until_minute_30(plan):
+    hero = plan.live.hero
+
+    def at_risk(minutes):
+        at = START + timedelta(minutes=minutes)
+        return sum(1 for p in plan.live.passengers if p.inbound is hero and p.impacted_at and p.impacted_at <= at)
+
+    assert hero.delay_at(START) == 10
+    # Nobody is at risk at the start; the map paints a flight red past AT_RISK_PASSENGERS by +8:30 to +11.
+    assert at_risk(0) == at_risk(8) == 0
+    assert at_risk(11) > g.AT_RISK_PASSENGERS
+    assert at_risk(30) == 150
+    # From +8:30 the count keeps rising every few minutes until +30.
+    waves = sorted({p.impacted_at for p in plan.live.passengers if p.inbound is hero and p.impacted_at})
+    assert waves[0] == START + timedelta(minutes=8, seconds=30)
+    assert len(waves) == 10 and max(b - a for a, b in pairwise(waves)) <= timedelta(minutes=3)
 
 
 def test_every_passenger_has_a_unique_seat_on_each_flight(plan, records):
@@ -116,7 +136,9 @@ def test_live_delays_climb_with_each_update_and_history_keeps_its_notices(plan):
         delays = [delay for _, delay in flight.reveals]
         if max(delays, default=0) >= g.DELAYED_AT:
             climbing += 1
-            assert all(abs(later - earlier) <= 3 for earlier, later in pairwise([0, *delays]))
+            # RA417 is already 10 minutes late when the stream starts; from there it climbs like the rest.
+            steps = pairwise(delays if flight is plan.live.hero else [0, *delays])
+            assert all(abs(later - earlier) <= 3 for earlier, later in steps)
     assert climbing >= 20
     for day in plan.days[:-1]:
         assert all(len(flight.reveals) <= 4 for flight in day.flights)
@@ -254,6 +276,83 @@ def test_stream_updates_flights_every_30_seconds_and_hotels_every_15(plan):
     assert sum(value["passenger_id"].startswith("P-0928-417-") for value in offers) == 300
 
 
+def test_every_hotel_update_round_covers_all_three_hotels_and_the_agent_query_reads_enough_rounds(plan):
+    """The agent's hotel_query reads the newest rows only; it sees every hotel because each round updates all three."""
+    rounds = {}
+    for at, topic, key, value in g.stream_events(plan, g.STREAM_MINUTES):
+        if topic == g.HOTELS:
+            rounds.setdefault(at, []).append(key)
+            assert value["as_of"] == at
+    assert all(sorted(keys) == sorted(g.HOTEL_ORDER) for keys in rounds.values())
+    sql = (
+        Path(__file__).parent.parent / "terraform/airline-demo/sql/31-insert-passenger-recommendations.sql"
+    ).read_text()
+    limit = int(re.search(r"hotel_inventory` ORDER BY as_of DESC LIMIT (\d+)", sql).group(1))
+    assert limit >= 10 * len(g.HOTEL_ORDER)  # ten rounds of slack for a feed that updates hotels out of step
+
+
+def test_flights_down_before_the_stream_starts_publish_no_telemetry(plan, records):
+    airborne = {key for topic, key, _ in records if topic == g.TELEMETRY}
+    first = {}
+    for _, topic, key, value in g.stream_events(plan, g.STREAM_MINUTES):
+        if topic == g.TELEMETRY:
+            first.setdefault(key, value)
+    assert first
+    assert all(value["stage"] != "LANDED" or key in airborne for key, value in first.items())
+
+
+def test_airborne_flights_report_every_5_seconds_until_they_land(plan):
+    events = [e for e in g.stream_events(plan, g.STREAM_MINUTES) if e[1] == g.TELEMETRY]
+    live = {f.key for f in plan.live.flights}
+    by_key = {}
+    for at, _, key, value in events:
+        by_key.setdefault(key, []).append((at, value))
+    assert by_key and set(by_key) <= live
+    for rows in by_key.values():
+        assert all(later - earlier == g.TELEMETRY_EVERY for (earlier, _), (later, _) in pairwise(rows))
+        assert all(value["stage"] != "LANDED" for _, value in rows[:-1])
+        assert all(value["as_of"] == at for at, value in rows)
+    landed = [key for key, rows in by_key.items() if rows[-1][1]["stage"] == "LANDED"]
+    assert landed
+    assert all(len(by_key[key]) > 1 or by_key[key][0][0] > START + g.TELEMETRY_EVERY for key in landed)
+
+
+def test_telemetry_rows_match_the_source_table_columns(plan):
+    sql = (
+        Path(__file__).parent.parent / "terraform" / "airline-demo" / "sql" / "35-source-flight-telemetry.sql"
+    ).read_text()
+    columns = [c for c in re.findall(r"^  (\w+) (?:STRING|TIMESTAMP\(3\)|DOUBLE|INT)", sql, re.M) if c != "key"]
+    rows = [e[3] for e in g.stream_events(plan, 5) if e[1] == g.TELEMETRY]
+    assert rows and all(list(row) == columns for row in rows)
+
+
+def test_hero_readings_never_move_backward(plan):
+    hero = plan.live.hero
+    readings = [g.telemetry_row(hero, START + timedelta(minutes=5) + timedelta(seconds=5 * k)) for k in range(241)]
+    assert all(readings)
+    for before, after in pairwise(readings):
+        step = before["distance_to_go_nm"] - after["distance_to_go_nm"]
+        assert 0 <= step <= before["ground_speed_kt"] * 5 / 3600 + 0.05
+
+
+def test_the_stream_starts_with_every_airborne_flights_position(plan, records):
+    sent = {key for topic, key, _ in records if topic == g.TELEMETRY}
+    airborne = set()
+    for flight in plan.live.flights:
+        row = g.telemetry_row(flight, START)
+        if row and row["stage"] != "LANDED":
+            airborne.add(flight.key)
+    assert sent and sent == airborne
+    assert all(value["as_of"] == START for topic, _, value in records if topic == g.TELEMETRY)
+
+
+def test_resume_collapses_missed_telemetry_to_one_reading(plan):
+    events = g.stream_events(plan, g.STREAM_MINUTES)
+    caught = g._catch_up(events, START, START + timedelta(minutes=30), 1.0)
+    due = [e for e in caught if e[0] <= START + timedelta(minutes=30) and e[1] == g.TELEMETRY]
+    assert due and len({e[2] for e in due}) == len(due)
+
+
 def test_same_seed_same_data(records):
     again = list(g.initial_records(g.build_plan(START)))
     assert again == records
@@ -265,6 +364,7 @@ def test_reset_covers_every_written_key(records):
     keys = g.reset_keys(START)
     for topic, key, _ in records:
         assert key in keys[topic]
+    assert any(topic == g.TELEMETRY for topic, _, _ in records)
 
 
 def test_dry_run_prints_json(capsys):
@@ -347,6 +447,34 @@ def test_a_rejected_hotel_update_raises_after_the_retries(monkeypatch):
     with pytest.raises(RuntimeError, match="401"):
         publisher.publish(g.HOTELS, "Hilton", dict(available_rooms=1, nightly_rate=Decimal("1.00")))
     assert len(calls) == g.WEBHOOK_ATTEMPTS
+
+
+def test_a_missing_topic_schema_tells_people_to_redeploy(monkeypatch):
+    publisher, _ = _webhook_publisher(monkeypatch, [200])
+
+    def missing(subject):
+        raise SchemaRegistryError(404, 40401, f"Subject '{subject}' not found.")
+
+    monkeypatch.setattr(publisher.schema_registry, "get_latest_version", missing)
+    with pytest.raises(RuntimeError, match="uv run deploy"):
+        publisher.publish(g.TELEMETRY, "RA417-20260928", {"stage": "CRUISING"})
+
+
+def test_hotel_rows_say_when_the_hotel_reported_them(plan, records):
+    """as_of is what lets readers pick a hotel's newest row out of the versions Lightning keeps."""
+    assert all(value["as_of"] == plan.start for topic, _, value in records if topic == g.HOTELS)
+    events = g.stream_events(plan, g.STREAM_MINUTES)
+    assert all(value["as_of"] == at for at, topic, _, value in events if topic == g.HOTELS)
+    assert all("as_of" in value for _, topic, _, value in events if topic == g.HOTELS)
+
+
+def test_hotel_warmup_runs_up_to_the_stream_start_in_time_order():
+    plan = g.build_plan(START, history=False)
+    by_hotel = {}
+    for _, name, value in g.hotel_warmup(plan, 200):
+        by_hotel.setdefault(name, []).append(value["as_of"])
+    for times in by_hotel.values():
+        assert times == sorted(set(times)) and times[-1] == plan.start - g.HOTEL_EVERY
 
 
 def test_hotel_warmup_sends_at_least_200_updates_and_ends_at_the_starting_rooms():

@@ -18,6 +18,7 @@ import hmac
 import json
 import os
 import secrets
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -30,7 +31,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from scripts import setup_rtce as rtce
-from scripts.airport_datagen import CONNECTION_MINUTES, HUB, OFFERS, SEATS, Publisher
+from scripts import workshop_checks
+from scripts.airport_datagen import CONNECTION_MINUTES, HUB, OFFERS, SEATS, TELEMETRY, Publisher
 from scripts.local_port import ensure_port_free
 from scripts.terraform import extract_kafka_credentials, get_project_root
 
@@ -43,6 +45,16 @@ STAGES = {"BOARDING": 1, "DEPARTED": 2, "LANDED": 2}  # how far along a flight's
 # On AWS Lambda (the always-on demo) the settings secret's ARN, since Lambda can't put a secret's keys in the
 # environment the way ECS does. Unset everywhere else.
 SETTINGS_SECRET_ARN = "STREAMHOUSE_SETTINGS_SECRET_ARN"
+
+
+def _lightning_error(topic: str, status: int, body: str) -> str:
+    """What a failed Lightning query says; a topic with no Lightning Table yet names the workshop step to do."""
+    if "FE_CUSTOMER_NOT_FOUND" in body or "FE_TABLE_NOT_FOUND" in body:
+        return (
+            f"{topic} has no Lightning Table yet. Enable it in the Console (Lab 3, steps 1 to 3), "
+            "or run `uv run workshop-status`."
+        )
+    return f"Lightning query returned HTTP {status}: {body[:300]}"
 
 
 class Deployment:
@@ -116,12 +128,12 @@ class Deployment:
         except requests.RequestException as exc:
             print(f"Lightning request failed: {exc}", flush=True)
             raise HTTPException(status_code=502, detail=f"Lightning request failed: {exc}") from exc
+        if resp.status_code == 400 and "DP_TABLE_NOT_AVAILABLE" in resp.text:
+            return []  # an enabled topic with no data yet: the datagen hasn't started (or the table is still loading)
         if resp.status_code != 200:
-            print(f"Lightning query returned HTTP {resp.status_code}: {resp.text[:300]}", flush=True)
-            raise HTTPException(
-                status_code=502,
-                detail=f"Lightning query returned HTTP {resp.status_code}: {resp.text[:300]}",
-            )
+            detail = _lightning_error(topic, resp.status_code, resp.text)
+            print(detail, flush=True)
+            raise HTTPException(status_code=502, detail=detail)
         body = resp.json().get("result", {})
         columns = [c["name"].lower() for c in body.get("schema", {}).get("columns", [])]
         return [dict(zip(columns, row, strict=False)) for row in body.get("data", [])]
@@ -216,7 +228,21 @@ def _passenger_offers(passenger_id: str) -> list[dict]:
 
 
 def _hotels() -> dict[str, dict]:
-    return {row["key"]: row for row in _rows("hotel_inventory")}
+    """Each hotel's latest row by name.
+
+    Lightning keeps every version of an upsert row and returns them capped at 200 and in no useful order, so
+    unordered reads soon show an old room count or lose a hotel. Newest first, the first row per hotel is its
+    current one. A deployment from before hotel_inventory had as_of rejects the ordering; it falls back to the
+    unordered read, which is right until the topic holds more than 200 updates.
+    """
+    try:
+        rows = _rows("hotel_inventory", order_by=("as_of", "DESC"))
+    except HTTPException:
+        rows = _rows("hotel_inventory")
+    latest: dict[str, dict] = {}
+    for row in rows:
+        latest.setdefault(row["key"], row)
+    return latest
 
 
 def _hotel_options() -> list[dict]:
@@ -365,19 +391,64 @@ def _eligible_offer_ids(passenger: dict, offers: list[dict]) -> set[str]:
     return eligible
 
 
+_telemetry_failure: list[str | None] = [None]  # last logged failure, so a 2.5 s poll logs it once
+
+
+NO_FLIGHTS_NOTICE = (
+    "No flights yet. If the datagen isn't running, start it in a second terminal: uv run airport-datagen --skip-history"
+)
+TELEMETRY_NOTICE = "Flight positions need the flight_telemetry Lightning Table. Enable it in the Console."
+
+
+def _telemetry(now: datetime) -> tuple[dict[str, dict], str | None]:
+    """The latest reading of each flight heard from in the last two minutes, keyed by flight.
+
+    Also returns a notice for the dashboard's status line when the readings can't be read.
+    """
+    try:
+        rows = deployment.lightning_scan(
+            TELEMETRY, [("as_of", ">=", now - timedelta(minutes=2))], keep_key_versions=True
+        )
+    except HTTPException as exc:
+        # Without telemetry the map shows planes at their origin airports, so the rest of the dashboard still works.
+        message = f"Telemetry unavailable, the map waits for it: {exc.detail}"
+        if message != _telemetry_failure[0]:
+            _telemetry_failure[0] = message
+            print(message, flush=True)
+        return {}, TELEMETRY_NOTICE
+    _telemetry_failure[0] = None
+    latest: dict[str, dict] = {}
+    for row in rows:
+        kept = latest.get(row["key"])
+        if kept is None or (_timestamp(row.get("as_of")) or datetime.min) > (
+            _timestamp(kept.get("as_of")) or datetime.min
+        ):
+            latest[row["key"]] = row
+    return latest, None
+
+
 @app.get("/api/state")
 def state():
     now = _now()
+    telemetry = _pool.submit(_telemetry, now)
     booked = _pool.submit(
         deployment.lightning_scan, OFFERS, [("status", "=", "BOOKED"), ("recommended_at", ">=", now - WINDOW_BEFORE)]
     )
     flights = _flights(window=(now - WINDOW_BEFORE, now + WINDOW_AFTER))
     booked = booked.result()
-    delays = sorted(flights, key=lambda row: (-row["delay_minutes"], row.get("key") or ""))[:10]
+    telemetry, notice = telemetry.result()
+    if not flights:
+        notice = NO_FLIGHTS_NOTICE
+    # Most passengers at risk first, then the longest delay, so a flight stranding connections leads the list.
+    delays = sorted(
+        flights, key=lambda row: (-row["affected_passengers"], -row["delay_minutes"], row.get("key") or "")
+    )[:10]
     return {
         "now": now,
         "flights": flights,
         "delays": delays,
+        "telemetry": telemetry,
+        "notice": notice,
         "counts": {
             "affected": sum(row["affected_passengers"] for row in flights),
             "booked": len(booked),
@@ -605,6 +676,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
     load_settings_secret()
+    if not os.environ.get("STREAMHOUSE_ENVIRONMENT_ID"):
+        ws = workshop_checks.require_deployment("uv run airport-app")
+        if not workshop_checks.ensure_lightning(ws, workshop_checks.LIGHTNING_TOPICS, "The dashboard reads them."):
+            sys.exit(1)
     ensure_port_free(args.host, args.port, "airport-app")
     import uvicorn
 

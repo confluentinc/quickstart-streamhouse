@@ -40,6 +40,7 @@ setup-rtce = "scripts.setup_rtce:main"
 airport-datagen = "scripts.airport_datagen:main"
 api-keys = "scripts.workshop_key_manager:main"
 airport-app = "scripts.airport_app:main"
+workshop-status = "scripts.workshop_checks:main"
 reset-demo-2 = "scripts.demo_reset:main"
 # Agentic Pit Decisions lab
 f1-race = "scripts.pit_decisions.race:main"

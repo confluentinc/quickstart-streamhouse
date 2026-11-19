@@ -15,9 +15,11 @@ The queries already use the right column names, so run them as given without cal
 2. departures_query returns flights from SFO to the final destination. Offer the first two flights whose
    estimated_time is at least 45 minutes after the inbound estimated_time. Skip CANCELLED flights.
 3. An offered flight that leaves 6 hours or more after the inbound estimated_time needs a hotel.
-   Run hotel_query. List the hotels that have available_rooms above 0 in this order: Grand Hyatt at SFO,
-   SFO Airport Marriott Waterfront, Hilton SFO Airport Bayfront. The first offer uses the
-   first hotel in that list and the second offer uses the second. The hotel cost is that hotel nightly_rate.
+   Run hotel_query. It returns the hotel updates, newest first, so each hotel appears several times:
+   use only the row with the latest as_of for each hotel. List the hotels whose latest available_rooms
+   is above 0 in this order: Grand Hyatt at SFO, SFO Airport Marriott Waterfront, Hilton SFO Airport
+   Bayfront. The first offer uses the first hotel in that list and the second offer uses the second.
+   The hotel cost is that hotel nightly_rate.
    A flight that leaves sooner needs no hotel: write NONE for its hotel and cost.
 
 Reply with exactly one line and nothing else:

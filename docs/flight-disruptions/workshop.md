@@ -2,14 +2,14 @@
 
 ![River Air flight recovery architecture](../images/flight-disruptions/architecture.png)
 
-River Air runs 180 flights a day through its SFO hub, and like every airline, its data is spread across systems that weren't built to work together. Passenger itineraries come from ticketing. Flight status and gate times come from the airports' operational systems. Hotel rooms come from a partner. The airline owns part of the picture, the airport owns another, and partners own the rest.
+River Air runs 180 flights a day through its SFO hub, and like every airline, its data is spread across systems that weren't built to work together. Passenger itineraries come from ticketing. Flight status and gate times come from the airports' operational systems. Hotel rooms come from a partner.
 
 That leaves River Air with two challenges:
 
 1. **One live view of every flight.** A simple question like *"How many flights are delayed right now?"* turns into a data integration project.
 2. **Recovering passengers when a flight is disrupted.** Flight RA417 from Chicago is about to run almost two hours late, and 150 of its passengers will miss their connections. Each one needs a new flight, and some need a hotel, before the rooms sell out.
 
-In this workshop, you deploy a **Streamhouse** architecture on Confluent Cloud that tackles both. You compute every passenger's connection risk with Flink and serve it through Lightning Tables to an always-on, always-current operations dashboard. Then you build a streaming agent that reads live flights and hotel rooms through the Real-Time Context Engine (RTCE) and offers every stranded passenger a new flight and, when needed, a hotel.
+In this workshop, you deploy a **Streamhouse** architecture on Confluent Cloud that tackles both. You compute every passenger's connection risk with Flink and serve it through Lightning Tables to a live operations dashboard. Then you build a streaming agent that reads live flights and hotel rooms through the Real-Time Context Engine (RTCE) and offers every stranded passenger a new flight and, when needed, a hotel.
 
 **Watch the demo**
 
@@ -21,9 +21,13 @@ In this workshop, you deploy a **Streamhouse** architecture on Confluent Cloud t
 >
 > **This workshop takes about 60 minutes to complete.**
 
+> [!TIP]
+>
+> **Skipped a step, or hit an error you don't recognize?** Run `uv run workshop-status` in a terminal. It checks your environment and points you to the next unfinished step in this guide. See [Skipped a step?](#skipped-a-step).
+
 | Part | Minutes | What you do |
 |---|---|---|
-| [Prerequisites](#0-prerequisites) | 5 | Install the tools (skip it on a workstation the host provides) |
+| [Prerequisites](#0-prerequisites) | 5 | Install the tools (skip on a host-provided workstation) |
 | [Set up Confluent Cloud](#set-up-confluent-cloud) | 5 | Create your account and add a payment method |
 | [Deploy to Confluent Cloud](#deploy-to-confluent-cloud) | 10 | Clone the repo, deploy your environment, and start the data |
 | [Lab 1](#lab-1--explore-the-live-feeds) | 5 | Explore the live feeds |
@@ -38,7 +42,7 @@ In this workshop, you deploy a **Streamhouse** architecture on Confluent Cloud t
 
 > [!TIP]
 >
-> **Provided a workstation by the workshop host?** Skip this section — it's already set up for you. Continue to [Set up Confluent Cloud](#set-up-confluent-cloud).
+> **Using a host-provided workstation?** Skip this section. It's already set up. Continue to [Set up Confluent Cloud](#set-up-confluent-cloud).
 
 <details>
 <summary><strong>Prerequisites for your own machine</strong> (click to expand)</summary>
@@ -96,7 +100,7 @@ confluent version
    first cluster.
 
 > [!WARNING]
-> **Do NOT create a cluster.** Skip the **Add cluster** / **Create cluster** step — Terraform
+> **Do NOT create a cluster.** Skip **Add cluster** / **Create cluster**. Terraform
 > creates its own environment *and* cluster for you. Click the Confluent logo (top-left) to
 > exit the wizard.
 
@@ -106,8 +110,8 @@ A payment method is required for Terraform to create a **Standard** cluster. Fre
 credit is used first, so you typically won't be charged during the workshop.
 
 > [!TIP]
-> All new sign-ups get **$400 in free credit** to use within the first 30 days — deploying this
-> workshop will not get you charged.
+> All new sign-ups get **$400 in free credit** to use within the first 30 days, so deploying this
+> workshop won't charge your card.
 
 1. Go directly to **[Billing & payment](https://confluent.cloud/settings/billing/payment)**.
 2. Open the **Payment details and contacts** tab.
@@ -140,9 +144,9 @@ credit is used first, so you typically won't be charged during the workshop.
 
     | Prompt | Answer |
     |---|---|
-    | `Which lab do you want to deploy?` | Enter `1` for **Flight Disruptions**. Deploy builds the workshop's starting point, and you build the rest in the labs. |
-    | `Email (Enter to skip)` and `Password` | The **email and password you used to sign up**. Deploy checks them with a real login and saves them to `credentials.env`, so later commands log in automatically. **Signed in with SSO in step 2?** Press **Enter** to skip. |
-    | `Generate new Confluent Cloud API keys? (y/N)` | Enter `y`. Deploy creates the key and uses it, so it doesn't ask for a key or secret. |
+    | `Which lab do you want to deploy?` | Enter `1` for **Flight Disruptions**. This deploys the starting infrastructure; you build the rest in the labs. |
+    | `Email (Enter to skip)` and `Password` | The **email and password you used to sign up**. The script verifies your login details and saves them to `credentials.env` for later commands. **Signed in with SSO in step 2?** Press **Enter** to skip. |
+    | `Generate new Confluent Cloud API keys? (y/N)` | Enter `y`. The script creates and configures the key automatically. |
     | `Ready to deploy? (y/n)` | Enter `y`. |
 
     **Deploy takes about 10 minutes to create all of the workshop infrastructure and source topics.** When finished, you'll see your environment and cluster names, which you need in Lab 2:
@@ -170,17 +174,17 @@ credit is used first, so you typically won't be charged during the workshop.
 
 River Air's data comes from different systems: itineraries from ticketing, flight status from the airports' operational databases, and hotel rooms from a partner. Let's look at them as they arrive.
 
-1. Open **[Topics](https://confluent.cloud/go/topics)** and select your **environment** (`streamhouse-…-env`) and **cluster** (`streamhouse-…-cluster`). You see the four topics deploy created: `flight_status`, `passenger_itineraries`, `hotel_inventory`, and `passenger_recommendations`.
+1. Open **[Topics](https://confluent.cloud/go/topics)** and select your **environment** (`streamhouse-…-env`) and **cluster** (`streamhouse-…-cluster`). You see the five topics deploy created: `flight_status`, `passenger_itineraries`, `hotel_inventory`, `flight_telemetry`, and `passenger_recommendations`.
 
-<img src="../images/flight-disruptions/topics-view.png" alt="The cluster&#x27;s Topics list with the four demo topics: flight_status, hotel_inventory, passenger_itineraries, and passenger_recommendations" width="750">
+<img src="../images/flight-disruptions/topics-view.png" alt="The cluster&#x27;s Topics list with the demo topics, starting with flight_status" width="750">
 
-2. Explore the topics by clicking a topic name, then selecting **Messages** to view some of the incoming messages, their keys, and values. 
+2. Click a topic name, then select **Messages** to view incoming keys and values in real time.
 
 <img src="../images/flight-disruptions/topic-exploration.png" alt="The flight_status topic&#x27;s Messages tab, with one message open in Message details" width="750">
 
 ## Lab 2 — Compute connection risk with Flink
 
-Now we'll use Flink to join every itinerary to the live status of both of its flights and keep the result current as flights change. Connection risk updates the moment a flight's delay changes, not on the next batch refresh.
+Use Flink to join each itinerary with the live status of both flights. Connection risk updates as soon as a flight's delay changes.
 
 1. Open the Flink SQL workspace:
 
@@ -206,10 +210,11 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
     |---|---|
     | `flight_status` | One row per flight: route, scheduled and estimated time, status |
     | `passenger_itineraries` | One row per passenger: inbound flight and seat, connecting flight and seat (null when the trip ends at SFO) |
-    | `hotel_inventory` | One row per hotel: rooms left and nightly rate |
-    | `passenger_recommendations` | The rebooking offers. The generator writes most flights', and in Lab 4 we'll create the agent that writes them for RA417 and two later delayed flights, RA183 and RA185 |
+    | `hotel_inventory` | Each hotel's rooms left and nightly rate, one row per update |
+    | `flight_telemetry` | One row per airborne flight: position, altitude, speeds, and heading, refreshed every 5 seconds. Only the live flight map uses it |
+    | `passenger_recommendations` | Rebooking offers. The generator writes offers for most flights; in Lab 4 you build the agent for RA417 and two later delayed flights, RA183 and RA185 |
 
-    <img src="../images/flight-disruptions/show-tables.png" alt="SHOW TABLES results: flight_status, hotel_inventory, passenger_itineraries, and passenger_recommendations" width="750">
+    <img src="../images/flight-disruptions/show-tables.png" alt="SHOW TABLES results listing the starting tables, from flight_status" width="750">
 
 3. Create `passenger_state`, which keeps every passenger's connection current and flags it `HIGH` risk when a delay leaves less than 45 minutes to make it. Paste this whole statement into one cell and run it:
 
@@ -259,9 +264,9 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
 > [!NOTE]
 > **Why a materialized table?**
 >
-> A materialized table is a single object that owns both the schema and the query logic that keeps filling it — Flink creates a backing Kafka topic, registers the schema, and runs the query continuously, so passenger risk updates as flights change.
+> A materialized table is a single object that combines the schema and the continuous query that populates it. Flink creates a backing Kafka topic, registers the schema, and runs the query continuously, so passenger risk updates as flights change.
 >
-> Because schema and query live together, you can **evolve** them in place: `CREATE OR ALTER MATERIALIZED TABLE` lets you change the query or add a column and Flink migrates the table for you, instead of dropping the table, recreating it, and juggling offsets and downstream consumers.
+> Because schema and query live together, you can **evolve** them in place: `CREATE OR ALTER MATERIALIZED TABLE` lets you change the query or add a column and Flink migrates the table for you, without dropping the table or resetting downstream consumers.
 >
 > *Reference*: [Materialized Tables in Confluent Cloud for Apache Flink](https://docs.confluent.io/cloud/current/flink/concepts/materialized-tables.html)
 
@@ -323,7 +328,7 @@ Now we'll use Flink to join every itinerary to the live status of both of its fl
     WHERE `key` LIKE 'RA417-%';
     ```
 
-    As today's flight RA417 becomes further delayed, the number of impacted passengers increases. 
+    As today's RA417 delay grows, `affected_passengers` increases.
 
     <img src="../images/flight-disruptions/flight-impact-query.png" alt="Query results from flight_impact: today&#x27;s RA417 delayed with affected passengers, and tomorrow&#x27;s RA417 on time" width="750">
 
@@ -337,7 +342,7 @@ Lightning Tables keep a low-latency table of each topic's latest rows in Conflue
 
 1. In the cluster sidebar, open **Lightning Tables** and click **Add Lightning Table**.
 
-2. Enable `flight_status`, `flight_impact`, `hotel_inventory`, `passenger_itineraries`, `passenger_recommendations`, and `passenger_state`.
+2. Enable `flight_status`, `flight_impact`, `hotel_inventory`, `passenger_itineraries`, `passenger_recommendations`, `passenger_state`, and `flight_telemetry`.
 
     You can also enable each table from the cluster's **Topics** page. In the **Lightning Tables** column, click **+ Enable**, then **Enable** in the confirmation panel.
 
@@ -345,17 +350,19 @@ Lightning Tables keep a low-latency table of each topic's latest rows in Conflue
 
     ![Confirm that you want to enable the Lightning Table](../images/flight-disruptions/lightning-tables-panel.png)
 
-3. Close the picker and wait until all six show **Active**.
+3. Close the picker and wait until all seven show **Active**. If the map says **Waiting for telemetry**, check that `flight_telemetry` is **Active**.
 
-    ![All six Lightning Tables active in the Topics list](../images/flight-disruptions/lightning-tables-active.png)
+    ![Example of active Lightning Tables in the Topics list](../images/flight-disruptions/lightning-tables-active.png)
 
-4. Use the **Preview** column on `hotel_inventory` to run ``SELECT * FROM `hotel_inventory` LIMIT 100;`` if it does not run automatically. It returns three rows, and running it again later shows room counts changing as inventory updates.
+4. Use the **Preview** column on `hotel_inventory` to run ``SELECT * FROM `hotel_inventory` LIMIT 100;`` if it does not run automatically. The preview shows inventory updates. Use `as_of` to see when each update was recorded.
 
     You can run the same inventory check from your terminal.
 
     ```bash
     uv run setup-rtce --lightning hotel_inventory --run
     ```
+
+    The terminal command shows the newest updates first. The screenshot shows an earlier output format.
 
     ![Hotel inventory query results in the terminal](../images/flight-disruptions/lightning-query-test.png)
 
@@ -369,7 +376,7 @@ Lightning Tables keep a low-latency table of each topic's latest rows in Conflue
 
     ![Operations dashboard overview](../images/flight-disruptions/dashboard-workshop.png)
 
-6. Check **Operations** and **Biggest delays**, then select **RA417** (it may be on time initially). Hover a seat on the seat map to view that passenger's itinerary, and watch the live map telemetry update as the flight moves.
+6. Check **Operations** and **Biggest delays**, then select **RA417** (it may be on time initially). Hover a seat on the seat map to view that passenger's itinerary, and watch the live map telemetry update as the flight moves. The generator publishes telemetry every five seconds.
 
     ![RA417 seat map and live telemetry](../images/flight-disruptions/dashboard-ra417-workshop.png)
 
@@ -476,9 +483,11 @@ Next you will build a Flink SQL recovery agent that checks live flights and hote
     2. departures_query returns flights from SFO to the final destination. Offer the first two flights whose
        estimated_time is at least 45 minutes after the inbound estimated_time. Skip CANCELLED flights.
     3. An offered flight that leaves 6 hours or more after the inbound estimated_time needs a hotel.
-       Run hotel_query. List the hotels that have available_rooms above 0 in this order: Grand Hyatt at SFO,
-       SFO Airport Marriott Waterfront, Hilton SFO Airport Bayfront. The first offer uses the
-       first hotel in that list and the second offer uses the second. The hotel cost is that hotel nightly_rate.
+       Run hotel_query. It returns the hotel updates, newest first, so each hotel appears several times:
+       use only the row with the latest as_of for each hotel. List the hotels whose latest available_rooms
+       is above 0 in this order: Grand Hyatt at SFO, SFO Airport Marriott Waterfront, Hilton SFO Airport
+       Bayfront. The first offer uses the first hotel in that list and the second offer uses the second.
+       The hotel cost is that hotel nightly_rate.
        A flight that leaves sooner needs no hotel: write NONE for its hotel and cost.
 
     Reply with exactly one line and nothing else:
@@ -532,7 +541,7 @@ Next you will build a Flink SQL recovery agent that checks live flights and hote
           g.final_destination, ''' AND scheduled_time >= TIMESTAMP ''',
           DATE_FORMAT(g.impacted_at - INTERVAL '1' HOUR, 'yyyy-MM-dd HH:mm:ss'),
           ''' ORDER BY scheduled_time ASC LIMIT 12',
-          '; hotel_query=SELECT * FROM `hotel_inventory` LIMIT 10'
+          '; hotel_query=SELECT * FROM `hotel_inventory` ORDER BY as_of DESC LIMIT 30'
         ),
         g.group_key
       )) AS r(agent_status, response)
@@ -602,7 +611,7 @@ With a Streamhouse architecture, that's not an issue: River Air's app always has
 
 <img src="../images/flight-disruptions/dashboard-passenger-hotel-options.png" alt="Hotel options and Passenger recovery in the app, with the Grand Hyatt sold out and one passenger&#x27;s two offers" width="750">
 
-2. Watch the Grand Hyatt in **Hotel options** for a minute or so. The hotel partner's feed updates each hotel's rooms left every 15 seconds, and the dashboard shows them in real time using **Lightning Queries** on `hotel_inventory`. You don't need to wait for it to sell out.
+2. Watch the Grand Hyatt in **Hotel options** for a minute or so. The hotel partner's feed updates each hotel's rooms left every 15 seconds, and the dashboard shows them in real time using **Lightning Queries** on `hotel_inventory`. Lightning keeps every update, so the app reads the newest ones first and shows each hotel's latest row. You don't need to wait for it to sell out.
 
 3. Click **Select** on either offer, then click **Book**.
 
@@ -665,7 +674,7 @@ winget install --id Anthropic.ClaudeCode -e
     ```text
     What topics do I have access to in the Real-Time Context Engine?
     ```
-    <img src="../images/flight-disruptions/rtce-question-1.png" alt="Claude Code listing the six topics in the Real-Time Context Engine" width="750">
+    <img src="../images/flight-disruptions/rtce-question-1.png" alt="Claude Code listing the topics in the Real-Time Context Engine" width="750">
 
     ```text
     Which flight today puts the most passengers at risk of missing a connection, and where are they headed?
@@ -677,7 +686,15 @@ winget install --id Anthropic.ClaudeCode -e
     ```
     <img src="../images/flight-disruptions/rtce-question-3.png" alt="Claude Code listing each SFO hotel&#x27;s rooms left and nightly rate, with the Grand Hyatt sold out" width="750">
 
-RTCE gives your agent three tools, `listTopics`, `getMetadata`, and `queryData`, and exposes only topics whose context engine is on. Watch the tool calls: the answers come from your live data, not from the model's memory.
+RTCE gives your agent three tools, `listTopics`, `getMetadata`, and `queryData`, and exposes only topics whose context engine is on. Watch the tool calls query your live topics directly.
+
+## Skipped a step?
+
+The labs build on each other, and Flink can't tell you which earlier step is missing. To find the gap, run this in a terminal from the repo's root folder:
+
+```bash
+uv run workshop-status
+```
 
 ## Conclusion
 

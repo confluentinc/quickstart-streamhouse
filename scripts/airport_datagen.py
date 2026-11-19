@@ -4,14 +4,16 @@ Each service day has 180 flights: 90 arrivals into SFO and 90 departures from it
 flight uses one 182-seat layout, modeled after a two-class Boeing 737-900ER, and each
 passenger has a seat on each of their flights.
 The live day is shifted so flight RA417 from Chicago is scheduled 50 minutes after the
-stream starts. Its delay grows every 30 seconds from +5 to +25 minutes, and 150 of its 170
-passengers miss their connection. RA183 from Boston and RA185 from Las Vegas follow the same
-script later in the stream (AGENT_FLIGHTS). Every active flight publishes its status every 30 seconds,
-and on the live day each growing delay climbs a little with every update, as RA417's does.
+stream starts. It's 10 minutes late from the start, holds there until +8, then grows every 30
+seconds: 66 by +30, 115 by +40. 150 of its 170 passengers miss their connection, the last by +30. RA183
+from Boston and RA185 from Las Vegas follow the same script later in the stream
+(AGENT_FLIGHTS). Every active flight publishes its status every 30 seconds, and on the live
+day each growing delay climbs a little with every update, as RA417's does.
 En-route arrivals revise their estimate by a minute or two along the way, and the three
 hotels publish their rooms every 15 seconds. Announced delays only grow (a severe delay may
 shrink by at most three minutes near landing), so a flight never goes from hours late back
-to on time.
+to on time. Every airborne live-day flight also publishes its position, altitude and speed to
+flight_telemetry every 5 seconds, from takeoff through its first LANDED reading.
 
 The generator writes two rebooking offers a few seconds after a connection becomes HIGH
 risk. Past bookings are completed the way customers would complete them; the offers for
@@ -53,13 +55,16 @@ from decimal import Decimal
 from functools import lru_cache
 from itertools import count, pairwise
 from operator import itemgetter
+from pathlib import Path
 
 import requests
 from confluent_kafka import Producer
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroSerializer
+from confluent_kafka.schema_registry.error import SchemaRegistryError
 from confluent_kafka.serialization import MessageField, SerializationContext, StringSerializer
 
+from . import flight_profile
 from .logging_utils import setup_logging
 from .terraform import extract_kafka_credentials, get_project_root
 
@@ -68,6 +73,8 @@ ITINERARIES = "passenger_itineraries"
 HOTELS = "hotel_inventory"  # fed by the hotel webhook when deploy created one
 WEBHOOK_ATTEMPTS = 5
 OFFERS = "passenger_recommendations"
+TELEMETRY = "flight_telemetry"
+TELEMETRY_EVERY = timedelta(seconds=5)  # how often an airborne flight publishes its position
 
 AIRLINE = "RA"
 HUB = "SFO"
@@ -129,18 +136,27 @@ HERO_ORIGIN = "ORD"
 HERO_MINUTE = 21 * 60 + 40
 CONTINUOUS_HERO_MINUTES = tuple(40 + 180 * k for k in range(8))  # 00:40, 03:40, ... 21:40
 HERO_LEAD = timedelta(minutes=50)
-# From +5 to +25 minutes into the stream, each 30-second RA417 update adds to its delay, up to 115.
-HERO_RAMP = (timedelta(minutes=5), timedelta(minutes=25))
-HERO_DELAY = 115
+# RA417's delay in stream minutes, as (minutes in, delay) points it climbs between on each 30-second update.
+# It's already 10 minutes late when the stream starts, with nobody at risk yet (HERO_BUFFER). It holds at
+# 10-11 until +8; then it climbs steadily to 66 by +30, stranding another destination's passengers every
+# 2-3 minutes from +8:30 until all 150 are at risk, then on to 115.
+HERO_CLIMB = (
+    (timedelta(minutes=0), 10),
+    (timedelta(minutes=8), 11),
+    (timedelta(minutes=30), 66),
+    (timedelta(minutes=40), 115),
+)
+HERO_DELAY = HERO_CLIMB[-1][1]
 HERO_CONNECTING = 150
 HERO_LOCAL = 20
-HERO_BUFFER = (50, 110)
+HERO_BUFFER = (56, 110)  # minutes RA417's connections have to spare: none at risk until it's 12 late
+CONTINUOUS_HERO_BUFFER = (50, 110)
 # On an around-the-clock day each RA417's delay climbs from 75 to 25 minutes before its scheduled arrival.
 CONTINUOUS_HERO_RAMP = (timedelta(minutes=-75), timedelta(minutes=-25))
 
 
 # Two later arrivals the recovery agent also handles (sql/27-staging-impacted-passengers.sql), so its
-# offers come in three waves. Like RA417's, each delay climbs over a window of stream minutes that
+# offers come in three waves. Like RA417's, each delay climbs over a window of stream minutes; theirs
 # ends about 25 minutes before the flight is due, where the map starts its descent, and it breaks every
 # connection onto the on-time last bank. RA183's passengers turn HIGH before the Grand Hyatt sells
 # out, RA185's after.
@@ -168,6 +184,7 @@ MODERATE_SHARE = 0.25
 MODERATE_DELAY = (15, 60)
 DELAYED_AT = 15
 MAP_AT_RISK = 45  # the dashboard's flight map colors a flight this many minutes late as at risk
+AT_RISK_PASSENGERS = 10  # ... or with more than this many passengers at risk (flightmap.js)
 ACTIVE_BEFORE = timedelta(minutes=180)
 UPDATE_EVERY = timedelta(seconds=30)  # how often an active flight publishes its status
 BOARDING = timedelta(minutes=30)
@@ -186,7 +203,7 @@ GRAND_HYATT_ROOMS = 40
 MARRIOTT_ROOMS = 150
 HILTON_ROOMS = 120
 SELLOUT = timedelta(minutes=40)  # the Grand Hyatt sells out this long after the stream starts
-HOTEL_EVERY = timedelta(seconds=15)  # both hotels publish their rooms this often during the stream
+HOTEL_EVERY = timedelta(seconds=15)  # all three hotels publish their rooms together this often during the stream
 OVERNIGHT = timedelta(hours=6)
 AGENT_LATENCY_SECONDS = (5, 40)
 BOOKING_SHARE = 0.85
@@ -390,8 +407,12 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
     climb = day.live
     for flight in day.flights:
         if flight is hero:
-            start, (first, last) = flight.scheduled - HERO_LEAD, HERO_RAMP
-            flight.reveals = _climb(start + first, start + last, HERO_DELAY)
+            start = flight.scheduled - HERO_LEAD
+            flight.reveals = [(start + HERO_CLIMB[0][0], HERO_CLIMB[0][1])] + [
+                (when, base + delay)
+                for (first, base), (last, peak) in pairwise(HERO_CLIMB)
+                for when, delay in _climb(start + first, start + last, peak - base)
+            ]
         elif id(flight) in ramps:
             first, last = CONTINUOUS_HERO_RAMP
             flight.reveals = _climb(flight.scheduled + first, flight.scheduled + last, HERO_DELAY)
@@ -446,7 +467,7 @@ def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[P
         if hero or id(flight) in ramps:
             plan = [True] * HERO_CONNECTING + [False] * HERO_LOCAL
             rng.shuffle(plan)
-            low, high = HERO_BUFFER
+            low, high = HERO_BUFFER if hero else CONTINUOUS_HERO_BUFFER
         elif script:
             plan = [True] * script.connecting + [False] * script.local
             rng.shuffle(plan)
@@ -677,8 +698,9 @@ def passenger_to_follow(plan: Plan) -> Passenger:
     return next(p for p in plan.live.passengers if p.inbound is hero and p.impacted_at)
 
 
-def _hotel(name: str, rooms: int) -> dict:
-    return dict(available_rooms=rooms, nightly_rate=HOTEL_RATES[name])
+def _hotel(name: str, rooms: int, at: datetime) -> dict:
+    """One hotel update. as_of orders the row versions Lightning keeps (the webhook path stamps its own)."""
+    return dict(available_rooms=rooms, nightly_rate=HOTEL_RATES[name], as_of=at)
 
 
 def _hotel_rooms(plan: Plan, until: datetime):
@@ -757,16 +779,21 @@ def continuous_state(seed: int, now: datetime) -> list[tuple[str, str, dict]]:
     `now` never moves a flight back."""
     days = [continuous_day(seed, now.date() + timedelta(days=n)) for n in (-1, 0, 1)]
     rooms = rooms_at(seed, now)
-    rows = [(HOTELS, name, _hotel(name, rooms[name])) for name in HOTEL_ORDER]
+    rows = [(HOTELS, name, _hotel(name, rooms[name], now)) for name in HOTEL_ORDER]
     rows += [(FLIGHTS, flight.key, flight.row(now)) for day in days for flight in day.flights]
     rows += [(ITINERARIES, p.key, _itinerary(p)) for day in days for p in day.passengers]
+    for day in days:
+        for flight in day.flights:
+            if (reading := telemetry_row(flight, now)) and reading["stage"] != "LANDED":
+                rows.append((TELEMETRY, flight.key, reading))
     return rows
 
 
 def _expired_keys(seed: int, service_date: date) -> list[tuple[str, str]]:
-    """Every flight, itinerary, and offer key a continuous day wrote, for its tombstones."""
+    """Every flight, telemetry, itinerary, and offer key a continuous day wrote."""
     day = continuous_day.__wrapped__(seed, service_date)  # uncached: an old day is needed once
-    keys = [(FLIGHTS, f.key) for f in day.flights] + [(ITINERARIES, p.key) for p in day.passengers]
+    keys = [(topic, f.key) for f in day.flights for topic in (FLIGHTS, TELEMETRY)]
+    keys += [(ITINERARIES, p.key) for p in day.passengers]
     for passenger in day.passengers:
         if passenger.impacted_at:
             keys += [(OFFERS, f"{passenger.key}-O1"), (OFFERS, f"{passenger.key}-O2")]
@@ -800,17 +827,23 @@ def continuous_events(seed: int, start: datetime, end: datetime) -> list[tuple[d
         for flight in day.flights
         for tick in flight.ticks(start, end)
     ]
+    events += [
+        (tick, TELEMETRY, flight.key, row)
+        for day in days
+        for flight in day.flights
+        for tick, row in _telemetry_events(flight, start, end)
+    ]
     for n in range((end.date() - start.date()).days + 1):
         service_date = start.date() + timedelta(days=n)
         rows, times = continuous_hotel_rooms(seed, service_date), _continuous_room_times(seed, service_date)
         # A day's last row is stamped the next midnight, when the next day refills the hotels instead.
         for at, hotel, rooms in rows[bisect_right(times, start) : bisect_right(times, end)]:
             if at.date() == service_date:
-                events.append((at, HOTELS, hotel, _hotel(hotel, rooms)))
+                events.append((at, HOTELS, hotel, _hotel(hotel, rooms, at)))
     midnight = _midnight(start.date() + timedelta(days=1))
     while midnight <= end:
         rooms = rooms_at(seed, midnight)
-        events += [(midnight, HOTELS, name, _hotel(name, rooms[name])) for name in HOTEL_ORDER]
+        events += [(midnight, HOTELS, name, _hotel(name, rooms[name], midnight)) for name in HOTEL_ORDER]
         upcoming = continuous_day(seed, midnight.date() + timedelta(days=1))
         events += [(midnight, FLIGHTS, f.key, f.row(midnight)) for f in upcoming.flights]
         events += [(midnight, ITINERARIES, p.key, _itinerary(p)) for p in upcoming.passengers]
@@ -861,9 +894,53 @@ def hotel_warmup(plan: Plan, updates: int = 200):
                 (HILTON, HILTON_ROOMS * 2),
             )
         }
-    for step in reversed(steps):
+    for number, step in enumerate(reversed(steps)):
+        at = plan.start - HOTEL_EVERY * (len(steps) - number)
         for name in HOTEL_ORDER:
-            yield HOTELS, name, _hotel(name, step[name])
+            yield HOTELS, name, _hotel(name, step[name], at)
+
+
+def telemetry_row(flight: Flight, at: datetime) -> dict | None:
+    """The flight's reading at `at` in the flight_telemetry column order, or None while it is at the gate."""
+    status = flight.row(at)
+    found = flight_profile.reading(
+        flight.key, flight.origin, flight.destination, flight.scheduled, status["estimated_time"], status["status"], at
+    )
+    if found is None:
+        return None
+    return dict(
+        as_of=at,
+        stage=found.stage,
+        latitude=found.latitude,
+        longitude=found.longitude,
+        altitude_ft=found.altitude_ft,
+        ground_speed_kt=found.ground_speed_kt,
+        vertical_speed_fpm=found.vertical_speed_fpm,
+        heading_deg=found.heading_deg,
+        distance_to_go_nm=found.distance_to_go_nm,
+        hold_ends_at=found.hold_ends_at,
+    )
+
+
+def _telemetry_events(flight: Flight, after: datetime, until: datetime):
+    """(time, row) every TELEMETRY_EVERY in (after, until] while airborne, ending with the first LANDED reading.
+
+    A flight already down at `after` publishes nothing.
+    """
+    if (down := telemetry_row(flight, after)) and down["stage"] == "LANDED":
+        return
+    tick = after + timedelta(seconds=flight.offset % 5 or 5)
+    earliest = flight.scheduled + timedelta(minutes=min(0, min((delay for _, delay in flight.reveals), default=0)))
+    if flight.arrival:
+        earliest -= flight_profile.flight_duration(flight.origin, flight.destination)
+    if tick < earliest:
+        tick += TELEMETRY_EVERY * ((earliest - tick) // TELEMETRY_EVERY)
+    while tick <= until:
+        if row := telemetry_row(flight, tick):
+            yield tick, row
+            if row["stage"] == "LANDED":
+                return
+        tick += TELEMETRY_EVERY
 
 
 def _itinerary(passenger: Passenger) -> dict:
@@ -879,7 +956,7 @@ def initial_records(plan: Plan):
     """Every row as of the stream start: history final state, the live day so far, tomorrow's schedule."""
     at = plan.start
     for name, rooms in ((GRAND_HYATT, GRAND_HYATT_ROOMS), (MARRIOTT, MARRIOTT_ROOMS), (HILTON, HILTON_ROOMS)):
-        yield HOTELS, name, _hotel(name, rooms)
+        yield HOTELS, name, _hotel(name, rooms, at)
     for day in [*plan.days, plan.tomorrow]:
         for flight in day.flights:
             yield FLIGHTS, flight.key, flight.row(at)
@@ -888,18 +965,23 @@ def initial_records(plan: Plan):
             # History keeps only connecting passengers; nobody else can be impacted.
             if day.live or passenger.connecting:
                 yield ITINERARIES, passenger.key, _itinerary(passenger)
+    for flight in plan.live.flights:
+        row = telemetry_row(flight, at)
+        if row and row["stage"] != "LANDED":
+            yield TELEMETRY, flight.key, row
     for recovery in plan.recoveries:
         for key, value in recovery.rows(at):
             yield OFFERS, key, value
 
 
 def stream_events(plan: Plan, minutes: int) -> list[tuple[datetime, str, str, dict]]:
-    """Timed live updates after the stream start: flights, hotel rooms, and offers."""
+    """Timed live updates after the stream start: flights, their telemetry, hotel rooms, and offers."""
     start, end = plan.start, plan.start + timedelta(minutes=minutes)
     events = []
     for flight in plan.live.flights:
         events += [(tick, FLIGHTS, flight.key, flight.row(tick)) for tick in flight.ticks(start, end)]
-    events += [(at, HOTELS, hotel, _hotel(hotel, rooms)) for at, hotel, rooms in _hotel_rooms(plan, end)]
+        events += [(tick, TELEMETRY, flight.key, row) for tick, row in _telemetry_events(flight, start, end)]
+    events += [(at, HOTELS, hotel, _hotel(hotel, rooms, at)) for at, hotel, rooms in _hotel_rooms(plan, end)]
     for recovery in plan.recoveries:
         if recovery.passenger.inbound not in plan.live.arrivals:
             continue
@@ -913,12 +995,14 @@ def stream_events(plan: Plan, minutes: int) -> list[tuple[datetime, str, str, di
 
 def reset_keys(start: datetime, seed: int = SEED) -> dict[str, set[str]]:
     """Every key a run near `start` could have written, with a few days of margin either side."""
-    keys = {FLIGHTS: set(), ITINERARIES: set(), HOTELS: set(HOTEL_RATES), OFFERS: set()}
+    keys = {FLIGHTS: set(), ITINERARIES: set(), HOTELS: set(HOTEL_RATES), OFFERS: set(), TELEMETRY: set()}
     for back in range(-3, HISTORY_DAYS + 4):
         service_date = start.date() - timedelta(days=back)
         for live in (True, False):
             day = build_day(seed, service_date, start, live=live)
             keys[FLIGHTS].update(f.key for f in day.flights)
+            if live:
+                keys[TELEMETRY].update(f.key for f in day.flights)
             for passenger in day.passengers:
                 keys[ITINERARIES].add(passenger.key)
                 if passenger.impacted_at:
@@ -972,7 +1056,15 @@ class Publisher:
             self._post_hotel(key, value)
             return
         if topic not in self.serializers:
-            registered = self.schema_registry.get_latest_version(f"{topic}-value")
+            try:
+                registered = self.schema_registry.get_latest_version(f"{topic}-value")
+            except SchemaRegistryError as exc:
+                if exc.http_status_code != 404:
+                    raise
+                raise RuntimeError(
+                    f"No schema for {topic} in Schema Registry. If this deployment predates the {topic} topic, "
+                    "run `uv run deploy` again to create it."
+                ) from exc
             schema = json.loads(registered.schema.schema_str)
             self.serializers[topic] = (
                 AvroSerializer(
@@ -1046,9 +1138,9 @@ def _start_file():
     return get_project_root() / "tmp" / "datagen.start"
 
 
-def stop_previous_stream() -> None:
+def stop_previous_stream(root: Path | None = None) -> None:
     """Stop a stream left running by an earlier deploy or run, so two streams never interleave."""
-    path = _pid_file()
+    path = _pid_file() if root is None else root / "tmp" / "datagen.pid"
     try:
         pid = int(path.read_text().strip())
     except (OSError, ValueError):
@@ -1388,6 +1480,15 @@ def main(argv: list[str] | None = None) -> None:
         args.speed, args.stream_only = float(speed), True
     setup_logging()
     start = _clock(args.now)
+    if not args.dry_run:
+        from scripts import workshop_checks  # a lighter import than the app's, which this module can't import
+
+        ws = workshop_checks.require_deployment("uv run airport-datagen")
+        if ws.is_workshop and not (args.skip_history or args.stream_only or args.reset):
+            logging.info(
+                "Workshop deployment: skipping the history days, which the workshop doesn't use (--skip-history)"
+            )
+            args.skip_history = True
     try:
         if args.reset:
             reset(start, args.seed, args.dry_run)

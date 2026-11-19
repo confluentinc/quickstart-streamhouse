@@ -249,6 +249,11 @@ def main():
     if "always-on" in envs_to_destroy:
         _prepare_always_on_destroy(creds)
 
+    if "airline-demo" in envs_to_destroy:
+        from .airport_datagen import stop_previous_stream
+
+        stop_previous_stream(root)  # the live stream would keep writing to topics destroy is about to delete
+
     # Step 5: Destroy environments
     print("\n=== Starting Destroy ===")
     for env in envs_to_destroy:

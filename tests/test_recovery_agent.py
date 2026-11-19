@@ -159,3 +159,15 @@ def test_continuous_mode_drops_exactly_the_agent_flight_filter():
 def test_continuous_mode_turns_on_tableflow_for_both_topics():
     tf = (DEMO / "analytics.tf").read_text() + (DEMO / "main.tf").read_text()
     assert '["passenger_recommendations"]' in tf and "local.tableflow_topics" in tf
+
+
+def test_hotel_readers_take_the_newest_row_because_lightning_keeps_every_version():
+    assert "as_of TIMESTAMP(3)" in _sql("22")
+    assert "AS as_of" in _sql("34")
+    assert "hotel_query=SELECT * FROM `hotel_inventory` ORDER BY as_of DESC LIMIT" in _sql("31")
+    assert "latest as_of" in _sql("30")
+
+
+def test_agent_prompt_has_no_apostrophe_to_end_its_string_early():
+    prompt = _sql("30").split("USING PROMPT '", 1)[1].split("'\nUSING TOOLS", 1)[0]
+    assert "'" not in prompt
