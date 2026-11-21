@@ -439,6 +439,10 @@ def test_failed_agent_on_the_scripted_demo_suggests_the_generator(monkeypatch, t
     assert "uv run airport-datagen --offers generator" in capsys.readouterr().out
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="chmod only sets the read-only bit on Windows; the folder's ACL decides who reads it",
+)
 def test_card_is_readable_only_by_its_owner(tmp_path):
     path = deploy._write_card(tmp_path, {"app_url": "https://board", "app_password": "pw"}, ["a@x.io"])
     assert path.stat().st_mode & 0o777 == 0o600

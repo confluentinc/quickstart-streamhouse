@@ -585,6 +585,11 @@ def _cookie_value(response):
 
 def test_login_sets_cookie_that_authorizes_everything(monkeypatch):
     monkeypatch.setenv("APP_PASSWORD", "s3cret")
+
+    def no_deployment():  # the checkout's own credentials.env and Terraform state must not matter
+        raise airport_app.HTTPException(status_code=503, detail="not deployed")
+
+    monkeypatch.setattr(airport_app.deployment, "_load_rtce", no_deployment)
     client = TestClient(airport_app.app, base_url="https://testserver")
     response = client.post("/login", data={"password": "s3cret"}, follow_redirects=False)
     assert response.status_code == 303 and response.headers["location"] == "/"
