@@ -4,10 +4,11 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from scripts import airport_datagen, demo_reset, deploy, setup_rtce
+from scripts import airport_datagen, demo_reset, deploy, setup_rtce, workshop_checks
 
 ROOT = Path(__file__).parent.parent
 SQL = ROOT / "terraform" / "airline-demo" / "sql"
@@ -132,6 +133,8 @@ def test_a_resumed_stream_catches_up_with_each_keys_latest_update():
 
 def test_resume_picks_up_the_last_streams_clock(monkeypatch, tmp_path):
     monkeypatch.setattr(airport_datagen, "get_project_root", lambda: tmp_path)
+    # Not this checkout's own deployment, which a fresh clone (or CI) doesn't have.
+    monkeypatch.setattr(workshop_checks, "require_deployment", lambda command: SimpleNamespace(is_workshop=False))
     runs = []
     monkeypatch.setattr(airport_datagen, "run", lambda start, *args, **kwargs: runs.append((start, kwargs)))
     with pytest.raises(SystemExit):
