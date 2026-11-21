@@ -115,7 +115,10 @@ def main() -> None:
     # Import after setting env — scripts.pit_decisions.race_simulator.config reads os.environ at import time.
     from scripts.pit_decisions.race_simulator import simulator
 
-    simulator.main()
+    try:
+        simulator.main()
+    except KeyboardInterrupt:  # Ctrl-C is how the walkthrough stops the race; the simulator flushes on the way out
+        print("\nRace stopped.")
 
 
 if __name__ == "__main__":
