@@ -55,6 +55,8 @@ Entry points are defined in [`pyproject.toml`](./pyproject.toml) (`uv run deploy
 ## Implementation rules
 
 * Use `uv` for everything Python (`uv sync`, `uv run ...`); never bare `pip`.
+* Keep Windows working (CI runs the tests on it): pass `encoding="utf-8"` to every text `open`/`read_text`/`write_text` and `encoding="utf-8", errors="replace"` to `subprocess` calls that capture text; start external tools as `processes.exe("name")`; and check, stop, or detach local processes through `scripts/processes.py` rather than `ps`, `lsof`, `kill`, or `os.kill(pid, 0)`.
+* Commands in docs and printed hints must work in Windows PowerShell too, or have a Windows equivalent next to them.
 * Every data generator must accept a seed and controllable clock.
 * Provide idempotent deploy, reset, validate, and teardown paths.
 * Keep external integrations behind adapters so the core scenario can run deterministically.
