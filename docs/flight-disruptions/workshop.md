@@ -64,17 +64,18 @@ brew install --cask confluent-cli
 <details>
 <summary>for Windows</summary>
 
-In PowerShell:
+Open PowerShell (Start menu → type **PowerShell** → **Windows PowerShell**) and run these. If winget asks you to accept its terms, enter `Y`. None of them needs administrator rights.
 
 ```powershell
-winget install --id Git.Git -e
+winget install --id Git.Git -e --scope user
 winget install --id astral-sh.uv -e
 winget install --id Hashicorp.Terraform -e
+winget install --id ConfluentInc.Confluent-CLI -e
 ```
 
-Download the latest `confluent_*_windows_amd64.zip` from the [Confluent CLI releases](https://github.com/confluentinc/cli/releases/latest), unzip it, and add the folder that contains `confluent.exe` to your `PATH`.
+Then **close PowerShell and open a new window**, so it finds the new tools.
 
-Close and reopen the terminal so every tool is on your `PATH`.
+**`winget` is not recognized, blocked on your work laptop, or you're on Windows on Arm?** See the Windows prerequisites in the [README](../../README.md#prerequisites).
 
 </details>
 
