@@ -66,6 +66,8 @@ Build one on Confluent Cloud in either of these hands-on labs:
 
     </details>
 
+3. *Optional, only for `uv run setup-mcp`* (the local Confluent MCP server for your coding agent; neither lab needs it): [Node.js 24 LTS](https://nodejs.org/en/download). On Mac, `brew install node@24`. On Windows, `winget install --id OpenJS.NodeJS.24 -e`, which asks for administrator approval, then open a new PowerShell window. Not `OpenJS.NodeJS.LTS`: that is Node 26, which the MCP server's Kafka client has no prebuilt build for yet.
+
 ## Quick start
 
 ```shell
