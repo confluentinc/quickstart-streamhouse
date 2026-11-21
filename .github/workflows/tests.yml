@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    env:
+      # Test with each OS's own default encodings: a Windows user's Python writes redirected output in cp1252.
+      PYTHONUTF8: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Use x64 Python on Windows on Arm
+        # confluent-kafka and cryptography publish no win_arm64 wheels, so the README has Arm users run this once;
+        # x64 Python runs under Windows 11's built-in emulation.
+        if: matrix.os == 'windows-11-arm'
+        run: uv venv --python cpython-3.12-windows-x86_64-none
+      - name: Lint
+        run: uv run ruff check scripts tests
+      - name: Format
+        run: uv run ruff format --check scripts tests
+      - name: Test
+        run: uv run pytest
