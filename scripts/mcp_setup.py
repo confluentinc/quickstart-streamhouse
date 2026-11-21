@@ -13,7 +13,10 @@ from scripts import processes
 from scripts.terraform import get_project_root, run_terraform_output
 
 # Node ABI versions that have prebuilt @confluentinc/kafka-javascript binaries.
-_KAFKA_JS_PREBUILT_ABIS = {115, 120, 127, 131, 137}
+# Node ABIs that @confluentinc/kafka-javascript ships prebuilt (darwin, linux, and win32 x64; 1.11.0 has none for
+# Node 26) and that @confluentinc/mcp-confluent accepts (it needs Node >= 22.23.4): Node 22, 23, and 24. Without a
+# prebuilt, npx compiles it, which on Windows needs Visual Studio Build Tools.
+_KAFKA_JS_PREBUILT_ABIS = {127, 131, 137}
 _PREFERRED_ABI = 137  # Node 24 LTS
 
 
@@ -37,7 +40,7 @@ def _get_node_abi(node_bin: str) -> int | None:
 def _candidate_npx_paths() -> list[Path]:
     """Well-known locations where Node 24 LTS npx may be installed."""
     if processes.WINDOWS:
-        # The Node installer and `winget install OpenJS.NodeJS.LTS` use Program Files; nvm-windows keeps each
+        # The Node installer and `winget install OpenJS.NodeJS.24` use Program Files; nvm-windows keeps each
         # version under %APPDATA%\nvm (or NVM_HOME) and links the active one at NVM_SYMLINK.
         candidates = [Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "nodejs" / "npx.cmd"]
         if os.environ.get("NVM_SYMLINK"):
@@ -143,12 +146,13 @@ def _resolve_npx() -> str:
             f"@confluentinc/kafka-javascript binary."
         )
         print("  npx will compile it from source the first time the MCP server starts — this can take several minutes.")
+        print("  To avoid the wait, install Node 24 LTS:")
     else:
-        print("Warning: 'node' not found on PATH or in well-known locations.")
-    print("  To avoid the wait, install Node 24 LTS:")
+        print("`uv run setup-mcp` needs Node.js, and 'node' isn't on PATH or in the usual places.")
+        print("  The labs themselves don't need it. To use this local Confluent MCP server, install Node 24 LTS:")
     if processes.WINDOWS:
-        # winget has no Node 24 package, and its LTS (26) has no prebuilt binary yet; 22 does.
-        print("    In PowerShell: winget install --id OpenJS.NodeJS.22 -e   (then open a new PowerShell window)")
+        # Not OpenJS.NodeJS.LTS: that is Node 26, which kafka-javascript has no prebuilt binary for yet.
+        print("    In PowerShell: winget install --id OpenJS.NodeJS.24 -e   (then open a new PowerShell window)")
     else:
         print("    With nvm:      nvm install 24 && nvm use 24")
         print("    With Homebrew: brew install node@24")

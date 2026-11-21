@@ -241,3 +241,17 @@ def test_claude_md_is_a_file_that_imports_agents_md():
     claude = ROOT / "CLAUDE.md"
     assert not claude.is_symlink()
     assert claude.read_text(encoding="utf-8").strip() == "@AGENTS.md"
+
+
+def test_setup_mcp_accepts_only_node_versions_with_a_prebuilt_kafka_client():
+    """mcp-confluent needs Node >= 22.23.4, and kafka-javascript has prebuilt binaries through Node 24 (ABI 137)."""
+    assert mcp_setup._KAFKA_JS_PREBUILT_ABIS == {127, 131, 137}  # Node 22, 23, 24
+    assert 147 not in mcp_setup._KAFKA_JS_PREBUILT_ABIS  # Node 26, winget's OpenJS.NodeJS.LTS
+
+
+def test_windows_node_search_includes_program_files(monkeypatch, tmp_path):
+    monkeypatch.setattr(processes, "WINDOWS", True)
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    monkeypatch.delenv("NVM_SYMLINK", raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    assert mcp_setup._candidate_npx_paths()[0] == tmp_path / "nodejs" / "npx.cmd"
