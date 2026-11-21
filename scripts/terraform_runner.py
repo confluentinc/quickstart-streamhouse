@@ -35,7 +35,7 @@ def run_terraform(env_path: Path, auto_approve: bool = True, targets: tuple[str,
     print(f"\nInitializing Terraform in {env_path}...")
 
     try:
-        subprocess.run([processes.exe("terraform"), "init"], cwd=env_path, check=True)
+        subprocess.run([processes.exe("terraform"), "init"], cwd=env_path, check=True, env=processes.terraform_env())
 
         apply_cmd = [processes.exe("terraform"), "apply"]
         if auto_approve:
@@ -43,7 +43,7 @@ def run_terraform(env_path: Path, auto_approve: bool = True, targets: tuple[str,
         apply_cmd += [f"-target={target}" for target in targets]
 
         print(f"Running terraform apply in {env_path}...")
-        subprocess.run(apply_cmd, cwd=env_path, check=True)
+        subprocess.run(apply_cmd, cwd=env_path, check=True, env=processes.terraform_env())
 
         print(f"✓ Deployment successful: {env_path.name}")
 
@@ -78,14 +78,14 @@ def run_terraform_destroy(env_path: Path, auto_approve: bool = True) -> bool:
     print(f"\nInitializing Terraform in {env_path}...")
 
     try:
-        subprocess.run([processes.exe("terraform"), "init"], cwd=env_path, check=True)
+        subprocess.run([processes.exe("terraform"), "init"], cwd=env_path, check=True, env=processes.terraform_env())
 
         destroy_cmd = [processes.exe("terraform"), "destroy"]
         if auto_approve:
             destroy_cmd.append("-auto-approve")
 
         print(f"Running terraform destroy in {env_path}...")
-        subprocess.run(destroy_cmd, cwd=env_path, check=True)
+        subprocess.run(destroy_cmd, cwd=env_path, check=True, env=processes.terraform_env())
 
         print(f"✓ Destroy successful: {env_path.name}")
 

@@ -30,6 +30,22 @@ def exe(name: str) -> str:
     return name
 
 
+def terraform_env(environ: dict[str, str] | None = None) -> dict[str, str]:
+    """This process's environment for a Terraform child, with every TF_VAR_ name as the Terraform roots declare it.
+
+    Windows' os.environ upper-cases names, so TF_VAR_workshop set from Python reaches Terraform as TF_VAR_WORKSHOP,
+    and Terraform, whose variable names are case-sensitive, ignores it without a word: a Windows workshop deploy
+    built the full pipeline, and the recovery agent never started. Every variable under terraform/ is lower-case.
+    """
+    environ = dict(os.environ if environ is None else environ)
+    if not WINDOWS:
+        return environ
+    return {
+        ("TF_VAR_" + key[7:].lower() if key.upper().startswith("TF_VAR_") else key): value
+        for key, value in environ.items()
+    }
+
+
 def detached() -> dict:
     """Popen keyword arguments that let a background process outlive the terminal that started it.
 

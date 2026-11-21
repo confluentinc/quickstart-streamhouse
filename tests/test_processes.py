@@ -255,3 +255,41 @@ def test_windows_node_search_includes_program_files(monkeypatch, tmp_path):
     monkeypatch.delenv("NVM_SYMLINK", raising=False)
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     assert mcp_setup._candidate_npx_paths()[0] == tmp_path / "nodejs" / "npx.cmd"
+
+
+def test_terraform_env_restores_tf_var_names_on_windows(monkeypatch):
+    monkeypatch.setattr(processes, "WINDOWS", True)
+    env = processes.terraform_env({"TF_VAR_WORKSHOP": "true", "TF_VAR_ENABLE_RECOVERY_AGENT": "true", "PATH": "p"})
+    assert env == {"TF_VAR_workshop": "true", "TF_VAR_enable_recovery_agent": "true", "PATH": "p"}
+    monkeypatch.setattr(processes, "WINDOWS", False)
+    assert processes.terraform_env({"TF_VAR_workshop": "true"}) == {"TF_VAR_workshop": "true"}
+
+
+def test_every_terraform_variable_is_lower_case():
+    """terraform_env lower-cases TF_VAR_ names on Windows, which is right only while every declared name is."""
+    import re
+
+    names = {
+        m for p in ROOT.glob("terraform/*/*.tf") for m in re.findall(r'^variable "([^"]+)"', p.read_text("utf-8"), re.M)
+    }
+    assert names and all(name == name.lower() for name in names)
+
+
+@pytest.mark.skipif(not processes.shutil.which("terraform"), reason="needs terraform on PATH")
+def test_a_variable_set_from_python_reaches_terraform(tmp_path, monkeypatch):
+    """deploy sets TF_VAR_workshop and TF_VAR_enable_recovery_agent in os.environ, then runs Terraform."""
+    (tmp_path / "main.tf").write_text(
+        'variable "workshop" {\n  type    = bool\n  default = false\n}\n'
+        'output "workshop" {\n  value = var.workshop\n}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TF_VAR_workshop", "true")
+    monkeypatch.setenv("TF_IN_AUTOMATION", "1")
+    from scripts.terraform_runner import run_terraform
+
+    monkeypatch.setattr("scripts.terraform_runner._generate_deployment_summary", lambda env_path: None)
+    assert run_terraform(tmp_path)
+    shown = subprocess.run(
+        ["terraform", "output", "-raw", "workshop"], cwd=tmp_path, capture_output=True, encoding="utf-8"
+    )
+    assert shown.stdout == "true"
