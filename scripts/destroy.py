@@ -18,6 +18,8 @@ from pathlib import Path
 
 from dotenv import dotenv_values, unset_key
 
+from scripts import processes
+
 from .credentials import load_or_create_credentials_file
 from .deploy import (
     ALWAYS_ON,
@@ -99,7 +101,12 @@ CATALOG_TAG_PREFIX = "confluent_tag.demo["
 def release_provider_integration(env_path: Path) -> bool:
     """Drop the provider integration and catalog tags from state if nothing else is left."""
     listed = subprocess.run(
-        ["terraform", "state", "list"], cwd=env_path, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        [processes.exe("terraform"), "state", "list"],
+        cwd=env_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if listed.returncode != 0:
         return False
@@ -107,7 +114,7 @@ def release_provider_integration(env_path: Path) -> bool:
     if not managed or not all(r == TABLEFLOW_PROVIDER_INTEGRATION or r.startswith(CATALOG_TAG_PREFIX) for r in managed):
         return False
 
-    removed = subprocess.run(["terraform", "state", "rm", *managed], cwd=env_path)
+    removed = subprocess.run([processes.exe("terraform"), "state", "rm", *managed], cwd=env_path)
     if removed.returncode != 0:
         return False
     print(
@@ -130,7 +137,7 @@ def _cleanup_mcp(root: Path) -> None:
             mcp_env.unlink()
 
         subprocess.run(
-            ["claude", "mcp", "remove", "confluent-cloud-mcp-server", "-s", "local"],
+            [processes.exe("claude"), "mcp", "remove", "confluent-cloud-mcp-server", "-s", "local"],
             capture_output=True,
         )
 

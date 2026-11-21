@@ -45,8 +45,6 @@ import json
 import logging
 import os
 import random
-import signal
-import subprocess
 import time
 from bisect import bisect_right
 from dataclasses import dataclass, field
@@ -64,7 +62,7 @@ from confluent_kafka.schema_registry.avro import AvroSerializer
 from confluent_kafka.schema_registry.error import SchemaRegistryError
 from confluent_kafka.serialization import MessageField, SerializationContext, StringSerializer
 
-from . import flight_profile
+from . import flight_profile, processes
 from .logging_utils import setup_logging
 from .terraform import extract_kafka_credentials, get_project_root
 
@@ -1145,21 +1143,8 @@ def stop_previous_stream(root: Path | None = None) -> None:
         pid = int(path.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return
-    if pid != os.getpid():
-        try:
-            command = subprocess.run(
-                ["ps", "-p", str(pid), "-o", "command="],
-                capture_output=True,
-                text=True,
-                check=False,
-                encoding="utf-8",
-                errors="replace",
-            ).stdout
-        except OSError:
-            command = ""
-        if "airport-datagen" in command or "airport_datagen" in command:
-            os.kill(pid, signal.SIGTERM)
-            logging.info("Stopped the previous data stream (pid %d)", pid)
+    if processes.stop(pid, "airport-datagen", "airport_datagen"):
+        logging.info("Stopped the previous data stream (pid %d)", pid)
     path.unlink(missing_ok=True)
 
 

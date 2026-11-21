@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from scripts import processes
 from scripts.terraform import get_project_root, run_terraform_output
 
 # Node ABI versions that have prebuilt @confluentinc/kafka-javascript binaries.
@@ -35,6 +36,17 @@ def _get_node_abi(node_bin: str) -> int | None:
 
 def _candidate_npx_paths() -> list[Path]:
     """Well-known locations where Node 24 LTS npx may be installed."""
+    if processes.WINDOWS:
+        # The Node installer and `winget install OpenJS.NodeJS.LTS` use Program Files; nvm-windows keeps each
+        # version under %APPDATA%\nvm (or NVM_HOME) and links the active one at NVM_SYMLINK.
+        candidates = [Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "nodejs" / "npx.cmd"]
+        if os.environ.get("NVM_SYMLINK"):
+            candidates.append(Path(os.environ["NVM_SYMLINK"]) / "npx.cmd")
+        nvm_home = Path(os.environ.get("NVM_HOME") or Path(os.environ.get("APPDATA", Path.home())) / "nvm")
+        if nvm_home.is_dir():
+            versions = [d for d in sorted(nvm_home.iterdir(), reverse=True) if d.name.startswith(("v24.", "v22."))]
+            candidates += [d / "npx.cmd" for d in versions]
+        return candidates
     candidates = [
         # Homebrew on Apple Silicon
         Path("/opt/homebrew/opt/node@24/bin/npx"),
@@ -50,6 +62,25 @@ def _candidate_npx_paths() -> list[Path]:
     return candidates
 
 
+def _node_beside(npx_bin: str) -> str:
+    """The node that an npx path runs with, or plain "node" (from PATH) for bare npx."""
+    if npx_bin == "npx":
+        return processes.exe("node")
+    return str(Path(npx_bin).parent / ("node.exe" if processes.WINDOWS else "node"))
+
+
+def _mcp_command(npx_bin: str) -> tuple[str, list[str]]:
+    """(command, args) that a coding agent runs to start the Confluent MCP server.
+
+    Claude Code and Codex start the command directly, without a shell, and on Windows that can't run npx.cmd, so
+    it goes through `cmd /c` there, as Claude Code's docs advise for npx on native Windows.
+    """
+    args = ["-y", "@confluentinc/mcp-confluent"]
+    if processes.WINDOWS:
+        return "cmd", ["/c", npx_bin, *args]
+    return npx_bin, args
+
+
 def _resolve_npx() -> str:
     """
     Return the npx binary to use for the MCP server.
@@ -63,7 +94,7 @@ def _resolve_npx() -> str:
     path_node_version = ""
     try:
         ver_result = subprocess.run(
-            ["node", "--version"],
+            [processes.exe("node"), "--version"],
             capture_output=True,
             text=True,
             check=True,
@@ -72,7 +103,7 @@ def _resolve_npx() -> str:
             errors="replace",
         )
         path_node_version = ver_result.stdout.strip().lstrip("v")
-        path_node_abi = _get_node_abi("node")
+        path_node_abi = _get_node_abi(processes.exe("node"))
     except (
         FileNotFoundError,
         subprocess.CalledProcessError,
@@ -89,7 +120,7 @@ def _resolve_npx() -> str:
     for npx_path in _candidate_npx_paths():
         if not npx_path.exists():
             continue
-        node_bin = npx_path.parent / "node"
+        node_bin = Path(_node_beside(str(npx_path)))
         abi = _get_node_abi(str(node_bin))
         if abi in _KAFKA_JS_PREBUILT_ABIS:
             ver_result = subprocess.run(
@@ -115,8 +146,12 @@ def _resolve_npx() -> str:
     else:
         print("Warning: 'node' not found on PATH or in well-known locations.")
     print("  To avoid the wait, install Node 24 LTS:")
-    print("    With nvm:      nvm install 24 && nvm use 24")
-    print("    With Homebrew: brew install node@24")
+    if processes.WINDOWS:
+        # winget has no Node 24 package, and its LTS (26) has no prebuilt binary yet; 22 does.
+        print("    In PowerShell: winget install --id OpenJS.NodeJS.22 -e   (then open a new PowerShell window)")
+    else:
+        print("    With nvm:      nvm install 24 && nvm use 24")
+        print("    With Homebrew: brew install node@24")
     print("  Then re-run `uv run setup-mcp`.")
     if path_node_abi is not None:
         answer = input(f"  Continue anyway with Node {path_node_version}? [y/N] ").strip().lower()
@@ -153,13 +188,16 @@ _TF_TO_MCP = {
 
 def _clear_broken_npx_cache(npx_bin: str) -> None:
     """Remove stale npx cache entries with missing or ABI-mismatched kafka-javascript binaries."""
-    npx_cache = Path.home() / ".npm" / "_npx"
+    if processes.WINDOWS:  # npm's cache lives in %LOCALAPPDATA%\npm-cache on Windows
+        npx_cache = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "npm-cache" / "_npx"
+    else:
+        npx_cache = Path.home() / ".npm" / "_npx"
     if not npx_cache.exists():
         return
 
     # Determine the ABI of the npx we'll actually use.
-    node_bin = Path(npx_bin).parent / "node" if npx_bin != "npx" else Path("node")
-    active_abi = _get_node_abi(str(node_bin) if npx_bin != "npx" else "node")
+    node_bin = _node_beside(npx_bin)
+    active_abi = _get_node_abi(node_bin)
 
     for entry in npx_cache.iterdir():
         if not entry.is_dir():
@@ -179,7 +217,7 @@ def _clear_broken_npx_cache(npx_bin: str) -> None:
             try:
                 subprocess.run(
                     [
-                        str(node_bin) if npx_bin != "npx" else "node",
+                        node_bin,
                         "-e",
                         f"require('{node_files[0]}')",
                     ],
@@ -226,6 +264,11 @@ def _pick_agent() -> str:
 _CLAUDE_SERVER_NAME = "confluent-cloud-mcp-server"
 
 
+def claude_project_key(project_root: Path) -> str:
+    """The key Claude Code files this checkout under in ~/.claude.json: C:/Users/me/repo on Windows, not C:\\..."""
+    return project_root.as_posix()
+
+
 def _claude_argv_stdio(env_vars: dict, npx_bin: str) -> tuple[list[str], list[str]]:
     """(remove, add) argv for the local stdio Confluent MCP server.
 
@@ -234,12 +277,13 @@ def _claude_argv_stdio(env_vars: dict, npx_bin: str) -> tuple[list[str], list[st
     --env K=V ... -- <cmd>`. Secrets ride as `--env` flags (same plaintext exposure
     as the ~/.claude.json the CLI ultimately writes).
     """
-    add_argv = ["claude", "mcp", "add", "--scope", "local", _CLAUDE_SERVER_NAME]
+    add_argv = [processes.exe("claude"), "mcp", "add", "--scope", "local", _CLAUDE_SERVER_NAME]
     for key, value in env_vars.items():
         add_argv += ["--env", f"{key}={value}"]
-    add_argv += ["--", npx_bin, "-y", "@confluentinc/mcp-confluent"]
+    command, args = _mcp_command(npx_bin)
+    add_argv += ["--", command, *args]
     return (
-        ["claude", "mcp", "remove", _CLAUDE_SERVER_NAME, "-s", "local"],
+        [processes.exe("claude"), "mcp", "remove", _CLAUDE_SERVER_NAME, "-s", "local"],
         add_argv,
     )
 
@@ -283,12 +327,13 @@ def _register_with_claude_code_filewrite(env_vars: dict, npx_bin: str, project_r
     else:
         claude_data = {}
 
-    project_key = str(project_root)
+    project_key = claude_project_key(project_root)
+    command, args = _mcp_command(npx_bin)
     (claude_data.setdefault("projects", {}).setdefault(project_key, {}).setdefault("mcpServers", {}))[
         _CLAUDE_SERVER_NAME
     ] = {
-        "command": npx_bin,
-        "args": ["-y", "@confluentinc/mcp-confluent"],
+        "command": command,
+        "args": args,
         "env": env_vars,
     }
 
@@ -327,8 +372,7 @@ def _write_codex_config(config_path: Path, env_vars: dict, npx_bin: str) -> None
         doc["mcp_servers"] = mcp_servers
 
     entry = tomlkit.table()
-    entry["command"] = npx_bin
-    entry["args"] = ["-y", "@confluentinc/mcp-confluent"]
+    entry["command"], entry["args"] = _mcp_command(npx_bin)
     env_table = tomlkit.table()
     for key, value in env_vars.items():
         env_table[key] = value

@@ -348,7 +348,8 @@ def test_the_guide_opens_with_the_computers_own_opener(monkeypatch, platform, op
 def test_windows_opens_the_guide_with_start_and_has_no_less(monkeypatch):
     monkeypatch.setattr(workshop_checks.sys, "platform", "win32")
     commands = [command for _, command in workshop_checks._open_guide_commands(12)]
-    assert commands == ['start "" docs\\flight-disruptions\\workshop.md']
+    # Plain `start <file>` opens it from PowerShell and Command Prompt alike; `start "" <file>` fails in PowerShell.
+    assert commands == ["start docs\\flight-disruptions\\workshop.md"]
 
 
 def test_cli_delete_command_targets_the_cluster(tmp_path, monkeypatch):

@@ -20,6 +20,8 @@ from typing import Any
 
 from dotenv import dotenv_values
 
+from scripts import processes
+
 
 def generate_credentials_markdown(cloud_provider: str, tf_outputs: dict[str, Any], output_path: Path) -> None:
     """
@@ -364,7 +366,7 @@ def main():
     print(f"Reading Terraform outputs from {terraform_dir}...")
     try:
         result = subprocess.run(
-            ["terraform", "output", "-json"],
+            [processes.exe("terraform"), "output", "-json"],
             cwd=terraform_dir,
             capture_output=True,
             text=True,

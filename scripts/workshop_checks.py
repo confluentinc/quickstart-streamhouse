@@ -30,6 +30,7 @@ from pathlib import Path
 
 import requests
 
+from scripts import processes
 from scripts import setup_rtce as rtce
 from scripts.pit_decisions.card import card_fields
 from scripts.ui import prompt_yes_no
@@ -244,7 +245,7 @@ def _disable_failed(ws: Workshop, failed: list[str]) -> None:
     for topic in failed:
         subprocess.run(
             [
-                *("confluent", "rtce", "rtce-topic", "delete", topic, "--force"),
+                *(processes.exe("confluent"), "rtce", "rtce-topic", "delete", topic, "--force"),
                 *("--cluster", ws.infra["cluster_id"], "--environment", ws.infra["env_id"]),
             ],
             capture_output=True,
@@ -349,8 +350,7 @@ class Step:
 def _datagen_running(ws: Workshop) -> bool:
     pid_file = ws.root / "tmp" / "datagen.pid"
     try:
-        os.kill(int(pid_file.read_text(encoding="utf-8").strip()), 0)
-        return True
+        return processes.pid_alive(int(pid_file.read_text(encoding="utf-8").strip()))
     except (OSError, ValueError):
         return False
 
@@ -458,7 +458,8 @@ def guide_location(step: Step, root: Path) -> tuple[str, int] | None:
 def _open_guide_commands(line: int | None) -> list[tuple[str, str]]:
     """(what it does, command) pairs that open the guide on this computer."""
     if sys.platform == "win32":
-        return [("Open the guide:", f'start "" {WORKSHOP_GUIDE.replace("/", chr(92))}')]
+        # Not `start "" ...`, which is Command Prompt's syntax: PowerShell's start (Start-Process) rejects the "".
+        return [("Open the guide:", f"start {WORKSHOP_GUIDE.replace('/', chr(92))}")]
     opener = "open" if sys.platform == "darwin" else "xdg-open"
     commands = [("Open the guide:", f"{opener} {WORKSHOP_GUIDE}")]
     if line:
