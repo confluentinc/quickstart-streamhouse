@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Instructions for AI coding agents and contributors working in this repository. `CLAUDE.md` is a symlink to this file.
+Instructions for AI coding agents and contributors working in this repository. `CLAUDE.md` imports this file (`@AGENTS.md`); it is a plain file, not a symlink, so it also works in a Windows checkout.
 
 ## Project mission
 
