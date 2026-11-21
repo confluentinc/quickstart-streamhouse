@@ -62,6 +62,8 @@ Build one on Confluent Cloud in either of these hands-on labs:
 
     **winget or the Store blocked on your work laptop?** Install each tool from its download page instead: [Git](https://git-scm.com/downloads/win), [uv](https://docs.astral.sh/uv/getting-started/installation/), [Terraform](https://developer.hashicorp.com/terraform/install), and the [Confluent CLI](https://docs.confluent.io/confluent-cli/current/install.html). Terraform and the Confluent CLI come as a zip: unzip each to a folder you keep, add that folder to your user `Path` (Start menu → **Edit environment variables for your account**; no administrator rights needed), then open a new PowerShell window.
 
+    **Clone into a short folder**, such as your user folder (PowerShell opens there), rather than deep inside OneDrive or Documents: Windows limits file paths to 260 characters unless an administrator turns long paths on, and the labs' Python packages nest about 120 characters deep.
+
     **Windows on Arm** (Surface Pro X, Copilot+ PCs): after `cd quickstart-streamhouse` below, run `uv venv --python cpython-3.12-windows-x86_64-none` once. Some of the labs' Python packages have no Arm build yet, and Windows runs the x64 one for you.
 
     </details>
