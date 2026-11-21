@@ -132,7 +132,7 @@ class Workshop:
 
     def run_sql(self, filename: str, properties: dict[str, str] | None = None) -> bool:
         """Submit one of the guide's SQL files and wait for it to start. Prints why when it can't."""
-        sql = (self.root / SQL_DIR / filename).read_text().strip().rstrip(";").strip()
+        sql = (self.root / SQL_DIR / filename).read_text(encoding="utf-8").strip().rstrip(";").strip()
         try:
             status = self.flink.wait(self.flink.submit(sql, properties), timeout=180)
         except Exception as exc:
@@ -250,6 +250,8 @@ def _disable_failed(ws: Workshop, failed: list[str]) -> None:
             capture_output=True,
             text=True,
             timeout=60,
+            encoding="utf-8",
+            errors="replace",
         )
     if failed:
         time.sleep(5)  # the delete finishes in the background
@@ -347,7 +349,7 @@ class Step:
 def _datagen_running(ws: Workshop) -> bool:
     pid_file = ws.root / "tmp" / "datagen.pid"
     try:
-        os.kill(int(pid_file.read_text().strip()), 0)
+        os.kill(int(pid_file.read_text(encoding="utf-8").strip()), 0)
         return True
     except (OSError, ValueError):
         return False

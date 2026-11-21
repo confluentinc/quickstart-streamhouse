@@ -100,7 +100,12 @@ class Flink:
 
     def _cli(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["confluent", "flink", "statement", *args, *self.scope], capture_output=True, text=True, timeout=300
+            ["confluent", "flink", "statement", *args, *self.scope],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            encoding="utf-8",
+            errors="replace",
         )
 
     def statements(self) -> list[dict]:
@@ -156,7 +161,9 @@ def agent_offer_keys(plan: airport_datagen.Plan) -> list[str]:
 
 
 def _forget_in_terraform(demo, keep_staging: bool = False) -> None:
-    listed = subprocess.run(["terraform", "state", "list"], cwd=demo, capture_output=True, text=True)
+    listed = subprocess.run(
+        ["terraform", "state", "list"], cwd=demo, capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
     present = set(listed.stdout.split())
     addresses = [
         a for a in STATE_ADDRESSES if a in present and not (keep_staging and any(t in a for t in STAGING_TARGETS))

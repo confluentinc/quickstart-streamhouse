@@ -12,7 +12,7 @@ SQL_SOURCES = (
 
 
 def _statement(relative_path: str, marker: str) -> str:
-    source = (ROOT / relative_path).read_text()
+    source = (ROOT / relative_path).read_text(encoding="utf-8")
     return source[source.index(marker) :].strip()
 
 
@@ -28,7 +28,7 @@ def _normalize(text: str) -> str:
 
 
 def test_attendee_walkthrough_sql_matches_the_canonical_sources():
-    walkthrough = _dedent((ROOT / WALKTHROUGH).read_text())
+    walkthrough = _dedent((ROOT / WALKTHROUGH).read_text(encoding="utf-8"))
     for source_path, marker in SQL_SOURCES:
         statement = _dedent(_statement(source_path, marker))
         assert statement in walkthrough, f"{marker} from {source_path} missing in {WALKTHROUGH}"
@@ -38,7 +38,7 @@ def test_pit_decisions_delegates_the_suggestion_to_the_agent():
     # The suggestion now comes from the agent's own answer (parsed out of the response
     # with REGEXP_EXTRACT), not computed by a SQL CASE and not injected back into the
     # prompt. This is the core of the streaming-agent design: the model decides.
-    decision_sql = (ROOT / SQL / "streaming_agent_pit_decisions.sql").read_text()
+    decision_sql = (ROOT / SQL / "streaming_agent_pit_decisions.sql").read_text(encoding="utf-8")
     assert "Suggestion:" in decision_sql, "suggestion is no longer parsed from the agent response"
     assert "AS suggestion" in decision_sql
     assert "END AS suggestion" not in decision_sql, "suggestion must not be a SQL CASE"
@@ -49,6 +49,6 @@ def test_agent_prompt_reserves_pit_now_for_the_anomaly_signal():
     # The demo narrative — PIT NOW only when the lap-24 anomaly fires — is now a prompt
     # guardrail rather than a SQL CASE. The agent is told to reserve PIT NOW for the ML
     # anomaly signal, and that tire age / race context alone must not produce it.
-    agent_sql = _normalize((ROOT / SQL / "streaming_agent_create_agent.sql").read_text())
+    agent_sql = _normalize((ROOT / SQL / "streaming_agent_create_agent.sql").read_text(encoding="utf-8"))
     assert "PIT NOW is reserved for this signal being true" in agent_sql
     assert "should produce PIT NOW; those inform PIT SOON or STAY OUT instead" in agent_sql

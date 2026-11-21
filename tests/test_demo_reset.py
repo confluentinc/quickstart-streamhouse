@@ -28,7 +28,10 @@ STATEMENTS = {  # every statement deploy creates, by name, with its SQL file
 
 
 def _deployed() -> list[dict]:
-    return [{"name": name, "statement": next(SQL.glob(f"{n}-*.sql")).read_text()} for name, n in STATEMENTS.items()]
+    return [
+        {"name": name, "statement": next(SQL.glob(f"{n}-*.sql")).read_text(encoding="utf-8")}
+        for name, n in STATEMENTS.items()
+    ]
 
 
 def test_resets_only_demo_2_statements_and_stops_the_insert_first():
@@ -45,12 +48,12 @@ def test_resets_only_demo_2_statements_and_stops_the_insert_first():
 
 
 def test_an_on_screen_insert_is_found_by_its_sql():
-    live = {"name": "workspace-2026-10-01-123", "statement": next(SQL.glob("31-*.sql")).read_text()}
+    live = {"name": "workspace-2026-10-01-123", "statement": next(SQL.glob("31-*.sql")).read_text(encoding="utf-8")}
     assert demo_reset.demo_2_statements([live]) == ["workspace-2026-10-01-123"]
 
 
 def test_drops_cover_every_object_demo_2_creates():
-    created = "".join(next(SQL.glob(f"{n}-*.sql")).read_text() for n in ("26", "27", "29", "30", "32"))
+    created = "".join(next(SQL.glob(f"{n}-*.sql")).read_text(encoding="utf-8") for n in ("26", "27", "29", "30", "32"))
     for sql in demo_reset.DROPS:
         assert sql.split()[-1] in created
     assert "DROP MODEL IF EXISTS passenger_recovery_model" in demo_reset.DROPS  # 2.3a creates the agent's model

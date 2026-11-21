@@ -10,10 +10,10 @@ from scripts import destroy
 
 
 def _deployment(tmp_path, monkeypatch):
-    (tmp_path / "credentials.env").write_text("TF_VAR_resource_prefix=test\n")
+    (tmp_path / "credentials.env").write_text("TF_VAR_resource_prefix=test\n", encoding="utf-8")
     for env in ("airline-demo", "core"):
         (tmp_path / "terraform" / env).mkdir(parents=True)
-        (tmp_path / "terraform" / env / "terraform.tfstate").write_text("{}")
+        (tmp_path / "terraform" / env / "terraform.tfstate").write_text("{}", encoding="utf-8")
     monkeypatch.setattr(destroy, "get_project_root", lambda: tmp_path)
     monkeypatch.setattr(sys, "argv", ["destroy", "--testing"])
 
@@ -89,7 +89,7 @@ def test_destroy_stops_the_local_datagen_stream(tmp_path, monkeypatch):
     monkeypatch.setattr(destroy, "run_terraform_destroy", lambda env_path: True)
     pid_file = tmp_path / "tmp" / "datagen.pid"
     pid_file.parent.mkdir()
-    pid_file.write_text("999999")  # not a process that exists, so nothing is killed
+    pid_file.write_text("999999", encoding="utf-8")  # not a process that exists, so nothing is killed
 
     destroy.main()
 

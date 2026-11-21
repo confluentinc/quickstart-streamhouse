@@ -81,7 +81,9 @@ def is_local_race(args: str) -> bool:
 def local_race_processes() -> list[str]:
     """Command lines of any local `uv run f1-race` currently producing (best-effort)."""
     try:
-        result = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True, timeout=15)
+        result = subprocess.run(
+            ["ps", "-eo", "pid=,args="], capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace"
+        )
     except Exception:
         return []
     me = os.getpid()

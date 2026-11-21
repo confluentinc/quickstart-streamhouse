@@ -117,6 +117,8 @@ def _generate_deployment_summary(env_path: Path) -> None:
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8",
+            errors="replace",
         )
 
         # Parse terraform outputs

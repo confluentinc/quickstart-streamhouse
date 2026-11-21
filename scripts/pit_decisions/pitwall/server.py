@@ -51,7 +51,7 @@ class NoCacheStaticFiles(StaticFiles):
 
 
 def _render_index(circuit: str = DEFAULT_CIRCUIT) -> str:
-    page = (STATIC_DIR / "index.html").read_text()
+    page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     for key, value in STEP_LABELS.items():
         page = page.replace(f"{{{{{key}_TITLE}}}}", value).replace(f"{{{{{key}}}}}", value.upper())
     options = "".join(

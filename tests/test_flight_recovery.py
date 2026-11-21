@@ -105,7 +105,7 @@ def test_itineraries_match_the_source_table_columns(records):
     # The Avro serializer silently drops a field the registered schema lacks.
     sql = (
         Path(__file__).parent.parent / "terraform" / "airline-demo" / "sql" / "21-source-passenger-itineraries.sql"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     columns = re.findall(r"^  (\w+) STRING", sql, re.M)
     assert columns == ["inbound_flight_id", "inbound_seat", "connecting_flight_id", "connecting_seat"]
     assert all(list(value) == columns for topic, _, value in records if topic == g.ITINERARIES)
@@ -286,7 +286,7 @@ def test_every_hotel_update_round_covers_all_three_hotels_and_the_agent_query_re
     assert all(sorted(keys) == sorted(g.HOTEL_ORDER) for keys in rounds.values())
     sql = (
         Path(__file__).parent.parent / "terraform/airline-demo/sql/31-insert-passenger-recommendations.sql"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     limit = int(re.search(r"hotel_inventory` ORDER BY as_of DESC LIMIT (\d+)", sql).group(1))
     assert limit >= 10 * len(g.HOTEL_ORDER)  # ten rounds of slack for a feed that updates hotels out of step
 
@@ -320,7 +320,7 @@ def test_airborne_flights_report_every_5_seconds_until_they_land(plan):
 def test_telemetry_rows_match_the_source_table_columns(plan):
     sql = (
         Path(__file__).parent.parent / "terraform" / "airline-demo" / "sql" / "35-source-flight-telemetry.sql"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     columns = [c for c in re.findall(r"^  (\w+) (?:STRING|TIMESTAMP\(3\)|DOUBLE|INT)", sql, re.M) if c != "key"]
     rows = [e[3] for e in g.stream_events(plan, 5) if e[1] == g.TELEMETRY]
     assert rows and all(list(row) == columns for row in rows)

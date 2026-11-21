@@ -73,6 +73,8 @@ def generate_confluent_api_keys(
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8",
+            errors="replace",
         )
 
         sa_id = None
@@ -103,6 +105,8 @@ def generate_confluent_api_keys(
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8",
+            errors="replace",
         )
 
         api_key = api_secret = None
@@ -134,6 +138,8 @@ def generate_confluent_api_keys(
                     capture_output=True,
                     text=True,
                     check=True,
+                    encoding="utf-8",
+                    errors="replace",
                 )
                 print("✓ API keys generated successfully!")
                 return api_key, api_secret

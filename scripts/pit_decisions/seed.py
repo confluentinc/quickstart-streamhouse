@@ -191,7 +191,7 @@ def _write_marker(root: Path, environment_id: str) -> None:
     """
     marker = root / SEED_MARKER
     marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(f"{environment_id}\n")
+    marker.write_text(f"{environment_id}\n", encoding="utf-8")
 
 
 def ensure_driver_race_history(
@@ -213,7 +213,7 @@ def ensure_driver_race_history(
     marker = root / SEED_MARKER
 
     if marker.exists():
-        recorded = marker.read_text().strip()
+        recorded = marker.read_text(encoding="utf-8").strip()
         if env_id and recorded == env_id:
             print(f"  {TABLE} already seeded and verified for {env_id}.")
             return True
