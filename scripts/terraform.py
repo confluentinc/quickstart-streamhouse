@@ -13,6 +13,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from scripts import processes
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,7 +34,7 @@ def run_terraform_output(state_path: Path) -> dict[str, any]:
         FileNotFoundError: If terraform binary is not found
     """
     try:
-        cmd = ["terraform", "output", "-json", f"-state={state_path}"]
+        cmd = [processes.exe("terraform"), "output", "-json", f"-state={state_path}"]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding="utf-8", errors="replace")
         outputs = json.loads(result.stdout)
 

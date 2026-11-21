@@ -60,7 +60,7 @@ from datetime import timedelta
 
 from dotenv import dotenv_values, set_key
 
-from scripts import setup_rtce
+from scripts import processes, setup_rtce
 from scripts.credentials import (
     generate_confluent_api_keys,
     load_or_create_credentials_file,
@@ -160,7 +160,10 @@ def _save_env_safe(creds_file, key: str, value: str) -> None:
         _pending_writes[key] = value
         return
     for attempt in range(3):
-        result = set_key(str(creds_file), key, value)
+        try:
+            result = set_key(str(creds_file), key, value)
+        except OSError:  # Windows: antivirus or a sync client holding credentials.env open for a moment
+            result = (None, key, value)
         if result[0] is not None:
             check = dotenv_values(str(creds_file))
             if check.get(key) == value:
@@ -212,6 +215,12 @@ def _check_writable(root) -> None:
     if problems:
         print("✗ Deploy needs to write credentials.env and Terraform state, but cannot write to:")
         print("\n".join(problems))
+        if sys.platform == "win32":
+            print(
+                "\nClone the repo into a folder you own, such as your user folder (cd $HOME), and deploy from there."
+                "\nIf the folder is in OneDrive or held open by another program, close that program or move the clone."
+            )
+            sys.exit(1)
         quoted = shlex.quote(str(root))
         print("\nTry this, then run `uv run deploy` again:")
         print(f"  chmod -R u+w {quoted}")
@@ -626,8 +635,8 @@ def _prompt_aws_credentials(creds_file, creds: dict) -> None:
             if access_key.startswith("ASIA"):
                 print(
                     "Temporary credentials need a session token too — that's a long string (300-400 chars) "
-                    "that can freeze some terminals on paste. If it does, Ctrl-C and re-run after "
-                    "`export AWS_SESSION_TOKEN=...` (and AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY) in your shell, "
+                    "that can freeze some terminals on paste. If it does, Ctrl-C and re-run after setting "
+                    f"{_env_hint('AWS_SESSION_TOKEN')} (and AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY) in your shell, "
                     "so this can auto-detect it instead of needing it pasted here."
                 )
                 token = prompt_with_default(
@@ -639,6 +648,11 @@ def _prompt_aws_credentials(creds_file, creds: dict) -> None:
         _save_env_safe(creds_file, "TF_VAR_aws_tableflow_secret_key", secret_key)
         if token:
             _save_env_safe(creds_file, "TF_VAR_aws_tableflow_session_token", token)
+
+
+def _env_hint(name: str) -> str:
+    """How to set an environment variable in this computer's usual shell, for messages."""
+    return f"`$env:{name} = '...'`" if sys.platform == "win32" else f"`export {name}=...`"
 
 
 def _finish(root, client: str, video_2: bool = False, speed: float = 1.0) -> None:
@@ -804,7 +818,7 @@ def _run_datagen(root, agent: bool, history: bool = True, speed: float = 1.0, st
     with open(log, "a", encoding="utf-8") as out:
         subprocess.Popen(
             [
-                "uv",
+                os.environ.get("UV") or processes.exe("uv"),  # `uv run` sets UV to its own path
                 "run",
                 "airport-datagen",
                 "--now",
@@ -819,7 +833,7 @@ def _run_datagen(root, agent: bool, history: bool = True, speed: float = 1.0, st
             stdin=subprocess.DEVNULL,
             stdout=out,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
+            **processes.detached(),  # keeps streaming after this terminal closes, on Windows too
         )
     print(
         f"✓ Streaming live flight updates for {STREAM_MINUTES} minutes"
@@ -862,13 +876,13 @@ def _preflight_always_on(creds: dict) -> None:
         )
     if (
         subprocess.run(
-            ["docker", "info"], capture_output=True, text=True, encoding="utf-8", errors="replace"
+            [processes.exe("docker"), "info"], capture_output=True, text=True, encoding="utf-8", errors="replace"
         ).returncode
         != 0
     ):
         sys.exit("Docker is installed but not running. Start Docker Desktop and rerun.")
     identity = subprocess.run(
-        ["aws", "sts", "get-caller-identity", "--output", "json"],
+        [processes.exe("aws"), "sts", "get-caller-identity", "--output", "json"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -884,7 +898,7 @@ def _preflight_always_on(creds: dict) -> None:
     if ":assumed-role/" in caller:
         role = caller.split(":assumed-role/", 1)[1].split("/")[0]
         found = subprocess.run(
-            ["aws", "iam", "get-role", "--role-name", role, "--query", "Role.Arn", "--output", "text"],
+            [processes.exe("aws"), "iam", "get-role", "--role-name", role, "--query", "Role.Arn", "--output", "text"],
             capture_output=True,
             text=True,
             timeout=60,
@@ -895,7 +909,7 @@ def _preflight_always_on(creds: dict) -> None:
     simulated = (
         subprocess.run(
             [
-                "aws",
+                processes.exe("aws"),
                 "iam",
                 "simulate-principal-policy",
                 "--policy-source-arn",
@@ -1000,7 +1014,7 @@ def _reset_always_on_data(root) -> None:
 def _compact_sources(infra: dict[str, str]) -> None:
     for topic in COMPACTED_TOPICS:
         cmd = [
-            "confluent",
+            processes.exe("confluent"),
             "kafka",
             "topic",
             "update",
@@ -1033,7 +1047,7 @@ def _always_on_outputs(root) -> dict:
 def _image_tag(root) -> str:
     """The commit, with -dirty when the worktree has changes the commit doesn't."""
     commit = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
+        [processes.exe("git"), "rev-parse", "--short", "HEAD"],
         cwd=root,
         capture_output=True,
         text=True,
@@ -1043,7 +1057,12 @@ def _image_tag(root) -> str:
     if commit.returncode != 0:
         return f"local-{time.strftime('%Y%m%d%H%M%S')}"
     status = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        [processes.exe("git"), "status", "--porcelain"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return commit.stdout.strip() + ("-dirty" if status.stdout.strip() else "")
 
@@ -1051,7 +1070,7 @@ def _image_tag(root) -> str:
 def _ecr_repository_url(always_on) -> str:
     """The repository URL from state: a targeted apply doesn't always refresh outputs."""
     shown = subprocess.run(
-        ["terraform", "show", "-json"],
+        [processes.exe("terraform"), "show", "-json"],
         cwd=always_on,
         capture_output=True,
         text=True,
@@ -1079,7 +1098,7 @@ def _push_image(root, region: str) -> str:
     image = f"{repository}:{_image_tag(root)}"
     try:
         password = subprocess.run(
-            ["aws", "ecr", "get-login-password", "--region", region],
+            [processes.exe("aws"), "ecr", "get-login-password", "--region", region],
             capture_output=True,
             text=True,
             check=True,
@@ -1087,7 +1106,7 @@ def _push_image(root, region: str) -> str:
             errors="replace",
         ).stdout
         subprocess.run(
-            ["docker", "login", "--username", "AWS", "--password-stdin", repository.split("/")[0]],
+            [processes.exe("docker"), "login", "--username", "AWS", "--password-stdin", repository.split("/")[0]],
             input=password,
             capture_output=True,
             text=True,
@@ -1097,7 +1116,7 @@ def _push_image(root, region: str) -> str:
         )
         # One plain image manifest: Lambda rejects the manifest list that build attestations would add.
         build = [
-            "docker",
+            processes.exe("docker"),
             "build",
             "--platform",
             "linux/amd64",
@@ -1108,9 +1127,9 @@ def _push_image(root, region: str) -> str:
             str(root),
         ]
         subprocess.run(build, check=True)
-        subprocess.run(["docker", "push", image], check=True)
+        subprocess.run([processes.exe("docker"), "push", image], check=True)
         digests = subprocess.run(
-            ["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image],
+            [processes.exe("docker"), "image", "inspect", "--format", "{{json .RepoDigests}}", image],
             capture_output=True,
             text=True,
             check=True,
@@ -1129,7 +1148,7 @@ def _push_image(root, region: str) -> str:
 def _redeploy_generator(outputs: dict, region: str) -> None:
     """Restart the generator so it reads the current secret."""
     cmd = [
-        "aws",
+        processes.exe("aws"),
         "ecs",
         "update-service",
         "--cluster",
@@ -1149,7 +1168,7 @@ def _redeploy_generator(outputs: dict, region: str) -> None:
 
 def _confluent_rows(*args: str) -> list[dict]:
     result = subprocess.run(
-        ["confluent", *args, "-o", "json"],
+        [processes.exe("confluent"), *args, "-o", "json"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -1200,7 +1219,7 @@ def _grant_demo_users(env_id: str, emails: list[str]) -> list[str]:
             continue
         created = subprocess.run(
             [
-                "confluent",
+                processes.exe("confluent"),
                 "iam",
                 "rbac",
                 "role-binding",

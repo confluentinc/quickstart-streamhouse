@@ -9,28 +9,25 @@ from __future__ import annotations
 
 import errno
 import socket
-import subprocess
+
+from scripts import processes
 
 
 def _listeners(port: int) -> list[tuple[str, str]]:
-    """(PID, command line) of each process listening on the TCP port, when lsof can tell."""
-
-    def run(*command: str) -> str:
-        return subprocess.run(
-            command, capture_output=True, text=True, timeout=5, encoding="utf-8", errors="replace"
-        ).stdout
-
-    try:
-        pids = dict.fromkeys(run("lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t").split())
-        return [(pid, run("ps", "-o", "command=", "-p", pid).strip()) for pid in pids]
-    except (OSError, subprocess.SubprocessError):
-        return []
+    """(PID, command line) of each process listening on the TCP port, when this computer can tell."""
+    pids = processes.listening_pids(port) or []
+    return [(str(pid), processes.command_line(pid) or "") for pid in pids]
 
 
 def ensure_port_free(host: str, port: int, server: str) -> None:
     """Exit with the PID and command holding host:port, before the server starts in front of it."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # as uvicorn does, so TIME_WAIT doesn't count
+        if processes.WINDOWS:
+            # Windows' SO_REUSEADDR lets a socket share a port another one listens on, and Windows refuses the
+            # probe with WSAEACCES instead of EADDRINUSE. An exclusive bind fails with EADDRINUSE as it should.
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # as uvicorn does, so TIME_WAIT doesn't count
         try:
             sock.bind((host, port))
             return
@@ -44,6 +41,7 @@ def ensure_port_free(host: str, port: int, server: str) -> None:
     if any(server in command for _, command in holders):
         lines.append(f"That is a {server} left running from an earlier run; it serves stale data.")
     if holders:
-        lines.append(f"Stop it with `kill {' '.join(pid for pid, _ in holders)}`, then run this again.")
+        stop = processes.stop_command([int(pid) for pid, _ in holders])
+        lines.append(f"Stop it with `{stop}`, then run this again.")
     lines.append("Or choose another port with --port.")
     raise SystemExit("\n".join(lines))

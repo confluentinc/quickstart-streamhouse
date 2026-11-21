@@ -29,7 +29,7 @@ import time
 
 from dotenv import dotenv_values
 
-from scripts import airport_datagen, deploy
+from scripts import airport_datagen, deploy, processes
 from scripts.login_checks import ensure_confluent_login
 from scripts.terraform import get_project_root, run_terraform_output
 from scripts.terraform_runner import run_terraform
@@ -100,7 +100,7 @@ class Flink:
 
     def _cli(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["confluent", "flink", "statement", *args, *self.scope],
+            [processes.exe("confluent"), "flink", "statement", *args, *self.scope],
             capture_output=True,
             text=True,
             timeout=300,
@@ -162,14 +162,21 @@ def agent_offer_keys(plan: airport_datagen.Plan) -> list[str]:
 
 def _forget_in_terraform(demo, keep_staging: bool = False) -> None:
     listed = subprocess.run(
-        ["terraform", "state", "list"], cwd=demo, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        [processes.exe("terraform"), "state", "list"],
+        cwd=demo,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     present = set(listed.stdout.split())
     addresses = [
         a for a in STATE_ADDRESSES if a in present and not (keep_staging and any(t in a for t in STAGING_TARGETS))
     ]
     if addresses:
-        subprocess.run(["terraform", "state", "rm", *addresses], cwd=demo, check=True, capture_output=True)
+        subprocess.run(
+            [processes.exe("terraform"), "state", "rm", *addresses], cwd=demo, check=True, capture_output=True
+        )
 
 
 def _drop_demo_2(demo, flink: Flink) -> None:

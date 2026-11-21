@@ -1,4 +1,6 @@
+import os
 import socket
+import sys
 
 import pytest
 
@@ -28,12 +30,13 @@ def test_taken_port_names_the_old_server_and_how_to_stop_it(monkeypatch):
     message = str(error.value)
     assert f"PID 4242: {command}" in message
     assert "left running from an earlier run" in message
-    assert "kill 4242" in message
+    assert ("taskkill /F /PID 4242" if sys.platform == "win32" else "kill 4242") in message
 
 
 def test_listeners_finds_this_process():
     with _listening_socket() as sock:
         holders = local_port._listeners(sock.getsockname()[1])
-    if not holders:
-        pytest.skip("lsof is not available")
-    assert holders[0][1]
+    if not holders and sys.platform != "win32":
+        pytest.skip("lsof is not available")  # Windows always has netstat and PowerShell
+    assert holders[0][0] == str(os.getpid())
+    assert "pytest" in holders[0][1]
