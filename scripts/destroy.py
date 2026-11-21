@@ -98,7 +98,9 @@ CATALOG_TAG_PREFIX = "confluent_tag.demo["
 
 def release_provider_integration(env_path: Path) -> bool:
     """Drop the provider integration and catalog tags from state if nothing else is left."""
-    listed = subprocess.run(["terraform", "state", "list"], cwd=env_path, capture_output=True, text=True)
+    listed = subprocess.run(
+        ["terraform", "state", "list"], cwd=env_path, capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
     if listed.returncode != 0:
         return False
     managed = [r for r in listed.stdout.split() if not r.startswith("data.")]

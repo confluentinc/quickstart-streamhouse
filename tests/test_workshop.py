@@ -25,7 +25,7 @@ def _statement(sql: str) -> str:
 def _sql_blocks() -> list[str]:
     """Every ```sql block in the guide, dedented by its fence's indent the way GitHub renders it."""
     blocks = []
-    for indent, body in re.findall(r"^( *)```sql\n(.*?)^\1```", GUIDE.read_text(), re.M | re.S):
+    for indent, body in re.findall(r"^( *)```sql\n(.*?)^\1```", GUIDE.read_text(encoding="utf-8"), re.M | re.S):
         blocks.append(
             "\n".join(line[len(indent) :] if line.startswith(indent) else line.lstrip() for line in body.splitlines())
         )
@@ -38,7 +38,7 @@ def _pipeline_blocks() -> list[str]:
 
 
 def _files() -> dict[str, str]:
-    return {path.name.split("-")[0]: _statement(path.read_text()) for path in SQL.glob("*.sql")}
+    return {path.name.split("-")[0]: _statement(path.read_text(encoding="utf-8")) for path in SQL.glob("*.sql")}
 
 
 def test_guide_pastes_the_pipeline_files_in_order():
@@ -97,8 +97,8 @@ def test_targeted_applies_include_the_tables_the_workshop_leaves_out():
 
 def test_reset_demo_2_leaves_a_workshop_alone(monkeypatch, tmp_path):
     (tmp_path / "terraform" / "core").mkdir(parents=True)
-    (tmp_path / "terraform" / "core" / "terraform.tfstate").write_text("{}")
-    (tmp_path / "credentials.env").write_text(f"{deploy.WORKSHOP}=true\n")
+    (tmp_path / "terraform" / "core" / "terraform.tfstate").write_text("{}", encoding="utf-8")
+    (tmp_path / "credentials.env").write_text(f"{deploy.WORKSHOP}=true\n", encoding="utf-8")
     monkeypatch.setattr(demo_reset, "get_project_root", lambda: tmp_path)
     monkeypatch.setattr(demo_reset, "run_terraform_output", lambda _: pytest.fail("the attendees' agent stays"))
     with pytest.raises(SystemExit, match="workshop mode"):
@@ -106,7 +106,7 @@ def test_reset_demo_2_leaves_a_workshop_alone(monkeypatch, tmp_path):
 
 
 def test_workshop_terraform_builds_only_the_source_tables():
-    main = (SQL.parent / "main.tf").read_text()
+    main = (SQL.parent / "main.tf").read_text(encoding="utf-8")
     for resource in ("passenger_state", "flight_impact"):
         block = main.split(f'resource "confluent_flink_statement" "{resource}" {{', 1)[1]
         assert block.lstrip().startswith("count = var.workshop ? 0 : 1")
@@ -137,7 +137,7 @@ def test_resume_picks_up_the_last_streams_clock(monkeypatch, tmp_path):
     with pytest.raises(SystemExit):
         airport_datagen.main(["--resume"])
     (tmp_path / "tmp").mkdir()
-    (tmp_path / "tmp" / "datagen.start").write_text("2026-10-27T17:00:00 2")
+    (tmp_path / "tmp" / "datagen.start").write_text("2026-10-27T17:00:00 2", encoding="utf-8")
     airport_datagen.main(["--resume", "--offers", "generator"])
     start, kwargs = runs[0]
     assert start == datetime(2026, 10, 27, 17)
@@ -147,7 +147,7 @@ def test_resume_picks_up_the_last_streams_clock(monkeypatch, tmp_path):
 def test_workshop_mode_refuses_a_checkout_with_a_full_deployment(tmp_path):
     state = tmp_path / "terraform" / "airline-demo" / "terraform.tfstate"
     state.parent.mkdir(parents=True)
-    state.write_text("{}")
+    state.write_text("{}", encoding="utf-8")
     with pytest.raises(SystemExit):
         deploy._workshop_mode(True, False, tmp_path / "credentials.env", {})
     assert not deploy._workshop_mode(False, False, tmp_path / "credentials.env", {})  # a plain rerun stays full
@@ -218,7 +218,7 @@ def test_setup_rtce_rejects_flags_that_dont_combine(argv):
 
 
 def test_workshop_terraform_creates_the_agents_model():
-    main = (SQL.parent / "main.tf").read_text()
+    main = (SQL.parent / "main.tf").read_text(encoding="utf-8")
     block = main.split('resource "confluent_flink_statement" "agent_setup" {', 1)[1]
     assert "var.workshop ? { model = local.agent_setup.model }" in block
     assert 'model = "sql/32-model-passenger-recovery-native.sql"' in main

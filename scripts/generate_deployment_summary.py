@@ -66,7 +66,7 @@ def generate_credentials_markdown(cloud_provider: str, tf_outputs: dict[str, Any
 
         # Write to file
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(markdown_content)
+        output_path.write_text(markdown_content, encoding="utf-8")
 
         print(f"Resource summary saved to: {output_path}")
 
@@ -347,7 +347,7 @@ def main():
         try:
             import json
 
-            with open(state_file) as f:
+            with open(state_file, encoding="utf-8") as f:
                 state = json.load(f)
                 outputs = state.get("outputs", {})
                 if "cloud_provider" in outputs:
@@ -369,6 +369,8 @@ def main():
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8",
+            errors="replace",
         )
         tf_outputs = json.loads(result.stdout)
     except subprocess.CalledProcessError as e:
@@ -490,7 +492,7 @@ This file contains the Flink SQL commands used in {lab_name.replace("-", " ").ti
 
         # Write to file
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(content)
+        output_path.write_text(content, encoding="utf-8")
 
         print(f"Flink SQL summary saved to: {output_path}")
 

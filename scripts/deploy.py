@@ -205,7 +205,7 @@ def _check_writable(root) -> None:
             continue
         probe = folder / ".write-check"
         try:
-            probe.write_text("")
+            probe.write_text("", encoding="utf-8")
             probe.unlink()
         except OSError as e:
             problems.append(f"  - {folder}: {e.strerror or e}")
@@ -860,10 +860,20 @@ def _preflight_always_on(creds: dict) -> None:
             "--always-on needs AWS credentials (TF_VAR_aws_tableflow_access_key in credentials.env): "
             "it runs the demo on AWS and always deploys Tableflow. Rerun `uv run deploy --always-on` and enter them."
         )
-    if subprocess.run(["docker", "info"], capture_output=True, text=True).returncode != 0:
+    if (
+        subprocess.run(
+            ["docker", "info"], capture_output=True, text=True, encoding="utf-8", errors="replace"
+        ).returncode
+        != 0
+    ):
         sys.exit("Docker is installed but not running. Start Docker Desktop and rerun.")
     identity = subprocess.run(
-        ["aws", "sts", "get-caller-identity", "--output", "json"], capture_output=True, text=True, timeout=60
+        ["aws", "sts", "get-caller-identity", "--output", "json"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        encoding="utf-8",
+        errors="replace",
     )
     if identity.returncode != 0:
         sys.exit(f"`aws sts get-caller-identity` failed, so the AWS credentials don't work:\n{identity.stderr.strip()}")
@@ -878,6 +888,8 @@ def _preflight_always_on(creds: dict) -> None:
             capture_output=True,
             text=True,
             timeout=60,
+            encoding="utf-8",
+            errors="replace",
         )
         principal = found.stdout.strip() if found.returncode == 0 else ""
     simulated = (
@@ -896,6 +908,8 @@ def _preflight_always_on(creds: dict) -> None:
             capture_output=True,
             text=True,
             timeout=60,
+            encoding="utf-8",
+            errors="replace",
         )
         if principal
         else None
@@ -998,7 +1012,7 @@ def _compact_sources(infra: dict[str, str]) -> None:
             "--environment",
             infra["env_id"],
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, encoding="utf-8", errors="replace")
         if result.returncode == 0:
             print(f"✓ {topic} is compacted")
         else:
@@ -1018,16 +1032,33 @@ def _always_on_outputs(root) -> dict:
 
 def _image_tag(root) -> str:
     """The commit, with -dirty when the worktree has changes the commit doesn't."""
-    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=root, capture_output=True, text=True)
+    commit = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     if commit.returncode != 0:
         return f"local-{time.strftime('%Y%m%d%H%M%S')}"
-    status = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True)
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
     return commit.stdout.strip() + ("-dirty" if status.stdout.strip() else "")
 
 
 def _ecr_repository_url(always_on) -> str:
     """The repository URL from state: a targeted apply doesn't always refresh outputs."""
-    shown = subprocess.run(["terraform", "show", "-json"], cwd=always_on, capture_output=True, text=True, check=True)
+    shown = subprocess.run(
+        ["terraform", "show", "-json"],
+        cwd=always_on,
+        capture_output=True,
+        text=True,
+        check=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     resources = json.loads(shown.stdout or "{}").get("values", {}).get("root_module", {}).get("resources", [])
     for resource in resources:
         if resource.get("address") == "aws_ecr_repository.images":
@@ -1048,7 +1079,12 @@ def _push_image(root, region: str) -> str:
     image = f"{repository}:{_image_tag(root)}"
     try:
         password = subprocess.run(
-            ["aws", "ecr", "get-login-password", "--region", region], capture_output=True, text=True, check=True
+            ["aws", "ecr", "get-login-password", "--region", region],
+            capture_output=True,
+            text=True,
+            check=True,
+            encoding="utf-8",
+            errors="replace",
         ).stdout
         subprocess.run(
             ["docker", "login", "--username", "AWS", "--password-stdin", repository.split("/")[0]],
@@ -1056,6 +1092,8 @@ def _push_image(root, region: str) -> str:
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8",
+            errors="replace",
         )
         # One plain image manifest: Lambda rejects the manifest list that build attestations would add.
         build = [
@@ -1076,6 +1114,8 @@ def _push_image(root, region: str) -> str:
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8",
+            errors="replace",
         ).stdout
     except subprocess.CalledProcessError as error:
         sys.exit(f"\n✗ `{' '.join(error.cmd[:3])}` failed{f': {error.stderr.strip()}' if error.stderr else ''}")
@@ -1100,7 +1140,7 @@ def _redeploy_generator(outputs: dict, region: str) -> None:
         "--region",
         region,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, encoding="utf-8", errors="replace")
     if result.returncode == 0:
         print("✓ Restarted the generator with `aws ecs update-service`")
     else:
@@ -1108,7 +1148,14 @@ def _redeploy_generator(outputs: dict, region: str) -> None:
 
 
 def _confluent_rows(*args: str) -> list[dict]:
-    result = subprocess.run(["confluent", *args, "-o", "json"], capture_output=True, text=True, timeout=60)
+    result = subprocess.run(
+        ["confluent", *args, "-o", "json"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        encoding="utf-8",
+        errors="replace",
+    )
     if result.returncode != 0:
         return []
     try:
@@ -1168,6 +1215,8 @@ def _grant_demo_users(env_id: str, emails: list[str]) -> list[str]:
             capture_output=True,
             text=True,
             timeout=60,
+            encoding="utf-8",
+            errors="replace",
         )
         if created.returncode == 0:
             print(f"✓ {email} is {DEMO_USER_ROLE} on {env_id}")

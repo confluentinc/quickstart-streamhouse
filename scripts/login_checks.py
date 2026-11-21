@@ -30,6 +30,8 @@ def check_confluent_login() -> bool:
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8",
+            errors="replace",
         )
         return result.returncode == 0
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -48,6 +50,8 @@ def _run_login(email: str, password: str) -> subprocess.CompletedProcess:
         text=True,
         stdin=subprocess.DEVNULL,
         env=env,
+        encoding="utf-8",
+        errors="replace",
     )
 
 

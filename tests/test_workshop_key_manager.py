@@ -10,7 +10,7 @@ def _resources(policy: dict, sid: str) -> str:
 
 
 def _covers(tmp_path, creds: str, bucket: str, role: str) -> bool:
-    (tmp_path / "credentials.env").write_text(creds)
+    (tmp_path / "credentials.env").write_text(creds, encoding="utf-8")
     policy = wkm.get_demo_policy("123", "us-east-1", wkm.get_resource_scope(tmp_path))
     return (
         fnmatchcase(f"arn:aws:s3:::{bucket}", _resources(policy, "TableflowBucket"))

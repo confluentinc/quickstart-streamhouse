@@ -398,7 +398,7 @@ The api-keys destroy command will:
 **Created:** {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UTC
 """
 
-    with open(creds_file, "w") as f:
+    with open(creds_file, "w", encoding="utf-8") as f:
         f.write(content)
 
     logger.info(f"✓ Saved credentials to {creds_file}")
@@ -422,7 +422,7 @@ def parse_iam_username_from_md(project_root: Path) -> str | None:
     if not creds_file.exists():
         return None
     try:
-        content = creds_file.read_text()
+        content = creds_file.read_text(encoding="utf-8")
         match = re.search(r"^\*\*IAM User:\*\*\s+`([^`]+)`", content, re.MULTILINE)
         if match:
             return match.group(1)

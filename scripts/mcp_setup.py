@@ -25,6 +25,8 @@ def _get_node_abi(node_bin: str) -> int | None:
             text=True,
             check=True,
             timeout=5,
+            encoding="utf-8",
+            errors="replace",
         )
         return int(result.stdout.strip())
     except Exception:
@@ -66,6 +68,8 @@ def _resolve_npx() -> str:
             text=True,
             check=True,
             timeout=5,
+            encoding="utf-8",
+            errors="replace",
         )
         path_node_version = ver_result.stdout.strip().lstrip("v")
         path_node_abi = _get_node_abi("node")
@@ -93,6 +97,8 @@ def _resolve_npx() -> str:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                encoding="utf-8",
+                errors="replace",
             )
             version_str = ver_result.stdout.strip().lstrip("v")
             label = " (Node 24 LTS)" if abi == _PREFERRED_ABI else ""
@@ -250,7 +256,7 @@ def _register_with_claude_code(env_vars: dict, npx_bin: str, project_root: Path)
     remove_argv, add_argv = _claude_argv_stdio(env_vars, npx_bin)
     try:
         subprocess.run(remove_argv, capture_output=True)
-        result = subprocess.run(add_argv, capture_output=True, text=True)
+        result = subprocess.run(add_argv, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if result.returncode == 0:
             print(f"✓ Confluent MCP server registered as '{_CLAUDE_SERVER_NAME}' (local scope, via claude CLI)")
             print("  Restart Claude Code to activate.")
@@ -272,7 +278,7 @@ def _register_with_claude_code_filewrite(env_vars: dict, npx_bin: str, project_r
     """
     claude_json_path = Path.home() / ".claude.json"
     if claude_json_path.exists():
-        with claude_json_path.open() as f:
+        with claude_json_path.open(encoding="utf-8") as f:
             claude_data = json.load(f)
     else:
         claude_data = {}
@@ -286,7 +292,7 @@ def _register_with_claude_code_filewrite(env_vars: dict, npx_bin: str, project_r
         "env": env_vars,
     }
 
-    with claude_json_path.open("w") as f:
+    with claude_json_path.open("w", encoding="utf-8") as f:
         json.dump(claude_data, f, indent=2)
         f.write("\n")
 
@@ -309,7 +315,7 @@ def _write_codex_config(config_path: Path, env_vars: dict, npx_bin: str) -> None
     doc = tomlkit.document()
     if config_path.exists():
         try:
-            doc = tomlkit.parse(config_path.read_text())
+            doc = tomlkit.parse(config_path.read_text(encoding="utf-8"))
         except Exception as exc:
             print(f"  Warning: could not parse existing config.toml ({exc}); preserving as .bak")
             config_path.rename(config_path.with_suffix(".toml.bak"))
@@ -330,7 +336,7 @@ def _write_codex_config(config_path: Path, env_vars: dict, npx_bin: str) -> None
     mcp_servers["confluent-cloud-mcp-server"] = entry
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(tomlkit.dumps(doc))
+    config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
 
 def _codex_config_paths(project_root: Path) -> list[Path]:

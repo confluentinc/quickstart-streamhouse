@@ -33,7 +33,7 @@ def run_terraform_output(state_path: Path) -> dict[str, any]:
     """
     try:
         cmd = ["terraform", "output", "-json", f"-state={state_path}"]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding="utf-8", errors="replace")
         outputs = json.loads(result.stdout)
 
         # Extract values from terraform output format

@@ -16,7 +16,9 @@ def _listeners(port: int) -> list[tuple[str, str]]:
     """(PID, command line) of each process listening on the TCP port, when lsof can tell."""
 
     def run(*command: str) -> str:
-        return subprocess.run(command, capture_output=True, text=True, timeout=5).stdout
+        return subprocess.run(
+            command, capture_output=True, text=True, timeout=5, encoding="utf-8", errors="replace"
+        ).stdout
 
     try:
         pids = dict.fromkeys(run("lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t").split())
