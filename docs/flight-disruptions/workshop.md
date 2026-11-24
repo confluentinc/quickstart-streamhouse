@@ -537,7 +537,7 @@ Next you will build a Flink SQL recovery agent that checks live flights and hote
         CONCAT(
           'inbound_flight_id=', g.inbound_flight_id,
           '; final_destination=', g.final_destination,
-          '; inbound_query=SELECT * FROM `flight_status` WHERE "KEY" = ''', g.inbound_flight_id, ''' ORDER BY estimated_time DESC LIMIT 1',
+          '; inbound_query=SELECT * FROM `flight_status` WHERE "key" = ''', g.inbound_flight_id, ''' ORDER BY estimated_time DESC LIMIT 1',
           '; departures_query=SELECT * FROM `flight_status` WHERE origin = ''SFO'' AND destination = ''',
           g.final_destination, ''' AND scheduled_time >= TIMESTAMP ''',
           DATE_FORMAT(g.impacted_at - INTERVAL '1' HOUR, 'yyyy-MM-dd HH:mm:ss'),

@@ -186,7 +186,7 @@ def test_lightning_run_returns_rows_like_the_app(monkeypatch):
         return _Response(
             {
                 "result": {
-                    "schema": {"columns": [{"name": "KEY"}, {"name": "AVAILABLE_ROOMS"}]},
+                    "schema": {"columns": [{"name": "key"}, {"name": "available_rooms"}]},
                     "data": [["Grand Hyatt at SFO", 12]],
                 }
             }

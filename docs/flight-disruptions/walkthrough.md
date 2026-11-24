@@ -161,7 +161,7 @@ Tables and to a connected agent through RTCE/MCP, and enables Tableflow for Iceb
   `uv run airport-datagen` to restart the scene.
 - **Lightning returns at most 200 rows** — every Lightning query is capped at 200 rows, and OFFSET,
   COUNT, and GROUP BY are rejected. The app filters to one service day (180 flights) and pages
-  larger results by key (`WHERE "KEY" > 'last' ORDER BY "KEY"`).
+  larger results by key (`WHERE "key" > 'last' ORDER BY "key"`).
 - **Lightning `curl` / app read returns 401** — Global key still propagating (retry), or the topic
   lacks `DeveloperRead` for the reader SA.
 - **`queryData` errors on missing args** — pass **all** of `topic_name`, `query`, and

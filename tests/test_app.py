@@ -18,7 +18,7 @@ NOW = datetime(2026, 9, 28, 12, 0, 0)
 
 def test_builder_escapes_quotes_and_renders_key():
     assert _build_lightning_query("passenger_state", key="P-1'; DROP", limit=1) == (
-        "SELECT * FROM `passenger_state` WHERE \"KEY\" = 'P-1''; DROP' LIMIT 1"
+        "SELECT * FROM `passenger_state` WHERE \"key\" = 'P-1''; DROP' LIMIT 1"
     )
 
 
@@ -38,7 +38,7 @@ def test_builder_renders_timestamp_in_numbers_and_order():
     assert query == (
         "SELECT * FROM `flight_impact` WHERE scheduled_time >= TIMESTAMP '2026-09-01 00:00:00'"
         " AND delay_minutes > 15 AND hotel_cost <= 189.50"
-        " AND status IN ('DELAYED', 'BOARDING') AND \"KEY\" LIKE 'RA4%'"
+        " AND status IN ('DELAYED', 'BOARDING') AND \"key\" LIKE 'RA4%'"
         " ORDER BY scheduled_time DESC LIMIT 200"
     )
 
@@ -585,11 +585,7 @@ def _cookie_value(response):
 
 def test_login_sets_cookie_that_authorizes_everything(monkeypatch):
     monkeypatch.setenv("APP_PASSWORD", "s3cret")
-
-    def no_deployment():  # the checkout's own credentials.env and Terraform state must not matter
-        raise airport_app.HTTPException(status_code=503, detail="not deployed")
-
-    monkeypatch.setattr(airport_app.deployment, "_load_rtce", no_deployment)
+    monkeypatch.setattr(Deployment, "lightning_query", lambda _self, *args, **kwargs: [])
     client = TestClient(airport_app.app, base_url="https://testserver")
     response = client.post("/login", data={"password": "s3cret"}, follow_redirects=False)
     assert response.status_code == 303 and response.headers["location"] == "/"
@@ -600,7 +596,7 @@ def test_login_sets_cookie_that_authorizes_everything(monkeypatch):
     assert client.get("/").text.lstrip().lower().startswith("<!doctype html>")
     assert 'action="/login"' not in client.get("/").text
     assert client.get("/static/app.js").status_code == 200
-    assert client.get("/api/state").status_code != 401
+    assert client.get("/api/state").status_code == 200
 
 
 def test_login_page_logo_is_public_but_other_static_is_not(monkeypatch):
