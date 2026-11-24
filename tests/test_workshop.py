@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts import airport_datagen, demo_reset, deploy, setup_rtce
+from scripts import airport_datagen, demo_reset, deploy, setup_rtce, workshop_checks
 
 ROOT = Path(__file__).parent.parent
 SQL = ROOT / "terraform" / "airline-demo" / "sql"
@@ -135,10 +135,7 @@ def test_resume_picks_up_the_last_streams_clock(monkeypatch, tmp_path):
     monkeypatch.setattr(airport_datagen, "get_project_root", lambda: tmp_path)
     runs = []
     monkeypatch.setattr(airport_datagen, "run", lambda start, *args, **kwargs: runs.append((start, kwargs)))
-    # No real deployment in tmp_path: stand in for the check, which isn't what this test is about.
-    monkeypatch.setattr(
-        "scripts.workshop_checks.require_deployment", lambda command: SimpleNamespace(is_workshop=False)
-    )
+    monkeypatch.setattr(workshop_checks, "require_deployment", lambda *_: SimpleNamespace(is_workshop=False))
     with pytest.raises(SystemExit):
         airport_datagen.main(["--resume"])
     (tmp_path / "tmp").mkdir()
@@ -188,7 +185,7 @@ def test_lightning_run_returns_rows_like_the_app(monkeypatch):
         return _Response(
             {
                 "result": {
-                    "schema": {"columns": [{"name": "KEY"}, {"name": "AVAILABLE_ROOMS"}]},
+                    "schema": {"columns": [{"name": "key"}, {"name": "available_rooms"}]},
                     "data": [["Grand Hyatt at SFO", 12]],
                 }
             }
