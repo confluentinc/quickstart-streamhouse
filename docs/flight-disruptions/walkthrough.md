@@ -81,10 +81,10 @@ brew install uv git python && brew tap hashicorp/tap && brew install hashicorp/t
 Open PowerShell (Start menu → type **PowerShell** → **Windows PowerShell**) and run these. If winget asks you to accept its terms, enter `Y`. None of them needs administrator rights.
 
 ```powershell
-winget install --id Git.Git -e --scope user
-winget install --id astral-sh.uv -e
-winget install --id Hashicorp.Terraform -e
-winget install --id ConfluentInc.Confluent-CLI -e
+winget install --id Git.Git -e --scope user --source winget
+winget install --id astral-sh.uv -e --source winget
+winget install --id Hashicorp.Terraform -e --source winget
+winget install --id ConfluentInc.Confluent-CLI -e --source winget
 ```
 
 Then **close PowerShell and open a new window**, so it finds the new tools.

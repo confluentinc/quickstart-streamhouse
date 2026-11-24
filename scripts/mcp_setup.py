@@ -152,7 +152,8 @@ def _resolve_npx() -> str:
         print("  The labs themselves don't need it. To use this local Confluent MCP server, install Node 24 LTS:")
     if processes.WINDOWS:
         # Not OpenJS.NodeJS.LTS: that is Node 26, which kafka-javascript has no prebuilt binary for yet.
-        print("    In PowerShell: winget install --id OpenJS.NodeJS.24 -e   (then open a new PowerShell window)")
+        print("    In PowerShell: winget install --id OpenJS.NodeJS.24 -e --source winget")
+        print("                   (then open a new PowerShell window)")
     else:
         print("    With nvm:      nvm install 24 && nvm use 24")
         print("    With Homebrew: brew install node@24")

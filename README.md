@@ -50,10 +50,10 @@ Build one on Confluent Cloud in either of these hands-on labs:
     Open PowerShell (Start menu → type **PowerShell** → **Windows PowerShell**) and run these. If winget asks you to accept its terms, enter `Y`. None of them needs administrator rights.
 
     ```powershell
-    winget install --id Git.Git -e --scope user
-    winget install --id astral-sh.uv -e
-    winget install --id Hashicorp.Terraform -e
-    winget install --id ConfluentInc.Confluent-CLI -e
+    winget install --id Git.Git -e --scope user --source winget
+    winget install --id astral-sh.uv -e --source winget
+    winget install --id Hashicorp.Terraform -e --source winget
+    winget install --id ConfluentInc.Confluent-CLI -e --source winget
     ```
 
     Then **close PowerShell and open a new window**, so it finds the new tools. Skip any you already have; `git --version`, `uv --version`, `terraform -version`, and `confluent version` each print a version once installed.
@@ -68,7 +68,7 @@ Build one on Confluent Cloud in either of these hands-on labs:
 
     </details>
 
-3. *Optional, only for `uv run setup-mcp`* (the local Confluent MCP server for your coding agent; neither lab needs it): [Node.js 24 LTS](https://nodejs.org/en/download). On Mac, `brew install node@24`. On Windows, `winget install --id OpenJS.NodeJS.24 -e`, which asks for administrator approval, then open a new PowerShell window. Not `OpenJS.NodeJS.LTS`: that is Node 26, which the MCP server's Kafka client has no prebuilt build for yet.
+3. *Optional, only for `uv run setup-mcp`* (the local Confluent MCP server for your coding agent; neither lab needs it): [Node.js 24 LTS](https://nodejs.org/en/download). On Mac, `brew install node@24`. On Windows, `winget install --id OpenJS.NodeJS.24 -e --source winget`, which asks for administrator approval, then open a new PowerShell window. Not `OpenJS.NodeJS.LTS`: that is Node 26, which the MCP server's Kafka client has no prebuilt build for yet.
 
 ## Quick start
 
