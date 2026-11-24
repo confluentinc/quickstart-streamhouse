@@ -18,7 +18,7 @@ NOW = datetime(2026, 9, 28, 12, 0, 0)
 
 def test_builder_escapes_quotes_and_renders_key():
     assert _build_lightning_query("passenger_state", key="P-1'; DROP", limit=1) == (
-        "SELECT * FROM `passenger_state` WHERE \"KEY\" = 'P-1''; DROP' LIMIT 1"
+        "SELECT * FROM `passenger_state` WHERE \"key\" = 'P-1''; DROP' LIMIT 1"
     )
 
 
@@ -38,7 +38,7 @@ def test_builder_renders_timestamp_in_numbers_and_order():
     assert query == (
         "SELECT * FROM `flight_impact` WHERE scheduled_time >= TIMESTAMP '2026-09-01 00:00:00'"
         " AND delay_minutes > 15 AND hotel_cost <= 189.50"
-        " AND status IN ('DELAYED', 'BOARDING') AND \"KEY\" LIKE 'RA4%'"
+        " AND status IN ('DELAYED', 'BOARDING') AND \"key\" LIKE 'RA4%'"
         " ORDER BY scheduled_time DESC LIMIT 200"
     )
 
