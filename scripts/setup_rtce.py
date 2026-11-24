@@ -878,8 +878,9 @@ def _build_lightning_query(
     of =, <, <=, >, >=, IN (value is a list/tuple) or LIKE. `key` is shorthand for
     ("key", "=", key). `order_by` is (column, "ASC"|"DESC"). Table and column names
     must be lowercase identifiers; the table is backtick-quoted and the key column is
-    written "key", matching what the Lightning SQL surface accepts. Strings are
-    single-quoted with embedded quotes doubled, numbers are unquoted, and datetimes
+    written "key", the name Flink declares (quoted names are case-sensitive, and
+    Lightning stopped accepting "KEY" in Nov 2026). Strings are single-quoted with
+    embedded quotes doubled, numbers are unquoted, and datetimes
     become TIMESTAMP literals (UTC). Anything else raises ValueError.
 
     Lightning caps every result at 200 rows and rejects OFFSET, COUNT and GROUP BY,
