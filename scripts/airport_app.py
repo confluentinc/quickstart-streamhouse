@@ -12,20 +12,27 @@ Run:
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import hmac
+import json
+import os
+import secrets
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import parse_qs
 
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from scripts import setup_rtce as rtce
 from scripts import workshop_checks
-from scripts.airport_datagen import HUB, OFFERS, SEATS, TELEMETRY, Publisher
+from scripts.airport_datagen import CONNECTION_MINUTES, HUB, OFFERS, SEATS, TELEMETRY, Publisher
 from scripts.local_port import ensure_port_free
 from scripts.terraform import extract_kafka_credentials, get_project_root
 
@@ -35,13 +42,16 @@ WINDOW_BEFORE = timedelta(hours=18)
 WINDOW_AFTER = timedelta(hours=6)
 DELAYED_MINUTES = 15
 STAGES = {"BOARDING": 1, "DEPARTED": 2, "LANDED": 2}  # how far along a flight's day is; earlier statuses are 0
+# On AWS Lambda (the always-on demo) the settings secret's ARN, since Lambda can't put a secret's keys in the
+# environment the way ECS does. Unset everywhere else.
+SETTINGS_SECRET_ARN = "STREAMHOUSE_SETTINGS_SECRET_ARN"
 
 
 def _lightning_error(topic: str, status: int, body: str) -> str:
     """What a failed Lightning query says; a topic with no Lightning Table yet names the workshop step to do."""
     if "FE_CUSTOMER_NOT_FOUND" in body or "FE_TABLE_NOT_FOUND" in body:
         return (
-            f"{topic} has no Lightning Table yet. Enable it in the Console's Topics list (Lab 3, steps 2 to 4), "
+            f"{topic} has no Lightning Table yet. Enable it in the Console (Lab 3, steps 1 to 3), "
             "or run `uv run workshop-status`."
         )
     return f"Lightning query returned HTTP {status}: {body[:300]}"
@@ -61,6 +71,15 @@ class Deployment:
 
     def _load_rtce(self) -> None:
         if self._infra is not None:
+            return
+        env_id = os.environ.get("STREAMHOUSE_ENVIRONMENT_ID")
+        cluster_id = os.environ.get("STREAMHOUSE_CLUSTER_ID")
+        region = os.environ.get("STREAMHOUSE_REGION")
+        key = os.environ.get(rtce._CRED_KEY)
+        secret = os.environ.get(rtce._CRED_SECRET)
+        if env_id and cluster_id and region and key and secret:  # running on AWS: no credentials.env
+            self._rtce_key, self._rtce_secret = key, secret
+            self._infra = {"cloud": "aws", "env_id": env_id, "cluster_id": cluster_id, "region": region, "org_id": ""}
             return
         creds_file = rtce._find_credentials_file()
         creds = rtce._load_env_file(creds_file)
@@ -119,19 +138,24 @@ class Deployment:
         columns = [c["name"].lower() for c in body.get("schema", {}).get("columns", [])]
         return [dict(zip(columns, row, strict=False)) for row in body.get("data", [])]
 
-    def lightning_scan(self, topic: str, where=()) -> list[dict]:
+    def lightning_scan(self, topic: str, where=(), *, keep_key_versions: bool = False) -> list[dict]:
         """Return every matching row by paging on KEY, since each query caps at 200 rows."""
         rows: list[dict] = []
         last: str | None = None
         while True:
             conditions = [*where, ("key", ">", last)] if last is not None else list(where)
             page = self.lightning_query(topic, limit=PAGE_SIZE, where=conditions, order_by=("key", "ASC"))
-            rows.extend(page)
             if len(page) < PAGE_SIZE:
-                return rows
+                return rows + page
             next_last = page[-1].get("key")
             if next_last is None or next_last == last:
-                return rows
+                return rows + page
+            if keep_key_versions:
+                # A full page can cut through the versions of its final key.
+                rows.extend(row for row in page if row.get("key") != next_last)
+                rows.extend(self.lightning_query(topic, key=next_last, where=where))
+            else:
+                rows.extend(page)
             last = next_last
 
 
@@ -269,7 +293,11 @@ def _live_copies(flights: list[dict], impact: dict[str, dict]) -> list[dict]:
     return chosen
 
 
-def _flights(key: str | None = None, window: tuple[datetime, datetime] | None = None) -> list[dict]:
+def _flights(
+    key: str | None = None,
+    window: tuple[datetime, datetime] | None = None,
+    keys: set[str] | None = None,
+) -> list[dict]:
     """One flight, or every flight scheduled in a (start, end) window, one row each in scheduled order.
 
     Status and delay come from flight_status (live within seconds), the at-risk count from flight_impact
@@ -278,7 +306,11 @@ def _flights(key: str | None = None, window: tuple[datetime, datetime] | None = 
 
     def read(topic: str) -> list[dict]:
         # A key lookup asks for more than one row because flight_status can hold a stale copy (_live_copies).
-        return _rows(topic, key=key, limit=10) if key is not None else _scheduled_rows(topic, *window)
+        if key is not None:
+            return _rows(topic, key=key, limit=10)
+        if keys is not None:
+            return deployment.lightning_scan(topic, where=[("key", "IN", sorted(keys))]) if keys else []
+        return _scheduled_rows(topic, *window)
 
     impact = _pool.submit(read, "flight_impact")
     flights = []
@@ -296,6 +328,69 @@ def _flights(key: str | None = None, window: tuple[datetime, datetime] | None = 
     ]
 
 
+def _current_passengers(rows: list[dict]) -> list[dict]:
+    """Resolve duplicate Lightning rows against the current estimates for both legs."""
+    groups: dict[str, list[dict]] = {}
+    for row in rows:
+        groups.setdefault(row["key"], []).append(row)
+    flight_ids = {
+        row[field]
+        for copies in groups.values()
+        if len(copies) > 1
+        for row in copies
+        for field in ("inbound_flight_id", "connecting_flight_id")
+        if row.get(field)
+    }
+    estimates = {flight["key"]: flight["estimated_time"] for flight in _flights(keys=flight_ids)} if flight_ids else {}
+
+    def distance(row: dict) -> tuple:
+        inbound = _timestamp(row.get("inbound_estimated_time"))
+        current_inbound = estimates.get(row.get("inbound_flight_id"))
+        current_onward = estimates.get(row.get("connecting_flight_id"))
+        minutes = row.get("connection_minutes")
+        inbound_gap = abs((inbound - current_inbound).total_seconds()) if inbound and current_inbound else 0
+        onward_gap = 0
+        if inbound and current_onward and minutes not in (None, ""):
+            onward = inbound + timedelta(minutes=_int(minutes))
+            onward_gap = abs((onward - current_onward).total_seconds())
+        missing_estimate = inbound is None or (current_onward is not None and minutes in (None, ""))
+        return (missing_estimate, inbound_gap + onward_gap, inbound_gap, row.get("risk") != "HIGH")
+
+    return [min(copies, key=distance) if len(copies) > 1 else copies[0] for copies in groups.values()]
+
+
+def _passenger_state(passenger_id: str) -> dict:
+    rows = _rows("passenger_state", key=passenger_id)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Passenger not found")
+    return _current_passengers(rows)[0]
+
+
+def _eligible_offer_ids(passenger: dict, offers: list[dict]) -> set[str]:
+    if not offers or not passenger.get("inbound_flight_id"):
+        return set()
+    inbound_id = passenger["inbound_flight_id"]
+    flight_ids = {offer["recommended_flight_id"] for offer in offers if offer.get("recommended_flight_id")}
+    flights = {row["key"]: row for row in _flights(keys={inbound_id, *flight_ids})}
+    inbound_eta = flights.get(inbound_id, {}).get("estimated_time")
+    if not inbound_eta:
+        return set()
+    earliest = max(inbound_eta + timedelta(minutes=CONNECTION_MINUTES), _now())
+    eligible = set()
+    for offer in offers:
+        flight = flights.get(offer.get("recommended_flight_id"), {})
+        departure = flight.get("estimated_time")
+        if (
+            departure
+            and departure >= earliest
+            and flight.get("status") not in {"CANCELLED", "DEPARTED"}
+            and flight.get("origin") == HUB
+            and flight.get("destination") == passenger.get("final_destination")
+        ):
+            eligible.add(offer["key"])
+    return eligible
+
+
 _telemetry_failure: list[str | None] = [None]  # last logged failure, so a 2.5 s poll logs it once
 
 
@@ -311,7 +406,9 @@ def _telemetry(now: datetime) -> tuple[dict[str, dict], str | None]:
     Also returns a notice for the dashboard's status line when the readings can't be read.
     """
     try:
-        rows = deployment.lightning_scan(TELEMETRY, [("as_of", ">=", now - timedelta(minutes=2))])
+        rows = deployment.lightning_scan(
+            TELEMETRY, [("as_of", ">=", now - timedelta(minutes=2))], keep_key_versions=True
+        )
     except HTTPException as exc:
         # Without telemetry the map shows planes at their origin airports, so the rest of the dashboard still works.
         message = f"Telemetry unavailable, the map waits for it: {exc.detail}"
@@ -361,26 +458,6 @@ def state():
     }
 
 
-def _live_passengers(rows: list[dict]) -> list[dict]:
-    """One passenger_state row per passenger.
-
-    Like flight_status, Lightning can keep a frozen copy of a passenger_state row beside the live one. Delays
-    only grow, so the live copy has the later inbound estimate; with the same inbound estimate, the larger
-    connection time reflects the onward flight's later estimate.
-    """
-
-    def progress(row: dict):
-        minutes = row.get("connection_minutes")
-        return (_timestamp(row.get("inbound_estimated_time")) or datetime.min, _int(minutes) if minutes else -1)
-
-    latest: dict[str, dict] = {}
-    for row in rows:
-        kept = latest.get(row["key"])
-        if kept is None or progress(row) > progress(kept):
-            latest[row["key"]] = row
-    return list(latest.values())
-
-
 @app.get("/api/flight/{flight_id}")
 def flight(flight_id: str):
     rows = _flights(key=flight_id)
@@ -390,8 +467,10 @@ def flight(flight_id: str):
     row["arrival"] = row.get("destination") == HUB
     # An arrival carries its passengers' inbound leg; a departure carries the ones connecting onto it.
     leg = "inbound" if row["arrival"] else "connecting"
-    passengers = _live_passengers(
-        deployment.lightning_scan("passenger_state", where=[(f"{leg}_flight_id", "=", flight_id)])
+    passengers = _current_passengers(
+        deployment.lightning_scan(
+            "passenger_state", where=[(f"{leg}_flight_id", "=", flight_id)], keep_key_versions=True
+        )
     )
     for passenger in passengers:
         passenger["seat"] = passenger.get(f"{leg}_seat")
@@ -401,10 +480,12 @@ def flight(flight_id: str):
 
 @app.get("/api/passenger/{passenger_id}")
 def passenger(passenger_id: str):
-    rows = _live_passengers(_rows("passenger_state", key=passenger_id, limit=10))
-    if not rows:
-        raise HTTPException(status_code=404, detail="Passenger not found")
-    return {"passenger": rows[0], "offers": _passenger_offers(passenger_id), "hotels": _hotel_options()}
+    row = _passenger_state(passenger_id)
+    offers = _passenger_offers(passenger_id)
+    active = [offer for offer in offers if offer.get("status") in {"OFFERED", "SELECTED"}]
+    eligible = _eligible_offer_ids(row, active)
+    visible = [offer for offer in offers if offer not in active or offer["key"] in eligible]
+    return {"passenger": row, "offers": visible, "hotels": _hotel_options()}
 
 
 @app.post("/api/passenger/{passenger_id}/select/{offer_id}")
@@ -412,6 +493,8 @@ def select_offer(passenger_id: str, offer_id: str):
     offers = _passenger_offers(passenger_id)
     chosen = next((row for row in offers if row["key"] == offer_id), None)
     if chosen is None or chosen.get("status") not in {"OFFERED", "SELECTED"}:
+        raise HTTPException(status_code=409, detail="Offer is unavailable")
+    if offer_id not in _eligible_offer_ids(_passenger_state(passenger_id), [chosen]):
         raise HTTPException(status_code=409, detail="Offer is unavailable")
     if chosen.get("hotel_name"):
         hotels = _hotels()
@@ -447,6 +530,8 @@ def book_offer(passenger_id: str, offer_id: str):
     chosen = next((row for row in offers if row["key"] == offer_id), None)
     if chosen is None or chosen.get("status") != "SELECTED":
         raise HTTPException(status_code=409, detail="Select this offer first")
+    if offer_id not in _eligible_offer_ids(_passenger_state(passenger_id), [chosen]):
+        raise HTTPException(status_code=409, detail="Offer is unavailable")
     if chosen.get("hotel_name"):
         hotel = _hotels().get(chosen["hotel_name"], {})
         if _int(hotel.get("available_rooms")) < 1:
@@ -460,6 +545,111 @@ def book_offer(passenger_id: str, offer_id: str):
     return chosen
 
 
+def _basic_auth_password(header: str | None) -> str | None:
+    """Return the password from an `Authorization: Basic` header, or None when it is missing or malformed."""
+    if not header or not header.lower().startswith("basic "):
+        return None
+    try:
+        decoded = base64.b64decode(header[len("basic ") :], validate=True).decode("utf-8")
+    except ValueError:
+        return None
+    _, colon, password = decoded.partition(":")
+    return password if colon else None
+
+
+SESSION_COOKIE = "river_air_session"
+SESSION_DAYS = 30
+LOGIN_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>River Air sign in</title>
+<style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#050912;color:#eaf0fb;
+font:15px/1.45 Inter,ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+form{width:min(340px,calc(100vw - 32px));padding:28px;background:#0c1428;
+border:1px solid rgba(148,163,184,.24);border-radius:14px}
+img{height:40px;display:block;margin-bottom:14px}
+h1{font-size:20px;margin:0 0 18px}
+label{display:block;color:#93a1c0;margin-bottom:6px}
+input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid rgba(148,163,184,.24);
+background:#0a1122;color:#eaf0fb;font:inherit}
+button{width:100%;margin-top:16px;padding:10px;border:0;border-radius:8px;font:inherit;font-weight:600;color:#050912;
+cursor:pointer;background:linear-gradient(90deg,#22d3ee,#60a5fa 50%,#a78bfa)}
+.error{color:#fb7185;margin:0 0 12px}
+</style></head><body>
+<form method="post" action="/login">
+<img src="/static/river-air-logo.svg" alt="River Air">
+<h1>River Air flight board</h1>
+%ERROR%<label for="password">Password</label>
+<input id="password" name="password" type="password" autocomplete="current-password" autofocus required>
+<button type="submit">Sign in</button>
+</form></body></html>"""
+PUBLIC_PATHS = {"/static/river-air-logo.svg"}
+
+
+def _login_page(error: str = "") -> Response:
+    message = f'<p class="error">{error}</p>' if error else ""
+    return Response(
+        LOGIN_PAGE.replace("%ERROR%", message),
+        status_code=401 if error else 200,
+        media_type="text/html",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _session_token(password: str) -> str:
+    return hmac.new(password.encode(), b"river-air-flight-board", hashlib.sha256).hexdigest()
+
+
+def _same(supplied: str, expected: str) -> bool:
+    return secrets.compare_digest(supplied.encode(), expected.encode())
+
+
+@app.middleware("http")
+async def require_app_password(request: Request, call_next):
+    """When APP_PASSWORD is set, every path needs HTTP Basic auth (any username, that password) or a sign-in cookie."""
+    expected = os.environ.get("APP_PASSWORD")
+    if not expected:
+        return await call_next(request)
+    path = request.url.path
+    if request.method == "POST" and path == "/login":
+        form = parse_qs((await request.body()).decode("utf-8", errors="replace"))
+        if _same(form.get("password", [""])[0], expected):
+            response = Response(status_code=303, headers={"Location": "/"})
+            response.set_cookie(
+                SESSION_COOKIE,
+                _session_token(expected),
+                max_age=SESSION_DAYS * 86400,
+                path="/",
+                httponly=True,
+                secure=True,
+                samesite="lax",
+            )
+            return response
+        return _login_page("Wrong password")
+    if path == "/logout":
+        response = Response(status_code=303, headers={"Location": "/"})
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return response
+    cookie = request.cookies.get(SESSION_COOKIE)
+    if cookie is not None and _same(cookie, _session_token(expected)):
+        return await call_next(request)
+    supplied = _basic_auth_password(request.headers.get("Authorization"))
+    if supplied is not None and _same(supplied, expected):
+        return await call_next(request)
+    if request.method == "GET" and path in PUBLIC_PATHS:
+        return await call_next(request)
+    if (
+        request.method == "GET"
+        and not path.startswith("/api/")
+        and (path == "/" or "text/html" in request.headers.get("accept", ""))
+    ):
+        return _login_page()
+    headers = {"WWW-Authenticate": 'Basic realm="River Air"'}
+    if path.startswith("/api/"):
+        return Response('{"detail": "Sign in"}', status_code=401, media_type="application/json", headers=headers)
+    return Response(status_code=401, headers=headers)
+
+
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html")
@@ -468,14 +658,28 @@ def index():
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
+def load_settings_secret() -> None:
+    """Put each key of the settings secret in the environment, keeping any already set. Never logs a value."""
+    arn = os.environ.get(SETTINGS_SECRET_ARN)
+    if not arn:
+        return
+    import boto3
+
+    secret = boto3.client("secretsmanager").get_secret_value(SecretId=arn)["SecretString"]
+    for key, value in json.loads(secret).items():
+        os.environ.setdefault(key, str(value))
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="uv run airport-app")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
-    ws = workshop_checks.require_deployment("uv run airport-app")
-    if not workshop_checks.ensure_lightning(ws, workshop_checks.LIGHTNING_TOPICS, "The dashboard reads them."):
-        sys.exit(1)
+    load_settings_secret()
+    if not os.environ.get("STREAMHOUSE_ENVIRONMENT_ID"):
+        ws = workshop_checks.require_deployment("uv run airport-app")
+        if not workshop_checks.ensure_lightning(ws, workshop_checks.LIGHTNING_TOPICS, "The dashboard reads them."):
+            sys.exit(1)
     ensure_port_free(args.host, args.port, "airport-app")
     import uvicorn
 

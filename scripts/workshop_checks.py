@@ -65,7 +65,7 @@ LAB4_AGENT = ("passenger_recovery_agent", "30-agent-passenger-recovery.sql", Non
 LAB4_RUN = ("the agent's INSERT", "31-insert-passenger-recommendations.sql", UTC)
 
 LAB2_STEP = "Lab 2, steps 3 and 4"
-LAB3_STEP = "Lab 3, steps 2 to 4"
+LAB3_STEP = "Lab 3, steps 1 to 3"
 
 LIGHTNING_WAIT_SECONDS = 600
 
@@ -402,7 +402,7 @@ def steps() -> list[Step]:
             "all seven Lightning Tables are Active",
             lambda ws: all(ws.phases().get(t) == "ACTIVE" for t in LIGHTNING_TOPICS),
             _lightning_fix,
-            guide=("## Lab 3", 2),
+            guide=("## Lab 3", 1),
         ),
         Step(
             "Lab 4, step 1",
@@ -412,25 +412,25 @@ def steps() -> list[Step]:
             guide=("## Lab 4", 1),
         ),
         Step(
-            "Lab 4, step 2",
+            "Lab 4, steps 2 and 3",
             "passenger_state_changes and impacted_passengers exist",
             _topics_exist("passenger_state_changes", "impacted_passengers"),
             _run_all(LAB4_STAGING),
             guide=("## Lab 4", 2),
         ),
         Step(
-            "Lab 4, steps 3 and 4",
+            "Lab 4, steps 4 and 5",
             "the tool and the agent exist",
             lambda ws: LAB4_TOOL[0] in ws.show("TOOLS") and LAB4_AGENT[0] in ws.show("AGENTS"),
             _tool_and_agent_fix,
-            guide=("## Lab 4", 3),
+            guide=("## Lab 4", 4),
         ),
         Step(
-            "Lab 4, step 6",
+            "Lab 4, step 7",
             "the agent's INSERT is running",
             lambda ws: ws.agent_insert_running(),
             lambda ws: ws.run_sql(LAB4_RUN[1], LAB4_RUN[2]),
-            guide=("## Lab 4", 6),
+            guide=("## Lab 4", 7),
         ),
     ]
 

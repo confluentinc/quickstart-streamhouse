@@ -14,7 +14,7 @@ output "recovery_agent_enabled" {
 }
 
 output "tableflow_topics" {
-  value       = local.analytics_enabled ? var.tableflow_topics : []
+  value       = local.analytics_enabled ? local.tableflow_topics : []
   description = "Topics exposed as Iceberg tables in the customer-owned S3 bucket via Tableflow, synced to AWS Glue (Demo 3)"
 }
 
@@ -46,4 +46,8 @@ output "hotel_webhook_api_key" {
 output "hotel_webhook_api_secret" {
   value     = local.webhook_enabled ? confluent_api_key.hotel_webhook[0].secret : ""
   sensitive = true
+}
+
+output "continuous" {
+  value = var.continuous
 }

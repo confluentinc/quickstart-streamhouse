@@ -151,7 +151,7 @@ resource "aws_iam_role_policy_attachment" "tableflow_glue" {
 }
 
 resource "confluent_tableflow_topic" "analytics" {
-  for_each = local.analytics_enabled ? toset(var.tableflow_topics) : toset([])
+  for_each = local.analytics_enabled ? toset(local.tableflow_topics) : toset([])
 
   environment {
     id = local.core.confluent_environment_id
