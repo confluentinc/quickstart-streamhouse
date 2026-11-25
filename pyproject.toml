@@ -87,7 +87,11 @@ select = [
     "B",    # flake8-bugbear (likely bugs and design issues)
     "UP",   # pyupgrade (modernize Python syntax)
     "RUF",  # Ruff-specific rules
+    "PLW1514",  # open()/read_text()/write_text() without encoding= (Windows would use cp1252)
 ]
+# PLW1514 is a preview rule; turn on only the preview rules selected by name.
+preview = true
+explicit-preview-rules = true
 ignore = [
     "B008",  # do not perform function calls in default arguments
 ]

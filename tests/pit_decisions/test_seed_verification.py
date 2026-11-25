@@ -147,7 +147,7 @@ class EnsureTests(SeedTestCase):
         ok, output = self.ensure(session, ["COMPLETED"])
 
         self.assertTrue(ok)
-        self.assertEqual(self.marker.read_text().strip(), ENV_ID)
+        self.assertEqual(self.marker.read_text(encoding="utf-8").strip(), ENV_ID)
         self.assertIn("Seeded and verified 198 rows", output)
         self.assertEqual(len(session.inserts), 1)
 
@@ -165,7 +165,7 @@ class EnsureTests(SeedTestCase):
         ok, output = self.ensure(session, [])
 
         self.assertTrue(ok)
-        self.assertEqual(self.marker.read_text().strip(), ENV_ID)
+        self.assertEqual(self.marker.read_text(encoding="utf-8").strip(), ENV_ID)
         self.assertEqual(session.inserts, [])
         self.assertIn("already holds 198 rows", output)
 
@@ -181,17 +181,17 @@ class EnsureTests(SeedTestCase):
 
     def test_marker_from_another_environment_is_ignored(self):
         """destroy -> up used to print "already seeded" over an empty table."""
-        self.marker.write_text("env-OLD999\n")
+        self.marker.write_text("env-OLD999\n", encoding="utf-8")
         session = FakeSession([[], [198]])
         ok, output = self.ensure(session, ["COMPLETED"])
 
         self.assertTrue(ok)
         self.assertIn("re-verifying", output)
-        self.assertEqual(self.marker.read_text().strip(), ENV_ID)
+        self.assertEqual(self.marker.read_text(encoding="utf-8").strip(), ENV_ID)
         self.assertEqual(len(session.inserts), 1)
 
     def test_matching_marker_short_circuits_without_any_statement(self):
-        self.marker.write_text(f"{ENV_ID}\n")
+        self.marker.write_text(f"{ENV_ID}\n", encoding="utf-8")
         session = FakeSession([])
         ok, output = self.ensure(session, [])
 

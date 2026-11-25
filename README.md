@@ -47,21 +47,32 @@ Build one on Confluent Cloud in either of these hands-on labs:
     <details>
     <summary>for Windows</summary>
 
-    In PowerShell:
+    Open PowerShell (Start menu → type **PowerShell** → **Windows PowerShell**) and run these. If winget asks you to accept its terms, enter `Y`. None of them needs administrator rights.
 
     ```powershell
-    winget install --id Git.Git -e
-    winget install --id astral-sh.uv -e
-    winget install --id Hashicorp.Terraform -e
+    winget install --id Git.Git -e --scope user --source winget
+    winget install --id astral-sh.uv -e --source winget
+    winget install --id Hashicorp.Terraform -e --source winget
+    winget install --id ConfluentInc.Confluent-CLI -e --source winget
     ```
 
-    Then download the latest `confluent_*_windows_amd64.zip` from the [Confluent CLI releases](https://github.com/confluentinc/cli/releases/latest), unzip it, add the folder that contains `confluent.exe` to your `PATH`, and reopen the terminal.
+    Then **close PowerShell and open a new window**, so it finds the new tools. Skip any you already have; `git --version`, `uv --version`, `terraform -version`, and `confluent version` each print a version once installed.
+
+    **`winget` is not recognized?** Install [App Installer](https://apps.microsoft.com/detail/9NBLGGH4NNS1) from the Microsoft Store, then open a new PowerShell window and run the commands above.
+
+    **winget or the Store blocked on your work laptop?** Install each tool from its download page instead: [Git](https://git-scm.com/downloads/win), [uv](https://docs.astral.sh/uv/getting-started/installation/), [Terraform](https://developer.hashicorp.com/terraform/install), and the [Confluent CLI](https://docs.confluent.io/confluent-cli/current/install.html). Terraform and the Confluent CLI come as a zip: unzip each to a folder you keep, add that folder to your user `Path` (Start menu → **Edit environment variables for your account**; no administrator rights needed), then open a new PowerShell window.
+
+    **Clone into a short folder**, such as your user folder (PowerShell opens there), rather than deep inside OneDrive or Documents: Windows limits file paths to 260 characters unless an administrator turns long paths on, and the labs' Python packages nest about 120 characters deep.
+
+    **Windows on Arm** (Surface Pro X, Copilot+ PCs): after `cd quickstart-streamhouse` below, run `uv venv --python cpython-3.12-windows-x86_64-none` once. Some of the labs' Python packages have no Arm build yet, and Windows runs the x64 one for you.
 
     </details>
 
+3. *Optional, only for `uv run setup-mcp`* (the local Confluent MCP server for your coding agent; neither lab needs it): [Node.js 24 LTS](https://nodejs.org/en/download). On Mac, `brew install node@24`. On Windows, `winget install --id OpenJS.NodeJS.24 -e --source winget`, which asks for administrator approval, then open a new PowerShell window. Not `OpenJS.NodeJS.LTS`: that is Node 26, which the MCP server's Kafka client has no prebuilt build for yet.
+
 ## Quick start
 
-```bash
+```shell
 git clone https://github.com/confluentinc/quickstart-streamhouse.git
 cd quickstart-streamhouse
 ```
@@ -74,13 +85,13 @@ cd quickstart-streamhouse
 
 Deploy can't log in with single sign-on (SSO), so SSO users sign in to the Confluent CLI first. Enter your email when it asks, then finish signing in in the browser window it opens:
 
-```bash
+```shell
 confluent login
 ```
 
 Deploy, and pick a lab (or both) when it asks:
 
-```bash
+```shell
 uv run deploy
 ```
 
@@ -98,7 +109,7 @@ Operators can run the full demo around the clock on AWS (Lambda and ECS) for col
 
 Tear down everything deploy created (the environment, cluster, Flink pool, and both labs) and answer `y`:
 
-```bash
+```shell
 uv run destroy
 ```
 

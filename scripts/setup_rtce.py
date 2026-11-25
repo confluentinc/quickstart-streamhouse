@@ -39,6 +39,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
+from scripts import processes
+
 _SCRIPT_DIR = Path(__file__).parent  # scripts/
 _PROJECT_ROOT = _SCRIPT_DIR.parent  # repo root
 
@@ -90,7 +92,7 @@ def _load_env_file(path: Path) -> dict:
         return dict(dotenv_values(path))
     # Minimal fallback parser for KEY=VALUE lines.
     result = {}
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -104,7 +106,7 @@ def _save_to_env_file(path: Path, key: str, value: str) -> None:
         set_key(str(path), key, value)
         return
     # Minimal fallback: append if not present, replace if present.
-    lines = path.read_text().splitlines() if path.exists() else []
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     new_lines = []
     found = False
     for line in lines:
@@ -115,7 +117,7 @@ def _save_to_env_file(path: Path, key: str, value: str) -> None:
             new_lines.append(line)
     if not found:
         new_lines.append(f'{key}="{value}"')
-    path.write_text("\n".join(new_lines) + "\n")
+    path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
 def _find_credentials_file() -> Path:
@@ -167,7 +169,7 @@ def _create_rtce_global_key_via_cli(sa_id: str) -> tuple[str, str]:
     """
     result = subprocess.run(
         [
-            "confluent",
+            processes.exe("confluent"),
             "api-key",
             "create",
             "--resource",
@@ -180,6 +182,8 @@ def _create_rtce_global_key_via_cli(sa_id: str) -> tuple[str, str]:
         capture_output=True,
         text=True,
         timeout=60,
+        encoding="utf-8",
+        errors="replace",
     )
     if result.returncode != 0:
         if result.stderr:
@@ -204,10 +208,22 @@ def _key_owned_by(sa_id: str, api_key: str) -> bool:
     """True when api_key is one of sa_id's Global keys. A teardown deletes the service
     account and its keys, but credentials.env keeps the old key."""
     result = subprocess.run(
-        ["confluent", "api-key", "list", "--resource", "global", "--service-account", sa_id, "-o", "json"],
+        [
+            processes.exe("confluent"),
+            "api-key",
+            "list",
+            "--resource",
+            "global",
+            "--service-account",
+            sa_id,
+            "-o",
+            "json",
+        ],
         capture_output=True,
         text=True,
         timeout=60,
+        encoding="utf-8",
+        errors="replace",
     )
     if result.returncode != 0:
         return True  # can't tell (an expired login, say); keep the stored key
@@ -292,10 +308,12 @@ def _flink_scope(infra: dict[str, str]) -> list[str]:
 
 def agent_connection_exists(infra: dict[str, str]) -> bool:
     result = subprocess.run(
-        ["confluent", "flink", "connection", "describe", AGENT_CONNECTION, *_flink_scope(infra)],
+        [processes.exe("confluent"), "flink", "connection", "describe", AGENT_CONNECTION, *_flink_scope(infra)],
         capture_output=True,
         text=True,
         timeout=60,
+        encoding="utf-8",
+        errors="replace",
     )
     return result.returncode == 0
 
@@ -309,7 +327,7 @@ def create_agent_connection(infra: dict[str, str], api_key: str, api_secret: str
     if agent_connection_exists(infra):
         result = subprocess.run(
             [
-                "confluent",
+                processes.exe("confluent"),
                 "flink",
                 "connection",
                 "update",
@@ -325,13 +343,15 @@ def create_agent_connection(infra: dict[str, str], api_key: str, api_secret: str
             capture_output=True,
             text=True,
             timeout=120,
+            encoding="utf-8",
+            errors="replace",
         )
         if result.returncode != 0 and result.stderr:
             print(f"  CLI error: {result.stderr.strip()[:300]}")
         return result.returncode == 0
     result = subprocess.run(
         [
-            "confluent",
+            processes.exe("confluent"),
             "flink",
             "connection",
             "create",
@@ -351,6 +371,8 @@ def create_agent_connection(infra: dict[str, str], api_key: str, api_secret: str
         capture_output=True,
         text=True,
         timeout=120,
+        encoding="utf-8",
+        errors="replace",
     )
     if result.returncode != 0 and result.stderr:
         print(f"  CLI error: {result.stderr.strip()[:300]}")
@@ -359,7 +381,7 @@ def create_agent_connection(infra: dict[str, str], api_key: str, api_secret: str
 
 def _read_terraform_outputs(state_path: Path) -> dict:
     try:
-        state = json.loads(state_path.read_text())
+        state = json.loads(state_path.read_text(encoding="utf-8"))
         return {k: v["value"] for k, v in state.get("outputs", {}).items()}
     except Exception:
         return {}
@@ -475,7 +497,7 @@ def rtce_topic_phases(api_key: str, api_secret: str, infra: dict[str, str]) -> d
     try:
         result = subprocess.run(
             [
-                "confluent",
+                processes.exe("confluent"),
                 "rtce",
                 "rtce-topic",
                 "list",
@@ -489,6 +511,8 @@ def rtce_topic_phases(api_key: str, api_secret: str, infra: dict[str, str]) -> d
             capture_output=True,
             text=True,
             timeout=30,
+            encoding="utf-8",
+            errors="replace",
         )
         if result.returncode == 0:
             items = json.loads(result.stdout or "[]")
@@ -524,7 +548,7 @@ def _enable_rtce_topic(
     try:
         result = subprocess.run(
             [
-                "confluent",
+                processes.exe("confluent"),
                 "rtce",
                 "rtce-topic",
                 "create",
@@ -544,6 +568,8 @@ def _enable_rtce_topic(
             capture_output=True,
             text=True,
             timeout=60,
+            encoding="utf-8",
+            errors="replace",
         )
         if result.returncode == 0:
             return True
@@ -617,9 +643,9 @@ def _claude_argv_rtce(server_name: str, url: str, token: str) -> tuple[list[str]
     `remove` uses `-s local`; `add` lets the scope default to local (no `--scope`).
     """
     return (
-        ["claude", "mcp", "remove", server_name, "-s", "local"],
+        [processes.exe("claude"), "mcp", "remove", server_name, "-s", "local"],
         [
-            "claude",
+            processes.exe("claude"),
             "mcp",
             "add",
             "--transport",
@@ -652,7 +678,7 @@ def _register_with_claude_code(server_name: str, url: str, token: str, dry_run: 
 
     try:
         subprocess.run(remove_argv, capture_output=True)
-        result = subprocess.run(add_argv, capture_output=True, text=True)
+        result = subprocess.run(add_argv, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if result.returncode == 0:
             return "Claude Code local scope (http, via claude CLI)"
         detail = result.stderr.strip() or f"exit {result.returncode}"
@@ -674,13 +700,13 @@ def _register_with_claude_code_filewrite(server_name: str, url: str, token: str)
     authenticate unless the user exports it in the launching shell. Writing the
     resolved token here mirrors how mcp_setup.py stores secrets in this file.
     """
-    project_key = str(_PROJECT_ROOT)
+    project_key = _PROJECT_ROOT.as_posix()  # Claude Code's key: C:/Users/me/repo on Windows, not C:\Users\...
     claude_json_path = Path.home() / ".claude.json"
 
     claude_data: dict = {}
     if claude_json_path.exists():
         try:
-            claude_data = json.loads(claude_json_path.read_text())
+            claude_data = json.loads(claude_json_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -694,7 +720,7 @@ def _register_with_claude_code_filewrite(server_name: str, url: str, token: str)
         entry
     )
 
-    claude_json_path.write_text(json.dumps(claude_data, indent=2) + "\n")
+    claude_json_path.write_text(json.dumps(claude_data, indent=2) + "\n", encoding="utf-8")
     return "Claude Code local scope (http, direct write)"
 
 
@@ -726,7 +752,7 @@ def _write_codex_config_rtce(config_path: Path, server_name: str, url: str, toke
         return
 
     try:
-        existing_text = config_path.read_text() if config_path.exists() else ""
+        existing_text = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
         doc = tomlkit.parse(existing_text) if existing_text else tomlkit.document()
 
         mcp_servers = doc.get("mcp_servers")
@@ -742,7 +768,7 @@ def _write_codex_config_rtce(config_path: Path, server_name: str, url: str, toke
         mcp_servers[server_name] = entry
 
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(tomlkit.dumps(doc))
+        config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
     except Exception as exc:
         print(f"  Warning: could not auto-edit {config_path} ({exc}); add this by hand:")
         print(f"[mcp_servers.{server_name}]")
@@ -766,7 +792,7 @@ def _register_with_codex_rtce(server_name: str, url: str, token: str, dry_run: b
 def _register_gemini(server_name: str, url: str, token: str, dry_run: bool = False) -> str:
     """Register the RTCE MCP server with Gemini CLI. Returns a scope note."""
     cmd = [
-        "gemini",
+        processes.exe("gemini"),
         "mcp",
         "add",
         "--transport",
@@ -786,10 +812,10 @@ def _register_gemini(server_name: str, url: str, token: str, dry_run: bool = Fal
         return "gemini user scope [dry-run]"
 
     subprocess.run(
-        ["gemini", "mcp", "remove", server_name],
+        [processes.exe("gemini"), "mcp", "remove", server_name],
         capture_output=True,
     )
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
         print(f"Error registering with Gemini: {result.stderr.strip()}")
         sys.exit(1)
@@ -978,12 +1004,33 @@ def lightning_command(
     """
     url, body = _lightning_request(infra, api_key, api_secret, topic, key, limit)
     token = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
+    if sys.platform == "win32":
+        return _lightning_powershell(url, token, body)
     return " \\\n  ".join(
         (
             "curl -sS -X POST " + shlex.quote(url),
             "-H " + shlex.quote("Authorization: Basic " + token),
             "-H " + shlex.quote("Content-Type: application/json"),
             "-d " + shlex.quote(json.dumps(body, indent=2)),
+        )
+    )
+
+
+def _lightning_powershell(url: str, token: str, body: dict) -> str:
+    """The same request for Windows PowerShell, where `curl` means Invoke-WebRequest and `\\` continues no line.
+
+    curl.exe can't take it either: Windows PowerShell 5.1 drops the double quotes inside a JSON argument.
+    """
+
+    def quote(text: str) -> str:  # a single-quoted PowerShell string: '' is a literal '
+        return "'" + text.replace("'", "''") + "'"
+
+    return " `\n  ".join(
+        (
+            "Invoke-RestMethod -Method Post -Uri " + quote(url),
+            "-Headers @{ Authorization = " + quote("Basic " + token) + " }",
+            "-ContentType 'application/json'",
+            "-Body " + quote(json.dumps(body, indent=2)) + " | ConvertTo-Json -Depth 10",
         )
     )
 

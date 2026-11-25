@@ -45,7 +45,7 @@ def write_tfvars_file(tfvars_path: Path, content: str) -> bool:
         tfvars_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Write new content
-        with open(tfvars_path, "w") as f:
+        with open(tfvars_path, "w", encoding="utf-8") as f:
             f.write(content)
 
         return True

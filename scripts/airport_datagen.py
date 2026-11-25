@@ -45,8 +45,6 @@ import json
 import logging
 import os
 import random
-import signal
-import subprocess
 import time
 from bisect import bisect_right
 from dataclasses import dataclass, field
@@ -64,7 +62,7 @@ from confluent_kafka.schema_registry.avro import AvroSerializer
 from confluent_kafka.schema_registry.error import SchemaRegistryError
 from confluent_kafka.serialization import MessageField, SerializationContext, StringSerializer
 
-from . import flight_profile
+from . import flight_profile, processes
 from .logging_utils import setup_logging
 from .terraform import extract_kafka_credentials, get_project_root
 
@@ -1142,19 +1140,11 @@ def stop_previous_stream(root: Path | None = None) -> None:
     """Stop a stream left running by an earlier deploy or run, so two streams never interleave."""
     path = _pid_file() if root is None else root / "tmp" / "datagen.pid"
     try:
-        pid = int(path.read_text().strip())
+        pid = int(path.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return
-    if pid != os.getpid():
-        try:
-            command = subprocess.run(
-                ["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True, check=False
-            ).stdout
-        except OSError:
-            command = ""
-        if "airport-datagen" in command or "airport_datagen" in command:
-            os.kill(pid, signal.SIGTERM)
-            logging.info("Stopped the previous data stream (pid %d)", pid)
+    if processes.stop(pid, "airport-datagen", "airport_datagen"):
+        logging.info("Stopped the previous data stream (pid %d)", pid)
     path.unlink(missing_ok=True)
 
 
@@ -1162,7 +1152,7 @@ def agent_enabled() -> bool:
     """True when terraform/airline-demo runs the recovery agent (its recovery_agent_enabled output)."""
     state = get_project_root() / "terraform" / "airline-demo" / "terraform.tfstate"
     try:
-        return bool(json.loads(state.read_text())["outputs"]["recovery_agent_enabled"]["value"])
+        return bool(json.loads(state.read_text(encoding="utf-8"))["outputs"]["recovery_agent_enabled"]["value"])
     except (OSError, KeyError, ValueError):
         return False
 
@@ -1216,8 +1206,8 @@ def run(
     pid_file = _pid_file()
     if not dry_run:
         pid_file.parent.mkdir(exist_ok=True)
-        pid_file.write_text(str(os.getpid()))
-        _start_file().write_text(f"{plan.start.isoformat()} {speed:g}")
+        pid_file.write_text(str(os.getpid()), encoding="utf-8")
+        _start_file().write_text(f"{plan.start.isoformat()} {speed:g}", encoding="utf-8")
         events = _catch_up(events, plan.start, datetime.now(timezone.utc).replace(tzinfo=None), speed)
     hero = plan.live.hero
     logging.info(
@@ -1265,7 +1255,7 @@ def run(
         publisher.flush()
         logging.info("Stream finished")
     finally:
-        if not dry_run and pid_file.exists() and pid_file.read_text().strip() == str(os.getpid()):
+        if not dry_run and pid_file.exists() and pid_file.read_text(encoding="utf-8").strip() == str(os.getpid()):
             pid_file.unlink()
 
 
@@ -1376,14 +1366,14 @@ def run_continuous(
 
         watcher = OfferWatcher(credentials, seed)
         pid_file.parent.mkdir(exist_ok=True)
-        pid_file.write_text(str(os.getpid()))
+        pid_file.write_text(str(os.getpid()), encoding="utf-8")
     logging.info("Streaming continuously%s", f" until {until} UTC" if until else "; Ctrl-C stops it")
     try:
         _stream_continuous(seed, now, until, publisher.publish, watcher, None if dry_run else _wall_clock)
         publisher.flush()
         logging.info("Stream finished")
     finally:
-        if not dry_run and pid_file.exists() and pid_file.read_text().strip() == str(os.getpid()):
+        if not dry_run and pid_file.exists() and pid_file.read_text(encoding="utf-8").strip() == str(os.getpid()):
             pid_file.unlink()
 
 
@@ -1474,7 +1464,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.now or args.stream_only or args.reset:
             parser.error("--resume sets its own --now and --stream-only, and can't be combined with --reset")
         try:
-            args.now, speed = _start_file().read_text().split()
+            args.now, speed = _start_file().read_text(encoding="utf-8").split()
         except (OSError, ValueError):
             parser.error("there's no stream to resume yet; start one with `uv run airport-datagen`")
         args.speed, args.stream_only = float(speed), True

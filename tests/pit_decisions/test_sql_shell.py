@@ -39,13 +39,13 @@ def test_reference_sql_is_left_running(path: Path) -> None:
 
     The video-only RTCE setup and feed are each one durable statement too.
     """
-    assert is_durable(path.read_text())
+    assert is_durable(path.read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize("path", REFERENCE_SQL, ids=lambda p: p.name)
 def test_reference_sql_is_one_statement(path: Path) -> None:
     """A ';' inside a comment must not split the file into fragments."""
-    stmts = split_statements(path.read_text())
+    stmts = split_statements(path.read_text(encoding="utf-8"))
     assert len(stmts) == 1
     assert is_durable(stmts[0]) is (path.name not in TEMPORARY_REFERENCE_SQL)
 
@@ -213,7 +213,7 @@ class _FakeSession:
 
 def _write(tmp_path: Path, body: str) -> Path:
     path = tmp_path / "lab.sql"
-    path.write_text(body)
+    path.write_text(body, encoding="utf-8")
     return path
 
 
@@ -279,4 +279,4 @@ def test_run_file_submits_reference_sql_verbatim(path: Path) -> None:
     session = _FakeSession()
 
     assert run_file(session, path) == 0
-    assert session.submitted == [path.read_text().strip().rstrip(";").strip()]
+    assert session.submitted == [path.read_text(encoding="utf-8").strip().rstrip(";").strip()]

@@ -32,17 +32,18 @@ brew install --cask confluent-cli
 <details>
 <summary>for Windows</summary>
 
-In PowerShell:
+Open PowerShell (Start menu → type **PowerShell** → **Windows PowerShell**) and run these. If winget asks you to accept its terms, enter `Y`. None of them needs administrator rights.
 
 ```powershell
-winget install --id Git.Git -e
-winget install --id astral-sh.uv -e
-winget install --id Hashicorp.Terraform -e
+winget install --id Git.Git -e --scope user --source winget
+winget install --id astral-sh.uv -e --source winget
+winget install --id Hashicorp.Terraform -e --source winget
+winget install --id ConfluentInc.Confluent-CLI -e --source winget
 ```
 
-Download the latest `confluent_*_windows_amd64.zip` from the [Confluent CLI releases](https://github.com/confluentinc/cli/releases/latest), unzip it, and add the folder that contains `confluent.exe` to your `PATH`.
+Then **close PowerShell and open a new window**, so it finds the new tools.
 
-Close and reopen the terminal so every tool is on your `PATH`.
+**`winget` is not recognized, blocked on your work laptop, or you're on Windows on Arm?** See the Windows prerequisites in the [README](../../README.md#prerequisites).
 
 </details>
 
@@ -225,9 +226,10 @@ The provisioning step sets up source tables for car telemetry, live race standin
 >
 > **Leave `f1-race` running for the rest of the lab.** If you stop it, the car stops sending telemetry.
 
-4. Open the Pit Wall dashboard. In a **second terminal**, run:
+4. Open the Pit Wall dashboard. Open a **second terminal**, go to the repo folder, and run:
 
     ```bash
+    cd quickstart-streamhouse
     uv run f1-pitwall
     ```
 
@@ -430,9 +432,10 @@ When it's ready, the dialog shows **Lightning Table is enabled**. Click **Done**
 >
 > Run this in a **new terminal**. Keep `f1-race` and `f1-pitwall` running in their own terminals.
 
-1. In a **new terminal**, point your coding agent at RTCE in one command:
+1. In a **new terminal**, go to the repo folder and point your coding agent at RTCE in one command:
 
     ```bash
+    cd quickstart-streamhouse
     uv run setup-rtce
     ```
 
@@ -474,9 +477,9 @@ From the repo directory, print a ready-to-run query:
 uv run setup-rtce --lightning car_telemetry
 ```
 
-Copy the printed `curl` command into your terminal and run it. It returns the last 10 telemetry rows by lap; edit the SQL in `query` to filter for car 88 or select other columns. 
+Copy the printed command into your terminal and run it (it's `curl` on Mac and Linux, and `Invoke-RestMethod` in Windows PowerShell). It returns 10 telemetry rows; edit the SQL in `query` to filter for car 88 or select other columns. 
 
-**Your challenge:** edit the `curl` command's `query` to find out what tire compound the agent recommended on lap 24, and why.
+**Your challenge:** edit the command's `query` to find out what tire compound the agent recommended on lap 24, and why.
 
 <details>
 <summary>Hint</summary>

@@ -64,17 +64,18 @@ brew install --cask confluent-cli
 <details>
 <summary>for Windows</summary>
 
-In PowerShell:
+Open PowerShell (Start menu → type **PowerShell** → **Windows PowerShell**) and run these. If winget asks you to accept its terms, enter `Y`. None of them needs administrator rights.
 
 ```powershell
-winget install --id Git.Git -e
-winget install --id astral-sh.uv -e
-winget install --id Hashicorp.Terraform -e
+winget install --id Git.Git -e --scope user --source winget
+winget install --id astral-sh.uv -e --source winget
+winget install --id Hashicorp.Terraform -e --source winget
+winget install --id ConfluentInc.Confluent-CLI -e --source winget
 ```
 
-Download the latest `confluent_*_windows_amd64.zip` from the [Confluent CLI releases](https://github.com/confluentinc/cli/releases/latest), unzip it, and add the folder that contains `confluent.exe` to your `PATH`.
+Then **close PowerShell and open a new window**, so it finds the new tools.
 
-Close and reopen the terminal so every tool is on your `PATH`.
+**`winget` is not recognized, blocked on your work laptop, or you're on Windows on Arm?** See the Windows prerequisites in the [README](../../README.md#prerequisites).
 
 </details>
 
@@ -158,9 +159,10 @@ credit is used first, so you typically won't be charged during the workshop.
 
 4. Start the datagen:
 
-    Open a **second terminal** in the `quickstart-streamhouse` folder and start the generator:
+    Open a **second terminal**. It opens in your home folder, so go to the repo folder first, then start the generator:
 
     ```bash
+    cd quickstart-streamhouse
     uv run airport-datagen --skip-history
     ```
 
@@ -366,9 +368,10 @@ Lightning Tables keep a low-latency table of each topic's latest rows in Conflue
 
     ![Hotel inventory query results in the terminal](../images/flight-disruptions/lightning-query-test.png)
 
-5. In a new terminal in the repo folder, start the dashboard app.
+5. Open a new terminal, go to the repo folder, and start the dashboard app.
 
     ```bash
+    cd quickstart-streamhouse
     uv run airport-app
     ```
 
@@ -613,7 +616,7 @@ With a Streamhouse architecture, that's not an issue: River Air's app always has
 
 2. Watch the Grand Hyatt in **Hotel options** for a minute or so. The hotel partner's feed updates each hotel's rooms left every 15 seconds, and the dashboard shows them in real time using **Lightning Queries** on `hotel_inventory`. Lightning keeps every update, so the app reads the newest ones first and shows each hotel's latest row. You don't need to wait for it to sell out.
 
-3. Click **Select** on either offer, then click **Book**.
+3. Click **Select** on either offer, then click **Book**. The **Book** button appears once Lightning shows your selection, usually within a minute.
 
     The app checks the hotel's live room count at each click, books that offer, and closes the other one. **Booked** goes up by one. It also climbs on its own as passengers on other flights book.
 
@@ -650,8 +653,10 @@ brew install --cask claude-code
 On Windows:
 
 ```powershell
-winget install --id Anthropic.ClaudeCode -e
+winget install --id Anthropic.ClaudeCode -e --source winget
 ```
+
+Then open a new PowerShell window and run `cd quickstart-streamhouse`. The old window can't find `claude` yet.
 
 </details>
 

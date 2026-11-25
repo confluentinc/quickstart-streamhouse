@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def _select(tmp_path, monkeypatch, requested=None, saved="", workshop=False, interactive=False, answer=None):
     creds_file = tmp_path / "credentials.env"
-    creds_file.write_text(f"DEPLOY_LABS={saved}\n" if saved else "")
+    creds_file.write_text(f"DEPLOY_LABS={saved}\n" if saved else "", encoding="utf-8")
     if answer:
         monkeypatch.setattr(deploy, "prompt_choice", lambda question, options: answer)
     labs = deploy._select_labs(requested, creds_file, dotenv_values(creds_file), workshop, interactive)
@@ -73,11 +73,11 @@ def test_every_lab_root_exists():
     "path", sorted((ROOT / "terraform" / "airline-demo" / "sql").glob("*.sql")), ids=lambda p: p.name
 )
 def test_pit_decisions_reset_leaves_flight_disruptions_statements_alone(path):
-    assert not is_lab_statement(path.read_text())
+    assert not is_lab_statement(path.read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize(
     "path", sorted((ROOT / "docs" / "agentic-pit-decisions" / "sql").glob("*.sql")), ids=lambda p: p.name
 )
 def test_pit_decisions_reset_stops_its_own_statements(path):
-    assert is_lab_statement(path.read_text())
+    assert is_lab_statement(path.read_text(encoding="utf-8"))

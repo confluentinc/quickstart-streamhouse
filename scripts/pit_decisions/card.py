@@ -69,7 +69,7 @@ def card_fields(core: dict, rtce_key: str, rtce_secret: str, seconds_per_lap: in
 def write_card(root: Path, fields: dict[str, str]) -> Path:
     path = card_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(f"F1_{key.upper()}={value}\n" for key, value in fields.items()))
+    path.write_text("".join(f"F1_{key.upper()}={value}\n" for key, value in fields.items()), encoding="utf-8")
     path.chmod(0o600)
     return path
 

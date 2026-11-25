@@ -7,8 +7,8 @@ import pytest
 
 from scripts import flight_profile as fp
 
-GOLDEN = json.loads(Path("tests/fixtures/flight-profile-golden.json").read_text())
-FLIGHTMAP_JS = Path("scripts/static/flightmap.js").read_text()
+GOLDEN = json.loads(Path("tests/fixtures/flight-profile-golden.json").read_text(encoding="utf-8"))
+FLIGHTMAP_JS = Path("scripts/static/flightmap.js").read_text(encoding="utf-8")
 STAGES = {"climb": "CLIMBING", "cruise": "CRUISING", "hold": "HOLDING", "descent": "DESCENDING"}
 
 

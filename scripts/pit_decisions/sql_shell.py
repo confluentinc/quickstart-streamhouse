@@ -278,7 +278,7 @@ def run_file(session: FlinkSession, path: str | Path) -> int:
         console.print(f"[red]File not found:[/red] {file}")
         return 1
 
-    statements = split_statements(file.read_text())
+    statements = split_statements(file.read_text(encoding="utf-8"))
     if not statements:
         console.print(f"[yellow]No SQL statements in {file}[/yellow]")
         return 1

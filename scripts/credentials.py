@@ -13,6 +13,8 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+from scripts import processes
+
 
 def load_or_create_credentials_file(root: Path) -> tuple[Path, dict[str, str]]:
     """
@@ -62,7 +64,7 @@ def generate_confluent_api_keys(
         print(f"Creating service account: {sa_name}...")
         sa_result = subprocess.run(
             [
-                "confluent",
+                processes.exe("confluent"),
                 "iam",
                 "service-account",
                 "create",
@@ -73,6 +75,8 @@ def generate_confluent_api_keys(
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8",
+            errors="replace",
         )
 
         sa_id = None
@@ -90,7 +94,7 @@ def generate_confluent_api_keys(
         print("Creating API key with Cloud Resource Management scope...")
         key_result = subprocess.run(
             [
-                "confluent",
+                processes.exe("confluent"),
                 "api-key",
                 "create",
                 "--service-account",
@@ -103,6 +107,8 @@ def generate_confluent_api_keys(
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8",
+            errors="replace",
         )
 
         api_key = api_secret = None
@@ -121,7 +127,7 @@ def generate_confluent_api_keys(
             try:
                 subprocess.run(
                     [
-                        "confluent",
+                        processes.exe("confluent"),
                         "iam",
                         "rbac",
                         "role-binding",
@@ -134,6 +140,8 @@ def generate_confluent_api_keys(
                     capture_output=True,
                     text=True,
                     check=True,
+                    encoding="utf-8",
+                    errors="replace",
                 )
                 print("✓ API keys generated successfully!")
                 return api_key, api_secret
