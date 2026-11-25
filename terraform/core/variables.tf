@@ -103,9 +103,4 @@ variable "user_id" {
   description = "ID of the deploying Confluent user (u-...). Owns every API key when existing_environment_id is set."
   type        = string
   default     = ""
-
-  validation {
-    condition     = var.existing_environment_id == "" || var.user_id != ""
-    error_message = "user_id must be set when existing_environment_id is."
-  }
 }

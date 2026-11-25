@@ -71,6 +71,14 @@ locals {
 data "confluent_environment" "existing" {
   count = local.existing ? 1 : 0
   id    = var.existing_environment_id
+
+  # Not a variable validation: one that reads another variable needs Terraform 1.9.
+  lifecycle {
+    precondition {
+      condition     = var.user_id != ""
+      error_message = "user_id must be set when existing_environment_id is: the deploying user owns every API key in an existing environment."
+    }
+  }
 }
 
 resource "confluent_environment" "staging" {

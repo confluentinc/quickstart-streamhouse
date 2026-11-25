@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.9" # user_id validation reads another variable
+  required_version = ">= 1.0"
   required_providers {
     confluent = {
       source  = "confluentinc/confluent"
