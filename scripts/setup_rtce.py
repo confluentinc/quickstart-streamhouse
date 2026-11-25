@@ -929,8 +929,7 @@ def lightning_command(
             "curl -sS -X POST " + shlex.quote(url),
             "-H " + shlex.quote("Authorization: Basic " + token),
             "-H " + shlex.quote("Content-Type: application/json"),
-            # Pretty-print the reply: uv is on every attendee's machine; jq isn't.
-            "-d " + shlex.quote(json.dumps(body, indent=2)) + " | uv run python -m json.tool",
+            "-d " + shlex.quote(json.dumps(body, indent=2)) + " | uv run lightning-table",
         )
     )
 
@@ -949,7 +948,7 @@ def _lightning_powershell(url: str, token: str, body: dict) -> str:
             "Invoke-RestMethod -Method Post -Uri " + quote(url),
             "-Headers @{ Authorization = " + quote("Basic " + token) + " }",
             "-ContentType 'application/json'",
-            "-Body " + quote(json.dumps(body, indent=2)) + " | ConvertTo-Json -Depth 10",
+            "-Body " + quote(json.dumps(body, indent=2)) + " | ConvertTo-Json -Depth 10 | uv run lightning-table",
         )
     )
 

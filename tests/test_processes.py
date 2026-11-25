@@ -228,15 +228,15 @@ def test_lightning_command_for_powershell_quotes_the_sql(monkeypatch):
     assert command.startswith("Invoke-RestMethod -Method Post -Uri 'https://")
     assert "curl" not in command
     assert "'P-1''" in command  # the SQL's 'P-1' inside a single-quoted PowerShell string
-    assert command.endswith("| ConvertTo-Json -Depth 10")
+    assert command.endswith("| ConvertTo-Json -Depth 10 | uv run lightning-table")
 
 
-def test_lightning_command_for_curl_pretty_prints_the_json(monkeypatch):
+def test_lightning_command_for_curl_prints_a_table(monkeypatch):
     monkeypatch.setattr(setup_rtce.sys, "platform", "darwin")
     infra = {"region": "us-east-1", "env_id": "env-1", "cluster_id": "lkc-1", "org_id": "o"}
     command = setup_rtce.lightning_command(infra, "key", "secret", "car_telemetry")
     assert command.startswith("curl -sS -X POST https://")
-    assert command.endswith("| uv run python -m json.tool")  # uv is on every attendee's machine; jq isn't
+    assert command.endswith("| uv run lightning-table")
 
 
 def test_text_files_are_checked_out_with_lf():
