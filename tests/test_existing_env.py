@@ -1,5 +1,7 @@
 """Deploying into an attendee's existing environment: core skips what an EnvironmentAdmin can't make."""
 
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -167,3 +169,104 @@ def test_ctrl_d_at_the_prompt_means_a_new_environment(monkeypatch, tmp_path):
 def test_a_saved_id_refusal_says_where_it_came_from(tmp_path):
     with pytest.raises(SystemExit, match="delete that line"):
         existing_env.choose(None, tmp_path / "c.env", {existing_env.ENV_KEY: "env-abc12"}, interactive=False, full=True)
+
+
+FIXTURES = Path(__file__).parent / "fixtures" / "existing_env"
+_DEFAULTS = {
+    "env": "environment_describe.json",
+    "sr": "schema_registry_describe.json",
+    "user": "role_bindings_current_user.json",
+    "keys": "global_keys_current_user.json",
+}
+_COMMANDS = {
+    "env": ("environment", "describe"),
+    "sr": ("schema-registry", "cluster", "describe"),
+    "user": ("iam", "rbac", "role-binding", "list"),
+    "keys": ("api-key", "list"),
+}
+
+
+@pytest.fixture
+def fake_cli(monkeypatch):
+    """Patch the CLI. Each source is a fixture filename, None (fails), or a list/dict returned as JSON."""
+
+    def install(env_package=None, **sources):
+        chosen = {**_DEFAULTS, **sources}
+        if env_package:
+            env = json.loads((FIXTURES / _DEFAULTS["env"]).read_text(encoding="utf-8"))
+            env["stream_governance_package"] = env_package
+            chosen["env"] = env
+        calls = []
+
+        def run(cmd, **kwargs):
+            assert kwargs.get("encoding") == "utf-8" and kwargs.get("errors") == "replace", cmd
+            args = tuple(cmd[1:])
+            calls.append(args)
+            for name, words in _COMMANDS.items():
+                if args[: len(words)] == words:
+                    source = chosen[name]
+                    break
+            else:
+                pytest.fail(f"unexpected CLI call {args}")
+            if source is None:
+                return subprocess.CompletedProcess(cmd, 1, "", "boom")
+            if isinstance(source, str):
+                source = json.loads((FIXTURES / source).read_text(encoding="utf-8"))
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(source), "")
+
+        monkeypatch.setattr(existing_env.subprocess, "run", run)
+        return calls
+
+    return install
+
+
+def test_preflight_returns_the_user_id_when_all_checks_pass(fake_cli):
+    fake_cli()
+    assert existing_env.preflight("env-abc123", {}) == "u-abc123"
+
+
+@pytest.mark.parametrize(
+    "broken,message",
+    [("env", "Can't find env-abc123"), ("sr", "Stream Governance"), ("user", "confluent login")],
+)
+def test_each_failed_check_stops_with_its_message(fake_cli, broken, message):
+    fake_cli(**{broken: None})
+    with pytest.raises(SystemExit, match=message):
+        existing_env.preflight("env-abc123", {})
+
+
+def test_an_empty_schema_registry_id_counts_as_not_enabled(fake_cli):
+    fake_cli(sr={"cluster": ""})
+    with pytest.raises(SystemExit, match="Stream Governance"):
+        existing_env.preflight("env-abc123", {})
+
+
+def test_essentials_is_refused(fake_cli):
+    fake_cli(env_package="ESSENTIALS")
+    with pytest.raises(SystemExit, match="ADVANCED"):
+        existing_env.preflight("env-abc123", {})
+
+
+def test_two_foreign_global_keys_stop_but_our_own_key_does_not(fake_cli):
+    fake_cli(keys=[{"key": "A"}, {"key": "B"}])
+    with pytest.raises(SystemExit, match=r"A.*B"):
+        existing_env.preflight("env-abc123", {})
+    assert existing_env.preflight("env-abc123", {"rtce_global_api_key": "B"}) == "u-abc123"
+
+
+@pytest.mark.parametrize("keys", [None, {"not": "a list"}])
+def test_an_unreadable_key_list_does_not_block(fake_cli, keys):
+    fake_cli(keys=keys)
+    assert existing_env.preflight("env-abc123", {}) == "u-abc123"
+
+
+def test_the_user_lookup_passes_the_environment(fake_cli):
+    calls = fake_cli()
+    assert existing_env.current_user_id("env-abc123") == "u-abc123"
+    (call,) = [c for c in calls if c[:4] == ("iam", "rbac", "role-binding", "list")]
+    assert "--current-user" in call and call[call.index("--environment") + 1] == "env-abc123"
+
+
+def test_no_user_id_is_an_empty_string(fake_cli):
+    fake_cli(user=[])
+    assert existing_env.current_user_id("env-abc123") == ""

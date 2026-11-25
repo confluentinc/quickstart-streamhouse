@@ -1,8 +1,12 @@
 """Deploying into an attendee's existing Confluent environment: choosing it and refusing what can't work."""
 
+import json
 import re
+import subprocess
 import sys
 from pathlib import Path
+
+from scripts import processes
 
 ENV_KEY = "TF_VAR_existing_environment_id"
 ENV_ID = re.compile(r"^env-[a-z0-9]+$")
@@ -76,3 +80,61 @@ def check_flow_switch(env_id: str, core_outputs: dict) -> None:
     if deployed_existing != bool(env_id) or (env_id and deployed_id != env_id):
         where = f"environment {deployed_id}" if deployed_existing else "a new environment"
         sys.exit(f"This checkout is already deployed into {where}. Run `uv run destroy` first to switch environments.")
+
+
+def _cli_json(*args: str) -> object:
+    """Run a confluent command with JSON output; return the parsed JSON, or None on any failure."""
+    try:
+        result = subprocess.run(
+            [processes.exe("confluent"), *args, "-o", "json"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            return None
+        return json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def current_user_id(env_id: str) -> str:
+    """The signed-in user's `u-...` ID, or "". Needs --environment: an EnvironmentAdmin's bindings are scoped to it."""
+    rows = _cli_json("iam", "rbac", "role-binding", "list", "--current-user", "--environment", env_id)
+    for row in rows if isinstance(rows, list) else []:
+        principal = row.get("principal") if isinstance(row, dict) else None
+        if isinstance(principal, str) and principal.startswith("User:"):
+            return principal.removeprefix("User:")
+    return ""
+
+
+def preflight(env_id: str, core_outputs: dict) -> str:
+    """Run the checks that must pass before Terraform touches an existing environment; return the user's ID."""
+    env = _cli_json("environment", "describe", env_id)
+    if not isinstance(env, dict):
+        sys.exit(f"Can't find {env_id} with your login. Check the ID, and that you have EnvironmentAdmin on it.")
+
+    registry = _cli_json("schema-registry", "cluster", "describe", "--environment", env_id)
+    has_registry = isinstance(registry, dict) and bool(registry.get("cluster"))
+    if not has_registry or env.get("stream_governance_package") != "ADVANCED":
+        sys.exit(
+            f"{env_id} needs Stream Governance with the ADVANCED package (it provides Schema Registry). "
+            "Ask your Confluent Cloud admin to enable Stream Governance ADVANCED on it, then deploy again."
+        )
+
+    user_id = current_user_id(env_id)
+    if not user_id:
+        sys.exit("Couldn't find your Confluent user ID; run `confluent login` again.")
+
+    rows = _cli_json("api-key", "list", "--resource", "global", "--current-user")
+    if isinstance(rows, list):
+        keys = [row["key"] for row in rows if isinstance(row, dict) and row.get("key")]
+        if len(keys) >= 2 and core_outputs.get("rtce_global_api_key") not in keys:
+            sys.exit(
+                f"You already have {len(keys)} Global API keys ({' and '.join(keys)}), the most Confluent Cloud "
+                "allows, and this deployment needs one more. Delete one under Confluent Cloud > API keys, "
+                "then deploy again."
+            )
+    return user_id
