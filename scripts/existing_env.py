@@ -125,34 +125,12 @@ def current_user_id(env_id: str) -> str:
     return ""
 
 
-def preflight(env_id: str, core_outputs: dict) -> str:
-    """Run the checks that must pass before Terraform touches an existing environment; return the user's ID."""
-    env = _cli_json("environment", "describe", env_id)
-    if not isinstance(env, dict):
+def preflight(env_id: str) -> str:
+    """The signed-in user's ID, which Terraform needs. An empty answer means the login can't see env_id."""
+    user_id = current_user_id(env_id)
+    if not user_id:
         sys.exit(
             f"Can't find {env_id} with your login. Check the ID, and that you have EnvironmentAdmin on it, "
             "or run `confluent login` again."
         )
-
-    registry = _cli_json("schema-registry", "cluster", "describe", "--environment", env_id)
-    has_registry = isinstance(registry, dict) and bool(registry.get("cluster"))
-    if not has_registry or env.get("stream_governance_package") != "ADVANCED":
-        sys.exit(
-            f"{env_id} needs Stream Governance with the ADVANCED package (it provides Schema Registry). "
-            "Ask your Confluent Cloud admin to enable Stream Governance ADVANCED on it, then deploy again."
-        )
-
-    user_id = current_user_id(env_id)
-    if not user_id:
-        sys.exit("Couldn't find your Confluent user ID; run `confluent login` again.")
-
-    rows = _cli_json("api-key", "list", "--resource", "global", "--current-user")
-    if isinstance(rows, list):
-        keys = [row["key"] for row in rows if isinstance(row, dict) and row.get("key")]
-        if len(keys) >= 2 and core_outputs.get("rtce_global_api_key") not in keys:
-            sys.exit(
-                f"You already have {len(keys)} Global API keys ({' and '.join(keys)}), the most Confluent Cloud "
-                "allows, and this deployment needs one more. Delete one under Confluent Cloud > API keys, "
-                "then deploy again."
-            )
     return user_id

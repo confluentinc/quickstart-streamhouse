@@ -174,30 +174,16 @@ def test_a_saved_id_refusal_says_where_it_came_from(tmp_path):
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "existing_env"
-_DEFAULTS = {
-    "env": "environment_describe.json",
-    "sr": "schema_registry_describe.json",
-    "user": "role_bindings_current_user.json",
-    "keys": "global_keys_current_user.json",
-}
-_COMMANDS = {
-    "env": ("environment", "describe"),
-    "sr": ("schema-registry", "cluster", "describe"),
-    "user": ("iam", "rbac", "role-binding", "list"),
-    "keys": ("api-key", "list"),
-}
+_DEFAULTS = {"user": "role_bindings_current_user.json"}
+_COMMANDS = {"user": ("iam", "rbac", "role-binding", "list")}
 
 
 @pytest.fixture
 def fake_cli(monkeypatch):
     """Patch the CLI. Each source is a fixture filename, None (fails), or a list/dict returned as JSON."""
 
-    def install(env_package=None, notice="", **sources):
+    def install(notice="", **sources):
         chosen = {**_DEFAULTS, **sources}
-        if env_package:
-            env = json.loads((FIXTURES / _DEFAULTS["env"]).read_text(encoding="utf-8"))
-            env["stream_governance_package"] = env_package
-            chosen["env"] = env
         calls = []
 
         def run(cmd, **kwargs):
@@ -222,44 +208,17 @@ def fake_cli(monkeypatch):
     return install
 
 
-def test_preflight_returns_the_user_id_when_all_checks_pass(fake_cli):
-    fake_cli()
-    assert existing_env.preflight("env-abc123", {}) == "u-abc123"
+def test_preflight_returns_the_user_id(fake_cli):
+    calls = fake_cli()
+    assert existing_env.preflight("env-abc123") == "u-abc123"
+    assert len(calls) == 1  # one CLI call: the user lookup is the only check
 
 
-@pytest.mark.parametrize(
-    "broken,message",
-    [("env", "Can't find env-abc123"), ("sr", "Stream Governance"), ("user", "confluent login")],
-)
-def test_each_failed_check_stops_with_its_message(fake_cli, broken, message):
-    fake_cli(**{broken: None})
-    with pytest.raises(SystemExit, match=message):
-        existing_env.preflight("env-abc123", {})
-
-
-def test_an_empty_schema_registry_id_counts_as_not_enabled(fake_cli):
-    fake_cli(sr={"cluster": ""})
-    with pytest.raises(SystemExit, match="Stream Governance"):
-        existing_env.preflight("env-abc123", {})
-
-
-def test_essentials_is_refused(fake_cli):
-    fake_cli(env_package="ESSENTIALS")
-    with pytest.raises(SystemExit, match="ADVANCED"):
-        existing_env.preflight("env-abc123", {})
-
-
-def test_two_foreign_global_keys_stop_but_our_own_key_does_not(fake_cli):
-    fake_cli(keys=[{"key": "A"}, {"key": "B"}])
-    with pytest.raises(SystemExit, match=r"A.*B"):
-        existing_env.preflight("env-abc123", {})
-    assert existing_env.preflight("env-abc123", {"rtce_global_api_key": "B"}) == "u-abc123"
-
-
-@pytest.mark.parametrize("keys", [None, {"not": "a list"}])
-def test_an_unreadable_key_list_does_not_block(fake_cli, keys):
-    fake_cli(keys=keys)
-    assert existing_env.preflight("env-abc123", {}) == "u-abc123"
+@pytest.mark.parametrize("user", [None, []])
+def test_preflight_stops_when_the_login_cant_see_the_environment(fake_cli, user):
+    fake_cli(user=user)
+    with pytest.raises(SystemExit, match=r"Can.t find env-abc123.*confluent login"):
+        existing_env.preflight("env-abc123")
 
 
 def test_the_user_lookup_passes_the_environment(fake_cli):
@@ -276,7 +235,7 @@ def test_no_user_id_is_an_empty_string(fake_cli):
 
 def test_a_notice_before_the_json_is_skipped(fake_cli):
     fake_cli(notice="A new version of confluent is available: 1.2.3\n")
-    assert existing_env.preflight("env-abc123", {}) == "u-abc123"
+    assert existing_env.preflight("env-abc123") == "u-abc123"
 
 
 def _clear_env(monkeypatch, *names):
@@ -287,7 +246,7 @@ def _clear_env(monkeypatch, *names):
 
 def test_deploy_passes_the_user_to_terraform_and_refuses_bots_running_the_full_demo(monkeypatch, tmp_path):
     monkeypatch.setattr(deploy.setup_rtce, "_read_core_tf_outputs", lambda _: {})
-    monkeypatch.setattr(deploy.existing_env, "preflight", lambda env_id, outputs: "u-abc123")
+    monkeypatch.setattr(deploy.existing_env, "preflight", lambda env_id: "u-abc123")
     _clear_env(monkeypatch, "TF_VAR_user_id", existing_env.ENV_KEY)
     args = deploy._parse_args(["--environment", "env-abc12", "--workshop"])
     creds = {}
@@ -373,7 +332,7 @@ def test_deploy_saves_an_environment_only_after_its_checks_pass(monkeypatch, tmp
     creds_file = tmp_path / "credentials.env"
     creds_file.write_text("", encoding="utf-8")
     monkeypatch.setattr(deploy.setup_rtce, "_read_core_tf_outputs", lambda _: {})
-    monkeypatch.setattr(deploy.existing_env, "preflight", lambda env_id, outputs: sys.exit("Can't find env-typo1"))
+    monkeypatch.setattr(deploy.existing_env, "preflight", lambda env_id: sys.exit("Can't find env-typo1"))
     _clear_env(monkeypatch, "TF_VAR_user_id", existing_env.ENV_KEY)
     creds = {}
     args = deploy._parse_args(["--environment", "env-typo1", "--workshop"])
@@ -381,7 +340,7 @@ def test_deploy_saves_an_environment_only_after_its_checks_pass(monkeypatch, tmp
         deploy._existing_environment(args, creds_file, creds, ["flight-disruptions"], True, interactive=True)
     assert existing_env.ENV_KEY not in dotenv_values(creds_file)
     assert existing_env.ENV_KEY not in creds
-    monkeypatch.setattr(deploy.existing_env, "preflight", lambda env_id, outputs: "u-abc123")
+    monkeypatch.setattr(deploy.existing_env, "preflight", lambda env_id: "u-abc123")
     deploy._existing_environment(args, creds_file, creds, ["flight-disruptions"], True, interactive=True)
     assert dotenv_values(creds_file)[existing_env.ENV_KEY] == creds[existing_env.ENV_KEY] == "env-typo1"
 

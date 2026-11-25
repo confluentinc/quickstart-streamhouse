@@ -390,7 +390,7 @@ def _existing_environment(args, creds_file, creds: dict, labs: list[str], worksh
     env_id = existing_env.choose(args.environment, creds_file, creds, interactive=ask, full=full, save=False)
     existing_env.check_flow_switch(env_id, outputs)
     if env_id:
-        user_id = existing_env.preflight(env_id, outputs)
+        user_id = existing_env.preflight(env_id)
         existing_env.save(creds_file, creds, env_id)  # only an ID that passed the checks is remembered
         os.environ["TF_VAR_user_id"] = user_id  # never saved: core needs it each run to own the keys
         os.environ[existing_env.ENV_KEY] = env_id
