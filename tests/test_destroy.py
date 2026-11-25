@@ -146,3 +146,18 @@ def test_unregister_with_nothing_registered_is_a_noop(tmp_path, monkeypatch):
     monkeypatch.setattr(setup_rtce.subprocess, "run", lambda *a, **k: None)
 
     setup_rtce.unregister_rtce_server()
+
+
+def test_destroy_clears_the_deleted_rtce_key_from_credentials(tmp_path, monkeypatch):
+    _deployment(tmp_path, monkeypatch)
+    creds = tmp_path / "credentials.env"
+    creds.write_text(
+        "TF_VAR_resource_prefix=test\nCONFLUENT_RTCE_API_KEY=abc\nCONFLUENT_RTCE_API_SECRET=def\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(destroy, "run_terraform_destroy", lambda env_path: True)
+
+    destroy.main()
+
+    text = creds.read_text(encoding="utf-8")
+    assert "CONFLUENT_RTCE_API" not in text
+    assert "TF_VAR_resource_prefix=test" in text

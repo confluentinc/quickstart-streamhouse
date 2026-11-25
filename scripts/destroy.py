@@ -360,7 +360,8 @@ def main():
     # With nothing deployed, the next deploy can be either kind again and asks which lab.
     creds_file = root / "credentials.env"
     saved = dotenv_values(str(creds_file)) if creds_file.exists() else {}
-    for key in (WORKSHOP, DEPLOY_LABS, ALWAYS_ON, CONTINUOUS):
+    # Core's destroy deleted the RTCE Global key, so the saved copy points at nothing.
+    for key in (WORKSHOP, DEPLOY_LABS, ALWAYS_ON, CONTINUOUS, "CONFLUENT_RTCE_API_KEY", "CONFLUENT_RTCE_API_SECRET"):
         if saved.get(key):
             unset_key(str(creds_file), key)
 
