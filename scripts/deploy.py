@@ -728,7 +728,7 @@ def _finish_workshop(root) -> None:
     Attendees publish the data, build passenger_state, flight_impact, and the recovery agent, and turn on
     Lightning Tables and RTCE in the labs.
     """
-    print("\n=== Creating the Lightning and RTCE API key ===")
+    print("\n=== Saving the Lightning and RTCE API key ===")
     creds_file = root / "credentials.env"
     if not setup_rtce.ensure_global_key(creds_file, dotenv_values(str(creds_file))):
         print("⚠ No Global API key yet. Rerun `uv run deploy` to try again.")

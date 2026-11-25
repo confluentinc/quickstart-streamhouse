@@ -35,6 +35,7 @@ def _valid_or_exit(env_id: str, source: str) -> str:
 
 
 def _ask() -> str:
+    print()  # a blank line before the question, like deploy's other prompts
     while True:
         try:
             answer = _clean(input(_PROMPT))
