@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -347,8 +348,59 @@ def test_destroy_gives_core_the_user_so_its_variables_validate(monkeypatch):
     seen = []
     monkeypatch.setattr(destroy.existing_env, "current_user_id", lambda env_id: seen.append(env_id) or "u-abc123")
     _clear_env(monkeypatch, "TF_VAR_user_id")
-    destroy._user_for_core({})
+    assert destroy._user_for_core({}) == ""
     assert "TF_VAR_user_id" not in os.environ
-    destroy._user_for_core({"TF_VAR_existing_environment_id": "env-abc12"})
+    assert destroy._user_for_core({"TF_VAR_existing_environment_id": "env-abc12"}) == "u-abc123"
     assert os.environ["TF_VAR_user_id"] == "u-abc123"
     assert seen == ["env-abc12"]
+
+
+def test_destroy_stops_before_terraform_when_core_needs_a_user_it_cannot_find(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(destroy.existing_env, "current_user_id", lambda env_id: "")
+    _clear_env(monkeypatch, "TF_VAR_user_id")
+    creds = {"TF_VAR_existing_environment_id": "env-abc12"}
+    destroy._ensure_user_for_core({}, tmp_path, ["core"])  # nothing saved: nothing needed
+    destroy._ensure_user_for_core(creds, tmp_path, ["core"])  # core never deployed: nothing to stop
+    (tmp_path / "terraform" / "core").mkdir(parents=True)
+    (tmp_path / "terraform" / "core" / "terraform.tfstate").write_text("{}", encoding="utf-8")
+    destroy._ensure_user_for_core(creds, tmp_path, ["airline-demo"])  # a --lab destroy warns and goes on
+    assert "Couldn't find your Confluent user ID" in capsys.readouterr().out
+    with pytest.raises(SystemExit, match=r"env-abc12.*confluent login.*EnvironmentAdmin"):
+        destroy._ensure_user_for_core(creds, tmp_path, ["airline-demo", "core"])
+
+
+def test_deploy_saves_an_environment_only_after_its_checks_pass(monkeypatch, tmp_path):
+    creds_file = tmp_path / "credentials.env"
+    creds_file.write_text("", encoding="utf-8")
+    monkeypatch.setattr(deploy.setup_rtce, "_read_core_tf_outputs", lambda _: {})
+    monkeypatch.setattr(deploy.existing_env, "preflight", lambda env_id, outputs: sys.exit("Can't find env-typo1"))
+    _clear_env(monkeypatch, "TF_VAR_user_id", existing_env.ENV_KEY)
+    creds = {}
+    args = deploy._parse_args(["--environment", "env-typo1", "--workshop"])
+    with pytest.raises(SystemExit, match="Can't find"):
+        deploy._existing_environment(args, creds_file, creds, ["flight-disruptions"], True, interactive=True)
+    assert existing_env.ENV_KEY not in dotenv_values(creds_file)
+    assert existing_env.ENV_KEY not in creds
+    monkeypatch.setattr(deploy.existing_env, "preflight", lambda env_id, outputs: "u-abc123")
+    deploy._existing_environment(args, creds_file, creds, ["flight-disruptions"], True, interactive=True)
+    assert dotenv_values(creds_file)[existing_env.ENV_KEY] == creds[existing_env.ENV_KEY] == "env-typo1"
+
+
+def test_redeploying_a_new_environment_checkout_asks_nothing(monkeypatch, tmp_path):
+    outputs = {"existing_environment": False, "confluent_environment_id": "env-new01"}
+    monkeypatch.setattr(deploy.setup_rtce, "_read_core_tf_outputs", lambda _: outputs)
+    monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("asked"))
+    args = deploy._parse_args(["--workshop"])
+    assert (
+        deploy._existing_environment(args, tmp_path / "c.env", {}, ["flight-disruptions"], True, interactive=True) == ""
+    )
+    # A saved ID is still checked against the deployed flow.
+    with pytest.raises(SystemExit, match="uv run destroy"):
+        deploy._existing_environment(
+            args,
+            tmp_path / "c.env",
+            {existing_env.ENV_KEY: "env-abc12"},
+            ["flight-disruptions"],
+            True,
+            interactive=True,
+        )
