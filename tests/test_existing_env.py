@@ -190,7 +190,7 @@ _COMMANDS = {
 def fake_cli(monkeypatch):
     """Patch the CLI. Each source is a fixture filename, None (fails), or a list/dict returned as JSON."""
 
-    def install(env_package=None, **sources):
+    def install(env_package=None, notice="", **sources):
         chosen = {**_DEFAULTS, **sources}
         if env_package:
             env = json.loads((FIXTURES / _DEFAULTS["env"]).read_text(encoding="utf-8"))
@@ -212,7 +212,7 @@ def fake_cli(monkeypatch):
                 return subprocess.CompletedProcess(cmd, 1, "", "boom")
             if isinstance(source, str):
                 source = json.loads((FIXTURES / source).read_text(encoding="utf-8"))
-            return subprocess.CompletedProcess(cmd, 0, json.dumps(source), "")
+            return subprocess.CompletedProcess(cmd, 0, notice + json.dumps(source), "")
 
         monkeypatch.setattr(existing_env.subprocess, "run", run)
         return calls
@@ -270,3 +270,8 @@ def test_the_user_lookup_passes_the_environment(fake_cli):
 def test_no_user_id_is_an_empty_string(fake_cli):
     fake_cli(user=[])
     assert existing_env.current_user_id("env-abc123") == ""
+
+
+def test_a_notice_before_the_json_is_skipped(fake_cli):
+    fake_cli(notice="A new version of confluent is available: 1.2.3\n")
+    assert existing_env.preflight("env-abc123", {}) == "u-abc123"

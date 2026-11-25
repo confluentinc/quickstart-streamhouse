@@ -95,7 +95,8 @@ def _cli_json(*args: str) -> object:
         )
         if result.returncode != 0:
             return None
-        return json.loads(result.stdout)
+        start = min((i for i in (result.stdout.find("["), result.stdout.find("{")) if i >= 0), default=0)
+        return json.loads(result.stdout[start:])  # the CLI can print a notice before the JSON
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
 
@@ -114,7 +115,10 @@ def preflight(env_id: str, core_outputs: dict) -> str:
     """Run the checks that must pass before Terraform touches an existing environment; return the user's ID."""
     env = _cli_json("environment", "describe", env_id)
     if not isinstance(env, dict):
-        sys.exit(f"Can't find {env_id} with your login. Check the ID, and that you have EnvironmentAdmin on it.")
+        sys.exit(
+            f"Can't find {env_id} with your login. Check the ID, and that you have EnvironmentAdmin on it, "
+            "or run `confluent login` again."
+        )
 
     registry = _cli_json("schema-registry", "cluster", "describe", "--environment", env_id)
     has_registry = isinstance(registry, dict) and bool(registry.get("cluster"))
