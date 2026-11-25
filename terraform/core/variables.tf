@@ -90,3 +90,22 @@ variable "aws_tableflow_session_token" {
   sensitive   = true
   default     = ""
 }
+
+# Deploy into an environment the attendee already has. They may be only EnvironmentAdmin there,
+# so core creates no environment or service accounts, and user_id owns every API key.
+variable "existing_environment_id" {
+  description = "ID of an existing Confluent environment (env-...) to deploy into. Leave empty (the default) to create a new environment."
+  type        = string
+  default     = ""
+}
+
+variable "user_id" {
+  description = "ID of the deploying Confluent user (u-...). Owns every API key when existing_environment_id is set."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.existing_environment_id == "" || var.user_id != ""
+    error_message = "user_id must be set when existing_environment_id is."
+  }
+}

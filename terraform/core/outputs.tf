@@ -1,5 +1,5 @@
 output "confluent_environment_id" {
-  value = confluent_environment.staging.id
+  value = local.env_id
 }
 
 output "confluent_kafka_cluster_id" {
@@ -26,8 +26,10 @@ output "confluent_flink_compute_pool_id" {
   value = confluent_flink_compute_pool.flinkpool-main.id
 }
 
+# In an existing environment this holds the attendee's user ID, not a service account: every
+# lab's Flink statement (principal { id = ... }) then runs as the attendee with no lab change.
 output "app_manager_service_account_id" {
-  value = confluent_service_account.app-manager.id
+  value = local.existing ? var.user_id : one(confluent_service_account.app-manager[*].id)
 }
 
 output "app_manager_kafka_api_key" {
@@ -84,7 +86,7 @@ output "cloud_provider" {
 }
 
 output "confluent_environment_display_name" {
-  value       = confluent_environment.staging.display_name
+  value       = local.env_display_name
   description = "The display name of the Confluent environment (Flink catalog name)"
 }
 
@@ -143,8 +145,23 @@ output "random_id" {
 }
 
 output "confluent_rtce_service_account_id" {
-  value       = confluent_service_account.rtce-reader.id
-  description = "Service account ID for the RTCE MCP server — setup_rtce.py uses it to auto-create a Global API key via the Confluent CLI"
+  value       = local.existing ? "" : one(confluent_service_account.rtce-reader[*].id)
+  description = "Service account ID for the RTCE MCP server, or empty in an existing environment (the user owns the Global key there)"
+}
+
+output "rtce_global_api_key" {
+  value     = confluent_api_key.rtce-global.id
+  sensitive = true
+}
+
+output "rtce_global_api_secret" {
+  value     = confluent_api_key.rtce-global.secret
+  sensitive = true
+}
+
+output "existing_environment" {
+  value       = local.existing
+  description = "True when core deployed into an existing environment instead of creating one"
 }
 
 output "dedicated_cluster" {

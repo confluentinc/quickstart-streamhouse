@@ -325,6 +325,13 @@ resource "confluent_api_key" "tableflow" {
     api_version = "tableflow/v1"
     kind        = "Tableflow"
   }
+
+  lifecycle {
+    precondition {
+      condition     = !try(local.core.existing_environment, false)
+      error_message = "Tableflow isn't available when deploying into an existing environment."
+    }
+  }
 }
 
 # --- Hotel feed: webhook -> hotel_availability_updates -> hotel_inventory ----

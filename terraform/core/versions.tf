@@ -1,9 +1,9 @@
 terraform {
-  required_version = ">= 1.0"
+  required_version = ">= 1.9" # user_id validation reads another variable
   required_providers {
     confluent = {
       source  = "confluentinc/confluent"
-      version = "~> 2.38"
+      version = "~> 2.73"
     }
     random = {
       source  = "hashicorp/random"
