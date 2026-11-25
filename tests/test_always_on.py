@@ -8,12 +8,12 @@ TF = ROOT / "terraform/always-on"
 
 
 def test_image_never_contains_credentials():
-    ignored = (ROOT / ".dockerignore").read_text().split()
+    ignored = (ROOT / ".dockerignore").read_text(encoding="utf-8").split()
     assert {"credentials.env", "tmp/", "terraform/", ".git/"} <= set(ignored)
 
 
 def test_no_email_addresses_in_tracked_terraform():
-    text = "".join(p.read_text() for p in TF.glob("*.tf"))
+    text = "".join(p.read_text(encoding="utf-8") for p in TF.glob("*.tf"))
     assert "@confluent.io" not in text
 
 
@@ -26,7 +26,7 @@ def _block(text: str, address: str) -> str:
 
 
 def test_generator_runs_continuous_and_app_runs_on_8000():
-    aws = (TF / "aws.tf").read_text()
+    aws = (TF / "aws.tf").read_text(encoding="utf-8")
     assert '"airport-datagen", "--continuous"' in aws
     function = _block(aws, "aws_lambda_function.flight_board")
     assert re.search(r'AWS_LWA_PORT\s*=\s*"8000"', function)
@@ -34,12 +34,12 @@ def test_generator_runs_continuous_and_app_runs_on_8000():
 
 
 def test_no_app_runner_left():
-    text = "".join(p.read_text() for p in TF.glob("*.tf"))
+    text = "".join(p.read_text(encoding="utf-8") for p in TF.glob("*.tf"))
     assert "aws_apprunner_" not in text and "apprunner" not in text
 
 
 def test_flight_board_is_a_lambda_behind_a_public_function_url():
-    aws = (TF / "aws.tf").read_text()
+    aws = (TF / "aws.tf").read_text(encoding="utf-8")
     function = _block(aws, "aws_lambda_function.flight_board")
     # TCP, not HTTP: with APP_PASSWORD set every HTTP path answers 401, which would fail an HTTP readiness check.
     assert re.search(r'AWS_LWA_READINESS_CHECK_PROTOCOL\s*=\s*"tcp"', function)
@@ -81,12 +81,12 @@ def test_flight_board_is_a_lambda_behind_a_public_function_url():
 
 
 def test_image_carries_the_lambda_web_adapter():
-    dockerfile = (ROOT / "Dockerfile").read_text()
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert re.search(r"aws-lambda-adapter:\d+\.\d+\.\d+ /lambda-adapter /opt/extensions/lambda-adapter", dockerfile)
 
 
 def test_length_limited_names_are_checked_against_their_aws_limits():
-    text = "".join(p.read_text() for p in TF.glob("*.tf"))
+    text = "".join(p.read_text(encoding="utf-8") for p in TF.glob("*.tf"))
     assert re.search(r"flight_board_function\s*=\s*\{[^\n]*limit\s*=\s*64", text)
     assert re.search(r"flight_board_role\s*=\s*\{[^\n]*limit\s*=\s*64", text)
     assert re.search(r"generator_execution_role\s*=\s*\{[^\n]*limit\s*=\s*64", text)
@@ -94,7 +94,7 @@ def test_length_limited_names_are_checked_against_their_aws_limits():
 
 
 def test_outputs_name_the_function_and_its_logs():
-    outputs = (TF / "outputs.tf").read_text()
+    outputs = (TF / "outputs.tf").read_text(encoding="utf-8")
     for name in ("app_url", "app_password", "app_function_name", "app_log_group", "ecs_cluster_name"):
         assert f'output "{name}"' in outputs
     assert 'trimsuffix(aws_lambda_function_url.flight_board.function_url, "/")' in outputs
@@ -117,7 +117,7 @@ INFRA = {"org_id": "o-1", "env_id": "env-1", "cluster_id": "lkc-1", "region": "u
 
 def _stub_finish(monkeypatch, tmp_path, calls):
     (tmp_path / "credentials.env").write_text(
-        "CONFLUENT_RTCE_API_KEY=k\nCONFLUENT_RTCE_API_SECRET=s\nDEMO_USER_EMAILS=a+1@x.io, a+2@x.io\n"
+        "CONFLUENT_RTCE_API_KEY=k\nCONFLUENT_RTCE_API_SECRET=s\nDEMO_USER_EMAILS=a+1@x.io, a+2@x.io\n", encoding="utf-8"
     )
     outputs = {"image_uri": "repo:old", "app_url": "https://board", "app_password": "pw"}
     monkeypatch.setattr(deploy, "_wait_for_demo_schemas", lambda root: None)
@@ -313,7 +313,7 @@ def argparse_namespace(**overrides):
 
 def test_always_on_saves_its_mode_and_implies_the_full_flight_demo(tmp_path):
     creds_file = tmp_path / "credentials.env"
-    creds_file.write_text("")
+    creds_file.write_text("", encoding="utf-8")
     args = argparse_namespace(always_on=True)
     creds = {}
     assert deploy._always_on_mode(args, creds_file, creds)
@@ -324,7 +324,7 @@ def test_always_on_saves_its_mode_and_implies_the_full_flight_demo(tmp_path):
     assert saved["TF_VAR_always_on"] == saved["TF_VAR_continuous"] == "true"
     assert saved["TF_VAR_deployment_name"] == "river-air-demo"
     # Saved mode: a later plain run is always-on too, and an existing name is kept.
-    creds_file.write_text("TF_VAR_always_on=true\nTF_VAR_deployment_name=mine\n")
+    creds_file.write_text("TF_VAR_always_on=true\nTF_VAR_deployment_name=mine\n", encoding="utf-8")
     args = argparse_namespace()
     creds = deploy.dotenv_values(str(creds_file))
     assert deploy._always_on_mode(args, creds_file, creds)
@@ -335,7 +335,7 @@ def test_always_on_saves_its_mode_and_implies_the_full_flight_demo(tmp_path):
 
 def _interactive(monkeypatch, tmp_path, text, ready):
     creds_file = tmp_path / "credentials.env"
-    creds_file.write_text(text)
+    creds_file.write_text(text, encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["deploy", "--always-on"])
     monkeypatch.setattr(deploy, "get_project_root", lambda: tmp_path)
     monkeypatch.setattr(
@@ -377,10 +377,10 @@ def test_saved_always_on_rejects_workshop(tmp_path):
 
 
 def test_destroy_takes_down_always_on_first(monkeypatch, tmp_path):
-    (tmp_path / "credentials.env").write_text("TF_VAR_always_on=true\nTF_VAR_continuous=true\n")
+    (tmp_path / "credentials.env").write_text("TF_VAR_always_on=true\nTF_VAR_continuous=true\n", encoding="utf-8")
     for env in ("always-on", "airline-demo", "core"):
         (tmp_path / "terraform" / env).mkdir(parents=True)
-        (tmp_path / "terraform" / env / "terraform.tfstate").write_text("{}")
+        (tmp_path / "terraform" / env / "terraform.tfstate").write_text("{}", encoding="utf-8")
     monkeypatch.setattr(destroy, "get_project_root", lambda: tmp_path)
     monkeypatch.setattr(sys, "argv", ["destroy", "--testing"])
     monkeypatch.setattr(destroy, "_prepare_always_on_destroy", lambda creds: None)
@@ -395,13 +395,13 @@ def test_destroy_takes_down_always_on_first(monkeypatch, tmp_path):
 def test_destroy_skips_always_on_without_its_state(tmp_path):
     assert "always-on" not in destroy._envs_to_destroy(None, tmp_path)
     (tmp_path / "terraform/always-on").mkdir(parents=True)
-    (tmp_path / "terraform/always-on/terraform.tfstate").write_text("{}")
+    (tmp_path / "terraform/always-on/terraform.tfstate").write_text("{}", encoding="utf-8")
     assert destroy._envs_to_destroy(None, tmp_path)[0] == "always-on"
 
 
 def _deployed_before(tmp_path):
     (tmp_path / "terraform" / "always-on").mkdir(parents=True)
-    (tmp_path / "terraform" / "always-on" / "terraform.tfstate").write_text("{}")
+    (tmp_path / "terraform" / "always-on" / "terraform.tfstate").write_text("{}", encoding="utf-8")
 
 
 def test_first_always_on_deploy_publishes_history(monkeypatch, tmp_path):
@@ -430,7 +430,7 @@ def test_rerun_with_reset_data_publishes_history_again(monkeypatch, tmp_path):
 
 
 def _agent_fails(monkeypatch, tmp_path, env: str):
-    (tmp_path / "credentials.env").write_text(env)
+    (tmp_path / "credentials.env").write_text(env, encoding="utf-8")
     monkeypatch.setattr(deploy.setup_rtce, "core_infra", lambda _: None)
     assert deploy._start_agent(tmp_path) is False
 
@@ -446,6 +446,10 @@ def test_failed_agent_on_the_scripted_demo_suggests_the_generator(monkeypatch, t
     assert "uv run airport-datagen --offers generator" in capsys.readouterr().out
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="chmod only sets the read-only bit on Windows; the folder's ACL decides who reads it",
+)
 def test_card_is_readable_only_by_its_owner(tmp_path):
     path = deploy._write_card(tmp_path, {"app_url": "https://board", "app_password": "pw"}, ["a@x.io"])
     assert path.stat().st_mode & 0o777 == 0o600

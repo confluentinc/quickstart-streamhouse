@@ -12,6 +12,8 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+from scripts import processes
+
 
 def load_or_create_credentials_file(root: Path) -> tuple[Path, dict[str, str]]:
     """
@@ -54,7 +56,7 @@ def generate_confluent_api_keys(
     print("Creating a Cloud API key owned by your Confluent user...")
     result = subprocess.run(
         [
-            "confluent",
+            processes.exe("confluent"),
             "api-key",
             "create",
             "--resource",
@@ -66,6 +68,8 @@ def generate_confluent_api_keys(
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if result.returncode != 0:
         print(f"Error creating the API key: {result.stderr.strip()}")

@@ -14,6 +14,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values, set_key
 
+from scripts import processes
 from scripts.ui import discard_typeahead, prompt_secret
 
 
@@ -26,10 +27,12 @@ def check_confluent_login() -> bool:
     """
     try:
         result = subprocess.run(
-            ["confluent", "environment", "list"],
+            [processes.exe("confluent"), "environment", "list"],
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8",
+            errors="replace",
         )
         return result.returncode == 0
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -43,11 +46,13 @@ def _run_login(email: str, password: str) -> subprocess.CompletedProcess:
     """
     env = {**os.environ, "CONFLUENT_CLOUD_EMAIL": email, "CONFLUENT_CLOUD_PASSWORD": password}
     return subprocess.run(
-        ["confluent", "login", "--save"],
+        [processes.exe("confluent"), "login", "--save"],
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
         env=env,
+        encoding="utf-8",
+        errors="replace",
     )
 
 

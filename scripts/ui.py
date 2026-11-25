@@ -20,12 +20,19 @@ def discard_typeahead() -> None:
     land in the next prompt's answer (and echo on screen).
     """
     try:
-        if sys.stdin.isatty():
-            import termios
+        if not sys.stdin.isatty():
+            return
+        if sys.platform == "win32":
+            import msvcrt
 
-            termios.tcflush(sys.stdin, termios.TCIFLUSH)
+            while msvcrt.kbhit():
+                msvcrt.getwch()
+            return
+        import termios
+
+        termios.tcflush(sys.stdin, termios.TCIFLUSH)
     except (ImportError, OSError, ValueError):
-        pass  # Windows or no real terminal
+        pass  # no real terminal
 
 
 def prompt_choice(prompt_text: str, options: list[str]) -> str:

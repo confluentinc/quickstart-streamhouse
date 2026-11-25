@@ -81,7 +81,7 @@ def create_lab_objects(card: dict[str, str], root: Path) -> bool:
 
         # Same normalization as `f1-sql --exec`: the trailing ';' in the .sql file
         # is a shell-shell convention, not part of the statement.
-        sql = path.read_text().strip().rstrip(";").strip()
+        sql = path.read_text(encoding="utf-8").strip().rstrip(";").strip()
 
         try:
             name = session.submit(sql)

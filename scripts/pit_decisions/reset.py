@@ -36,12 +36,12 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
 import time
 
 import requests
 
+from scripts import processes
 from scripts.pit_decisions.card import load_card
 from scripts.pit_decisions.labs import create_lab_objects
 from scripts.pit_decisions.sql_shell import FlinkSession
@@ -70,26 +70,17 @@ LOCAL_RACE_TOKENS = ("f1-race", "scripts.pit_decisions.race")
 
 
 def is_local_race(args: str) -> bool:
-    """Whether one process command line is a running `f1-race`."""
-    for token in args.split():
-        for marker in LOCAL_RACE_TOKENS:
-            if token == marker or token.endswith(f"/{marker}"):
-                return True
-    return False
+    """Whether one process command line is a running `f1-race` (`.../bin/f1-race` or `...\\Scripts\\f1-race.exe`)."""
+    return any(marker in processes.program_names(args) for marker in LOCAL_RACE_TOKENS)
 
 
 def local_race_processes() -> list[str]:
     """Command lines of any local `uv run f1-race` currently producing (best-effort)."""
-    try:
-        result = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True, timeout=15)
-    except Exception:
-        return []
     me = os.getpid()
     found = []
-    for line in result.stdout.splitlines():
-        pid_text, _, args = line.strip().partition(" ")
-        if pid_text.isdigit() and int(pid_text) != me and is_local_race(args):
-            found.append(f"{pid_text}  {args.strip()}")
+    for pid, args in (processes.all_command_lines() or {}).items():
+        if pid != me and is_local_race(args):
+            found.append(f"{pid}  {args}")
     return found
 
 

@@ -67,7 +67,7 @@ def _active(topics):
 
 def test_no_deployment_says_to_run_deploy(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "pyproject.toml").write_text("")
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
     with pytest.raises(SystemExit) as exit_info:
         workshop_checks.require_deployment("uv run airport-app")
     message = str(exit_info.value)
@@ -76,12 +76,12 @@ def test_no_deployment_says_to_run_deploy(tmp_path, monkeypatch, capsys):
 
 def test_a_finished_deployment_is_found(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "pyproject.toml").write_text("")
-    (tmp_path / "credentials.env").write_text("TF_VAR_workshop=true\n")
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    (tmp_path / "credentials.env").write_text("TF_VAR_workshop=true\n", encoding="utf-8")
     for root, outputs in (("core", CORE), ("airline-demo", {"source_topics": ["flight_status"]})):
         (tmp_path / "terraform" / root).mkdir(parents=True)
         state = {"outputs": {key: {"value": value} for key, value in outputs.items()}}
-        (tmp_path / "terraform" / root / "terraform.tfstate").write_text(json.dumps(state))
+        (tmp_path / "terraform" / root / "terraform.tfstate").write_text(json.dumps(state), encoding="utf-8")
     ws = workshop_checks.require_deployment("uv run airport-app")
     assert ws.is_workshop
     assert ws.infra["env_id"] == "env-1" and ws.infra["cloud"] == "aws"
@@ -348,7 +348,8 @@ def test_the_guide_opens_with_the_computers_own_opener(monkeypatch, platform, op
 def test_windows_opens_the_guide_with_start_and_has_no_less(monkeypatch):
     monkeypatch.setattr(workshop_checks.sys, "platform", "win32")
     commands = [command for _, command in workshop_checks._open_guide_commands(12)]
-    assert commands == ['start "" docs\\flight-disruptions\\workshop.md']
+    # Plain `start <file>` opens it from PowerShell and Command Prompt alike; `start "" <file>` fails in PowerShell.
+    assert commands == ["start docs\\flight-disruptions\\workshop.md"]
 
 
 def test_cli_delete_command_targets_the_cluster(tmp_path, monkeypatch):
@@ -365,7 +366,7 @@ def test_cli_delete_command_targets_the_cluster(tmp_path, monkeypatch):
 
 
 def test_the_agents_insert_is_recognised_under_its_comment_header():
-    sql = (workshop_checks.SQL_DIR / workshop_checks.LAB4_RUN[1]).read_text()
+    sql = (workshop_checks.SQL_DIR / workshop_checks.LAB4_RUN[1]).read_text(encoding="utf-8")
     assert sql.lstrip().startswith("--")
     assert workshop_checks.is_agent_insert(sql)
     assert not workshop_checks.is_agent_insert("INSERT INTO hotel_inventory SELECT 1")

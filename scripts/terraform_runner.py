@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from scripts import processes
+
 from .generate_deployment_summary import generate_credentials_markdown
 
 
@@ -33,15 +35,15 @@ def run_terraform(env_path: Path, auto_approve: bool = True, targets: tuple[str,
     print(f"\nInitializing Terraform in {env_path}...")
 
     try:
-        subprocess.run(["terraform", "init"], cwd=env_path, check=True)
+        subprocess.run([processes.exe("terraform"), "init"], cwd=env_path, check=True, env=processes.terraform_env())
 
-        apply_cmd = ["terraform", "apply"]
+        apply_cmd = [processes.exe("terraform"), "apply"]
         if auto_approve:
             apply_cmd.append("-auto-approve")
         apply_cmd += [f"-target={target}" for target in targets]
 
         print(f"Running terraform apply in {env_path}...")
-        subprocess.run(apply_cmd, cwd=env_path, check=True)
+        subprocess.run(apply_cmd, cwd=env_path, check=True, env=processes.terraform_env())
 
         print(f"✓ Deployment successful: {env_path.name}")
 
@@ -76,14 +78,14 @@ def run_terraform_destroy(env_path: Path, auto_approve: bool = True) -> bool:
     print(f"\nInitializing Terraform in {env_path}...")
 
     try:
-        subprocess.run(["terraform", "init"], cwd=env_path, check=True)
+        subprocess.run([processes.exe("terraform"), "init"], cwd=env_path, check=True, env=processes.terraform_env())
 
-        destroy_cmd = ["terraform", "destroy"]
+        destroy_cmd = [processes.exe("terraform"), "destroy"]
         if auto_approve:
             destroy_cmd.append("-auto-approve")
 
         print(f"Running terraform destroy in {env_path}...")
-        subprocess.run(destroy_cmd, cwd=env_path, check=True)
+        subprocess.run(destroy_cmd, cwd=env_path, check=True, env=processes.terraform_env())
 
         print(f"✓ Destroy successful: {env_path.name}")
 
@@ -112,11 +114,13 @@ def _generate_deployment_summary(env_path: Path) -> None:
         # Get terraform outputs as JSON
         print("\nGenerating deployment summary...")
         result = subprocess.run(
-            ["terraform", "output", "-json"],
+            [processes.exe("terraform"), "output", "-json"],
             cwd=env_path,
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8",
+            errors="replace",
         )
 
         # Parse terraform outputs

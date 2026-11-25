@@ -11,7 +11,7 @@ SQL = DEMO / "sql"
 
 
 def _sql(prefix: str) -> str:
-    return next(SQL.glob(f"{prefix}-*.sql")).read_text()
+    return next(SQL.glob(f"{prefix}-*.sql")).read_text(encoding="utf-8")
 
 
 def test_statements_chain_by_name():
@@ -29,7 +29,7 @@ def test_statements_chain_by_name():
 def test_agent_runs_on_the_confluent_hosted_model():
     assert "'provider' = 'confluent'" in _sql("32")
     assert not list(SQL.glob("28-*.sql"))  # the Bedrock model is gone
-    main = (DEMO / "main.tf").read_text()
+    main = (DEMO / "main.tf").read_text(encoding="utf-8")
     assert '"sql/32-model-passenger-recovery-native.sql"' in main
     assert "bedrock_enabled" not in main
 
@@ -108,7 +108,7 @@ def test_existing_agent_connection_gets_the_current_key(monkeypatch):
 
 
 def test_deploy_targets_exist_and_sql_files_exist():
-    main = (DEMO / "main.tf").read_text() + (DEMO / "webhook.tf").read_text()
+    main = (DEMO / "main.tf").read_text(encoding="utf-8") + (DEMO / "webhook.tf").read_text(encoding="utf-8")
     for target in deploy.AGENT_TARGETS:
         kind, name = target.split(".")
         assert f'resource "{kind}" "{name}"' in main
@@ -117,7 +117,7 @@ def test_deploy_targets_exist_and_sql_files_exist():
 
 
 def test_video_2_deploy_stops_before_what_demo_2_creates_on_screen(monkeypatch, tmp_path):
-    main = (DEMO / "main.tf").read_text()
+    main = (DEMO / "main.tf").read_text(encoding="utf-8")
     for target in deploy.VIDEO_2_TARGETS:
         assert target.split(".")[1].split("[")[0] in main
     assert not any("agent_setup" in target for target in deploy.VIDEO_2_TARGETS)  # 2.3a creates the model
@@ -147,17 +147,17 @@ def test_deploy_finishes_with_data_then_rtce_then_the_agent(monkeypatch, tmp_pat
 
 
 def test_continuous_mode_drops_exactly_the_agent_flight_filter():
-    main = (DEMO / "main.tf").read_text()
+    main = (DEMO / "main.tf").read_text(encoding="utf-8")
     match = re.search(r'agent_flight_filter\s*=\s*"(.*)"', main)
     assert match
     line = match.group(1).encode().decode("unicode_escape")
     assert line in _sql("27")  # the replace() can't silently match nothing
     assert "var.continuous ? replace(" in main
-    assert 'output "continuous"' in (DEMO / "outputs.tf").read_text()
+    assert 'output "continuous"' in (DEMO / "outputs.tf").read_text(encoding="utf-8")
 
 
 def test_continuous_mode_turns_on_tableflow_for_both_topics():
-    tf = (DEMO / "analytics.tf").read_text() + (DEMO / "main.tf").read_text()
+    tf = (DEMO / "analytics.tf").read_text(encoding="utf-8") + (DEMO / "main.tf").read_text(encoding="utf-8")
     assert '["passenger_recommendations"]' in tf and "local.tableflow_topics" in tf
 
 
