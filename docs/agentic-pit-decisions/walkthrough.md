@@ -109,8 +109,6 @@ credit is used first, so you typically won't be charged during the workshop.
     uv run deploy
     ```
 
-    Given an existing environment by your admin? On a fresh checkout, paste its ID when deploy asks; to switch an existing deployment, see the [README](../../README.md#deploying-into-an-existing-environment).
-
     <img src="../images/agentic-pit-decisions/selfservice-up.png" alt="uv run deploy: API key generation, configuration prompts, and the ready prompt" width="600">
 
     Deploy asks for the following, in this order:
@@ -119,10 +117,11 @@ credit is used first, so you typically won't be charged during the workshop.
     |---|---|
     | `Which lab do you want to deploy?` | Enter `2` for **Agentic Pit Decisions**. Deploy builds the lab's starting point, and you build the rest in this walkthrough. |
     | `Email (Enter to skip)` and `Password` | The **email and password you used to sign up**. Deploy checks them with a real login and saves them to `credentials.env`, so later commands log in automatically. **Signed in with SSO in step 2?** Press **Enter** to skip. |
+    | `Deploy into an existing environment? Paste its ID (env-xxxxx), or press Enter to create a new one:` | Press **Enter**. **Your admin gave you an environment?** Paste its ID instead (see the [README](../../README.md#deploying-into-an-existing-environment)). |
     | `Generate new Confluent Cloud API keys? (y/N)` | Enter `y`. Deploy creates the key and uses it, so it doesn't ask for a key or secret. |
     | `Ready to deploy? (y/n)` | Enter `y`. |
 
-    When it finishes, deploy prints your **catalog** and **database** names, which you need in Section 1.
+    When it finishes, deploy prints your **catalog** and **database** names, which you need in Section 1. In an environment your admin gave you, the catalog is that environment's own name. Use it wherever this walkthrough says `streamhouse-…-env`.
 
 ## 1. Enhance the data with built-in ML functions and start the race
 

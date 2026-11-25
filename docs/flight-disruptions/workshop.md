@@ -141,14 +141,13 @@ credit is used first, so you typically won't be charged during the workshop.
     uv run deploy
     ```
 
-    Given an existing environment by your admin? On a fresh checkout, paste its ID when deploy asks; to switch an existing deployment, see the [README](../../README.md#deploying-into-an-existing-environment).
-
     Deploy asks for the following, in this order:
 
     | Prompt | Answer |
     |---|---|
     | `Which lab do you want to deploy?` | Enter `1` for **Flight Disruptions**. This deploys the starting infrastructure; you build the rest in the labs. |
     | `Email (Enter to skip)` and `Password` | The **email and password you used to sign up**. The script verifies your login details and saves them to `credentials.env` for later commands. **Signed in with SSO in step 2?** Press **Enter** to skip. |
+    | `Deploy into an existing environment? Paste its ID (env-xxxxx), or press Enter to create a new one:` | Press **Enter**. **Your admin gave you an environment?** Paste its ID instead (see the [README](../../README.md#deploying-into-an-existing-environment)). |
     | `Generate new Confluent Cloud API keys? (y/N)` | Enter `y`. The script creates and configures the key automatically. |
     | `Ready to deploy? (y/n)` | Enter `y`. |
 
@@ -158,6 +157,8 @@ credit is used first, so you typically won't be charged during the workshop.
     Environment name: streamhouse-1a2b3c4d-env
     Cluster name: streamhouse-1a2b3c4d-cluster
     ```
+
+    In an environment your admin gave you, the environment name is that environment's own name. Use it wherever this guide says `streamhouse-…-env`.
 
 4. Start the datagen:
 
