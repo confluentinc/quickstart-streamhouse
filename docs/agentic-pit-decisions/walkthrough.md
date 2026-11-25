@@ -382,6 +382,8 @@ Next we create the `pit_decisions` table, which invokes `pit_strategy_agent` on 
 
     ![Flink SQL workspace showing the lap 24 PIT NOW row with the agent's full reasoning](../images/agentic-pit-decisions/pit-decisions-anomaly-query.png)
 
+    Rerun the `SELECT` if it stopped while waiting.
+
 > [!NOTE]
 >
 > | Lap | Position | Suggestion | What's happening |
@@ -440,8 +442,7 @@ When it's ready, the dialog shows **Lightning Table is enabled**. Click **Done**
     uv run setup-rtce
     ```
 
-    This registers RTCE as the `confluent-streamhouse-rtce` MCP server in Claude Code (or prints a config snippet for Codex CLI) using the Global API key from your credential card. If you also deployed Flight Disruptions, this one MCP server handles topics for both labs. Restart your coding agent, then ask questions in plain English:
-
+    Choose Claude Code or Codex to register `confluent-streamhouse-rtce` and confirm it can list topics. Restart the client.
     ```text
     What topics do I have access to in the Real-Time Context Engine?
     ```

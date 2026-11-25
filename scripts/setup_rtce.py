@@ -37,6 +37,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal
+from http.client import HTTPException
 from pathlib import Path
 
 from scripts import processes
@@ -774,36 +775,65 @@ def _register_gemini(server_name: str, url: str, token: str, dry_run: bool = Fal
     return "gemini user scope"
 
 
-def _test_mcp_connection(url: str, token: str) -> tuple[bool, int]:
-    """Send an MCP initialize POST to verify the Global API key works with the endpoint."""
-    body = json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "setup-rtce", "version": "0.1"},
-            },
-        }
-    ).encode()
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            "Authorization": f"Basic {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        },
-    )
+def _test_mcp_connection(url: str, token: str) -> tuple[int | None, str]:
+    """Return the topic count from the RTCE tool, or a diagnostic without credentials."""
+    headers = {
+        "Authorization": f"Basic {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+
+    def post(message: dict):
+        request = urllib.request.Request(url, data=json.dumps({"jsonrpc": "2.0", **message}).encode(), headers=headers)
+        with urllib.request.urlopen(request, timeout=15) as response:
+            session_id = response.headers.get("Mcp-Session-Id")
+            if session_id:
+                headers["Mcp-Session-Id"] = session_id
+            if "id" not in message:
+                return None
+            if response.headers.get("Content-Type", "").startswith("text/event-stream"):
+                for line in response:
+                    if line.startswith(b"data:"):
+                        reply = json.loads(line[5:])
+                        if reply.get("id") == message["id"]:
+                            return reply
+                raise ValueError("Missing MCP reply")
+            return json.load(response)
+
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return True, resp.status
+        initialized = post(
+            {
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "setup-rtce", "version": "0.1"},
+                },
+            }
+        )
+        headers["MCP-Protocol-Version"] = initialized["result"]["protocolVersion"]
+        post({"method": "notifications/initialized"})
+        reply = post({"id": 2, "method": "tools/call", "params": {"name": "listTopics", "arguments": {}}})
+        if "error" in reply:
+            return None, "MCP_RPC_ERROR"
+        result = reply["result"]
+        payload = json.loads(result["content"][0]["text"])
+        if result.get("isError") or payload["status"] != "success":
+            code = payload.get("error", {}).get("code")
+            if isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z_0-9]{1,63}", code):
+                return None, code
+            return None, "MCP_TOOL_ERROR"
+        topics = payload["rows"]["topics"]
+        if not isinstance(topics, list):
+            return None, "INVALID_MCP_RESPONSE"
+        return len(topics), ""
     except urllib.error.HTTPError as exc:
-        return False, exc.code
-    except Exception:
-        return False, 0
+        return None, f"HTTP {exc.code}"
+    except (HTTPException, OSError):
+        return None, "CONNECTION_ERROR"
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+        return None, "INVALID_MCP_RESPONSE"
 
 
 def _parse_topics(raw: str) -> list[str]:
@@ -1184,53 +1214,45 @@ def main(argv: list[str] | None = None):
 
     url = _mcp_url(infra)
 
-    if client == "none":
-        print(f"\n✓ RTCE enabled on: {', '.join(topics)} (no coding agent registered)")
-        if args.dry_run:
-            return
-        ok, status = _test_mcp_connection(url, token)
-        print(f"  MCP endpoint check: {'✓' if ok else '⚠'} ({status or 'connection error'})")
-        return
-
+    restart_note = ""
     if client == "gemini":
         scope_note = _register_gemini(server_name, url, token, dry_run=args.dry_run)
         restart_note = "Restart Gemini to activate."
     elif client == "codex":
         scope_note = _register_with_codex_rtce(server_name, url, token, dry_run=args.dry_run)
         restart_note = "Restart Codex CLI to activate."
-    else:
+    elif client == "claude":
         scope_note = _register_with_claude_code(server_name, url, token, dry_run=args.dry_run)
         restart_note = "Restart Claude Code to activate."
 
-    print(f"\n✓ RTCE MCP server registered as '{server_name}' ({scope_note})")
-    print(f"  Topics:   {', '.join(topics)}")
-    print(f"  Endpoint: {url}")
+    if restart_note:
+        print(f"\n✓ RTCE MCP server registered as '{server_name}' ({scope_note})")
+        print(f"  Endpoint: {url}")
+    else:
+        print("\nNo coding agent was registered.")
 
     if args.dry_run:
-        print("\n[dry-run] Skipping MCP connection test (no config was written).")
+        print("Dry-run skips the RTCE check.")
         return
 
-    print("\nTesting MCP connection...", end=" ", flush=True)
-    ok, status = _test_mcp_connection(url, token)
-    if ok:
-        print(f"✓ ({status}) MCP connection test passed — agent can query your topics")
-    elif status in (401, 403):
-        print(
-            f"✗ ({status}) Global API key is invalid or lacks RTCE roles "
-            f"(DeveloperRead + SchemaRegistryRead).\n"
-            f"  Update CONFLUENT_RTCE_API_KEY / CONFLUENT_RTCE_API_SECRET in credentials.env\n"
-            f"  and re-run: uv run setup-rtce"
-        )
-    elif status == 404:
-        print(
-            "⚠ (404) RTCE MCP endpoint not yet provisioned for this cluster.\n"
-            "  Try connecting in Claude Code (/mcp) in a few minutes."
-        )
+    count, detail = _test_mcp_connection(url, token)
+    env, cluster = infra["env_id"], infra["cluster_id"]
+    if count is not None:
+        print(f"✓ RTCE listTopics returned {count} topics for {env} / {cluster}.")
     else:
-        code_str = str(status) if status else "connection error"
-        print(f"⚠ ({code_str}) Unexpected response — verify the endpoint manually.")
+        print(f"✗ RTCE listTopics check failed for {env} / {cluster} ({detail}).")
+        if detail in {"HTTP 401", "HTTP 403"}:
+            print("  Check the Global API key and the DeveloperRead and SchemaRegistryRead roles.")
+        elif detail in {"HTTP 404", "FE_CUSTOMER_NOT_FOUND"}:
+            print(
+                "  Check the target environment and cluster. If Lightning Tables are still loading, "
+                "wait and rerun uv run setup-rtce."
+            )
+        else:
+            print("  Check the connection and rerun uv run setup-rtce.")
 
-    print(f"\n  {restart_note}")
+    if restart_note:
+        print(f"\n  {restart_note}")
 
 
 if __name__ == "__main__":
