@@ -1,0 +1,14 @@
+{
+  "name": "Always On Stream Governance Package",
+  "cluster": "lsrc-abc123",
+  "endpoint_url": "https://psrc-abc123.us-east-1.aws.confluent.cloud",
+  "catalog_endpoint_url": "https://psrc-abc123.us-east-1.aws.confluent.cloud",
+  "used_schemas": "1",
+  "available_schemas": "19999",
+  "free_schemas_limit": 20000,
+  "global_compatibility": "BACKWARD",
+  "mode": "READWRITE",
+  "cloud": "AWS",
+  "region": "us-east-1",
+  "package": "ADVANCED"
+}

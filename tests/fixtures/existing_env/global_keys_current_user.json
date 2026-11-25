@@ -1,0 +1,11 @@
+[
+  {
+    "key": "KEY1",
+    "description": "Global API key",
+    "owner": "u-abc123",
+    "owner_email": "attendee@example.com",
+    "resource_type": "global",
+    "resource": "",
+    "created": "2026-11-25T19:36:57Z"
+  }
+]
