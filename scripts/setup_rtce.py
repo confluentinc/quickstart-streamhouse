@@ -4,9 +4,9 @@ local coding agent (Claude Code, Codex CLI, or Gemini CLI).
 
 Prerequisites:
 - RTCE is AWS-only. Azure deployments are not supported.
-- A Global-scoped Confluent Cloud API key (--resource global). When deployed via
-  `uv run deploy`, this key is created automatically via the Confluent CLI using the
-  Terraform-provisioned RTCE service account (DeveloperRead on cluster + Schema Registry).
+- A Global-scoped Confluent Cloud API key. When deployed via `uv run deploy`, Terraform
+  creates this key in terraform/core for the RTCE service account (DeveloperRead on
+  cluster + Schema Registry) and setup-rtce copies it into credentials.env.
   For standalone use, create a key manually: Confluent Cloud UI → hamburger menu →
   API keys → Add API key → Global scope.
 - Optionally, the script can enable RTCE on topics for you (requires topics to have a
@@ -69,7 +69,8 @@ _TF_ENV = "confluent_environment_id"
 _TF_CLUSTER = "confluent_kafka_cluster_id"
 _TF_REGION = "cloud_region"
 _TF_CLOUD = "cloud_provider"
-_TF_RTCE_SA_ID = "confluent_rtce_service_account_id"
+_TF_RTCE_KEY = "rtce_global_api_key"
+_TF_RTCE_SECRET = "rtce_global_api_secret"
 
 # AWS regions where RTCE is currently available.
 # Source: https://docs.confluent.io/cloud/current/clusters/regions.html
@@ -160,103 +161,20 @@ def _discover_demo_topics(creds_file: Path) -> list[str]:
     return []
 
 
-def _create_rtce_global_key_via_cli(sa_id: str) -> tuple[str, str]:
-    """Create a Global API key for the RTCE service account via Confluent CLI.
-
-    Uses `confluent api-key create --resource global` which is the only way to create
-    a Global-scoped key (the Terraform provider creates Cloud/CRM keys, not Global ones).
-    Returns (api_key, api_secret) or ("", "") on failure.
-    """
-    result = subprocess.run(
-        [
-            processes.exe("confluent"),
-            "api-key",
-            "create",
-            "--resource",
-            "global",
-            "--service-account",
-            sa_id,
-            "--description",
-            "Global API Key for RTCE MCP server (auto-created by setup-rtce)",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if result.returncode != 0:
-        if result.stderr:
-            print(f"  CLI error: {result.stderr.strip()[:300]}")
-        return "", ""
-
-    api_key = api_secret = ""
-    for line in result.stdout.split("\n"):
-        if "|" not in line:
-            continue
-        parts = [p.strip() for p in line.split("|") if p.strip()]
-        if len(parts) < 2:
-            continue
-        if parts[0] == "API Key":
-            api_key = parts[1]
-        elif parts[0] == "API Secret":
-            api_secret = parts[1]
-    return api_key, api_secret
-
-
-def _key_owned_by(sa_id: str, api_key: str) -> bool:
-    """True when api_key is one of sa_id's Global keys. A teardown deletes the service
-    account and its keys, but credentials.env keeps the old key."""
-    result = subprocess.run(
-        [
-            processes.exe("confluent"),
-            "api-key",
-            "list",
-            "--resource",
-            "global",
-            "--service-account",
-            sa_id,
-            "-o",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if result.returncode != 0:
-        return True  # can't tell (an expired login, say); keep the stored key
-    try:
-        return any(k.get("key") == api_key for k in json.loads(result.stdout or "[]"))
-    except (json.JSONDecodeError, AttributeError):
-        return True  # can't tell; keep the stored key and let the MCP check report it
-
-
 def ensure_global_key(creds_file: Path, creds: dict) -> str:
-    """The RTCE reader's Global API key, created and saved to credentials.env (and `creds`) when
-    there's none yet or the stored one belongs to a service account from an earlier deployment.
-
-    Terraform provisions the service account + role bindings; this creates the Global key
-    (--resource global) via CLI, which the Terraform provider can't do. Returns "" when
-    neither works.
+    """The RTCE reader's Global API key. Terraform creates it in core; this copies it from
+    core's outputs into credentials.env (and `creds`) when it differs from the stored one.
+    Without a deployment (no core outputs) the stored key is returned, or "" if none.
     """
-    sa_id = _read_core_tf_outputs(creds_file).get(_TF_RTCE_SA_ID, "").strip()
-    stored = (creds.get(_CRED_KEY) or "").strip()
-    if stored and sa_id and not _key_owned_by(sa_id, stored):
-        print(f"Stored RTCE key {stored[:8]}... is not a key of {sa_id} (earlier deployment).")
-        creds[_CRED_KEY] = creds[_CRED_SECRET] = ""
-    if not creds.get(_CRED_KEY) and sa_id:
-        print(f"Creating Global API key for RTCE service account {sa_id} via CLI...")
-        key, secret = _create_rtce_global_key_via_cli(sa_id)
-        if key and secret:
-            print(f"  ✓ Created Global API key: {key[:8]}...")
+    outputs = _read_core_tf_outputs(creds_file)
+    key = (outputs.get(_TF_RTCE_KEY) or "").strip()
+    secret = (outputs.get(_TF_RTCE_SECRET) or "").strip()
+    if key and secret:
+        if key != (creds.get(_CRED_KEY) or "").strip() or secret != (creds.get(_CRED_SECRET) or "").strip():
             creds[_CRED_KEY] = key
             creds[_CRED_SECRET] = secret
             _save_to_env_file(creds_file, _CRED_KEY, key)
             _save_to_env_file(creds_file, _CRED_SECRET, secret)
-        else:
-            print("  ✗ CLI key creation failed — check that `confluent login` is active.")
     return creds.get(_CRED_KEY) or ""
 
 

@@ -89,13 +89,6 @@ class _Run:
         return type("Result", (), {"stdout": self.stdout, "stderr": "", "returncode": self.returncode})()
 
 
-def test_stale_rtce_key_is_detected(monkeypatch):
-    run = _Run(stdout='[{"key": "NEWKEY"}]')
-    monkeypatch.setattr(setup_rtce.subprocess, "run", run)
-    assert setup_rtce._key_owned_by("sa-1", "NEWKEY")
-    assert not setup_rtce._key_owned_by("sa-1", "OLDKEY")
-
-
 def test_existing_agent_connection_gets_the_current_key(monkeypatch):
     run = _Run()
     monkeypatch.setattr(setup_rtce.subprocess, "run", run)

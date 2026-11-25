@@ -2,6 +2,11 @@
 
 from pathlib import Path
 
+import pytest
+from dotenv import dotenv_values
+
+from scripts import setup_rtce
+
 CORE = Path(__file__).parent.parent / "terraform" / "core"
 
 
@@ -53,3 +58,24 @@ def test_every_root_needs_the_provider_that_makes_global_keys():
     roots = ("core/versions.tf", "airline-demo/providers.tf", "agentic-pit-decisions/providers.tf")
     for f in (root / name for name in roots):
         assert 'version = "~> 2.73"' in f.read_text(encoding="utf-8"), f
+
+
+def test_global_key_comes_from_core_and_replaces_a_stale_one(monkeypatch, tmp_path):
+    creds_file = tmp_path / "credentials.env"
+    creds_file.write_text("CONFLUENT_RTCE_API_KEY=OLD\nCONFLUENT_RTCE_API_SECRET=OLDS\n", encoding="utf-8")
+    monkeypatch.setattr(
+        setup_rtce,
+        "_read_core_tf_outputs",
+        lambda _: {"rtce_global_api_key": "NEW", "rtce_global_api_secret": "NEWS"},
+    )
+    monkeypatch.setattr(setup_rtce.subprocess, "run", lambda *a, **k: pytest.fail("no CLI call"))
+    creds = {"CONFLUENT_RTCE_API_KEY": "OLD", "CONFLUENT_RTCE_API_SECRET": "OLDS"}
+    assert setup_rtce.ensure_global_key(creds_file, creds) == "NEW"
+    assert creds["CONFLUENT_RTCE_API_SECRET"] == "NEWS"
+    assert dotenv_values(creds_file)["CONFLUENT_RTCE_API_KEY"] == "NEW"
+
+
+def test_without_a_deployment_the_stored_key_is_kept(monkeypatch, tmp_path):
+    monkeypatch.setattr(setup_rtce, "_read_core_tf_outputs", lambda _: {})
+    creds = {"CONFLUENT_RTCE_API_KEY": "MINE"}
+    assert setup_rtce.ensure_global_key(tmp_path / "credentials.env", creds) == "MINE"
