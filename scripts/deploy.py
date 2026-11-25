@@ -60,7 +60,7 @@ from datetime import timedelta
 
 from dotenv import dotenv_values, set_key
 
-from scripts import processes, setup_rtce
+from scripts import existing_env, processes, setup_rtce
 from scripts.credentials import (
     generate_confluent_api_keys,
     load_or_create_credentials_file,
@@ -375,7 +375,27 @@ def _select_labs(requested: str | None, creds_file, creds: dict, workshop: bool,
     return labs
 
 
-def main():
+def _existing_environment(args, creds_file, creds: dict, labs: list[str], workshop: bool, *, interactive: bool) -> str:
+    """Choose the existing environment to deploy into ("" for a new one) and check it before Terraform runs."""
+    full = existing_env.full_demo(
+        with_labs=args.with_labs,
+        video_2=args.video_2,
+        always_on=args.always_on,
+        flights=FLIGHT_DISRUPTIONS in labs,
+        workshop=workshop,
+    )
+    env_id = existing_env.choose(args.environment, creds_file, creds, interactive=interactive, full=full)
+    outputs = setup_rtce._read_core_tf_outputs(creds_file)
+    existing_env.check_flow_switch(env_id, outputs)
+    if env_id:
+        user_id = existing_env.preflight(env_id, outputs)
+        os.environ["TF_VAR_user_id"] = user_id  # never saved: core needs it each run to own the keys
+        os.environ[existing_env.ENV_KEY] = env_id
+        print(f"✓ Deploying into your existing environment {env_id}")
+    return env_id
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Deploy the Streamhouse labs")
     parser.add_argument(
         "--lab",
@@ -416,7 +436,12 @@ def main():
         action="store_true",
         help="With --always-on: tombstone every generated key before publishing the data again",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--environment",
+        metavar="ENV_ID",
+        help="Deploy a workshop into this existing environment (saved for later runs)",
+    )
+    args = parser.parse_args(argv)
     if args.always_on and (args.workshop or args.video_2):
         parser.error("--always-on deploys the full demo; drop --workshop and --video-2")
     if args.automated and args.testing:
@@ -425,6 +450,11 @@ def main():
         parser.error("--workshop deploys the starting point; drop --with-labs and --video-2")
     if args.speed <= 0:
         parser.error("--speed must be greater than 0")
+    return args
+
+
+def main():
+    args = _parse_args()
 
     print("=== Streamhouse Labs — Deploy ===\n")
     root = get_project_root()
@@ -467,6 +497,7 @@ def main():
             _export_aws_credentials(creds)
             _preflight_always_on(creds)
         ensure_confluent_login(creds)
+        _existing_environment(args, creds_file, creds, labs, workshop, interactive=False)
         print(
             f"✓ Credentials loaded. Region: {region}. Deploying: {', '.join(_targets(labs))}"
             f"{' (workshop)' if workshop else ''}\n"
@@ -507,6 +538,7 @@ def main():
         prompted = True
     ensure_confluent_login(creds, creds_file, interactive=not prompted)
     print("✓ Confluent CLI logged in")
+    env_id = _existing_environment(args, creds_file, creds, labs, workshop, interactive=True)
 
     # No prompt: us-east-1 unless the user set TF_VAR_cloud_region in credentials.env.
     region = creds.get("TF_VAR_cloud_region") or DEFAULT_REGION
@@ -527,7 +559,8 @@ def main():
     if prompt_yes_no("Generate new Confluent Cloud API keys?", default=False):
         api_key, api_secret = generate_confluent_api_keys(prefix)
         if not (api_key and api_secret):
-            print("✗ Could not generate API keys; enter an existing OrganizationAdmin key below.")
+            role = "EnvironmentAdmin" if env_id else "OrganizationAdmin"
+            print(f"✗ Could not generate API keys; enter an existing {role} key below.")
 
     print("\n--- Credential Configuration ---")
     if api_key and api_secret:
@@ -555,6 +588,7 @@ def main():
     print("\n--- Configuration Summary ---")
     print(f"Resource name prefix: {prefix}")
     print(f"Region: {region}")
+    print(f"Environment: existing {env_id} (kept on destroy)" if env_id else "Environment: new")
     api_key_state = "set" if final_creds.get("TF_VAR_confluent_cloud_api_key") else "MISSING"
     print(f"Confluent Cloud API key: {api_key_state}")
     print(f"Confluent CLI auto-login: {'saved' if final_creds.get('CONFLUENT_EMAIL') else 'not saved'}")

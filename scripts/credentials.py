@@ -45,7 +45,9 @@ def load_or_create_credentials_file(root: Path) -> tuple[Path, dict[str, str]]:
 def generate_confluent_api_keys(
     prefix: str = "streamhouse",
 ) -> tuple[str | None, str | None]:
-    """Create a Cloud API key owned by the user signed in to the Confluent CLI (they need OrganizationAdmin).
+    """Create a Cloud API key owned by the user signed in to the Confluent CLI.
+
+    They need OrganizationAdmin, or EnvironmentAdmin in an existing environment.
 
     Not a service account's key: Tableflow can't assume the IAM role of a provider integration that a
     service account's key created ("Unable to assume the IAM role"), and Terraform creates it with this key.

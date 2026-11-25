@@ -1,13 +1,14 @@
 """Deploying into an attendee's existing environment: core skips what an EnvironmentAdmin can't make."""
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 from dotenv import dotenv_values
 
-from scripts import existing_env, setup_rtce
+from scripts import deploy, destroy, existing_env, setup_rtce
 
 CORE = Path(__file__).parent.parent / "terraform" / "core"
 
@@ -275,3 +276,79 @@ def test_no_user_id_is_an_empty_string(fake_cli):
 def test_a_notice_before_the_json_is_skipped(fake_cli):
     fake_cli(notice="A new version of confluent is available: 1.2.3\n")
     assert existing_env.preflight("env-abc123", {}) == "u-abc123"
+
+
+def _clear_env(monkeypatch, *names):
+    for name in names:  # setenv first, so monkeypatch restores the variable after the test
+        monkeypatch.setenv(name, "x")
+        monkeypatch.delenv(name)
+
+
+def test_deploy_passes_the_user_to_terraform_and_refuses_bots_running_the_full_demo(monkeypatch, tmp_path):
+    monkeypatch.setattr(deploy.setup_rtce, "_read_core_tf_outputs", lambda _: {})
+    monkeypatch.setattr(deploy.existing_env, "preflight", lambda env_id, outputs: "u-abc123")
+    _clear_env(monkeypatch, "TF_VAR_user_id", existing_env.ENV_KEY)
+    args = deploy._parse_args(["--environment", "env-abc12", "--workshop"])
+    creds = {}
+    assert (
+        deploy._existing_environment(args, tmp_path / "c.env", creds, ["flight-disruptions"], True, interactive=False)
+        == "env-abc12"
+    )
+    assert os.environ["TF_VAR_user_id"] == "u-abc123"
+    assert os.environ[existing_env.ENV_KEY] == "env-abc12"
+    with pytest.raises(SystemExit, match="4 hours"):
+        deploy._existing_environment(
+            deploy._parse_args(["--testing"]),
+            tmp_path / "c.env",
+            creds,
+            ["flight-disruptions"],
+            False,
+            interactive=False,
+        )
+
+
+def test_deploy_without_an_environment_still_checks_for_a_flow_switch(monkeypatch, tmp_path):
+    outputs = {"existing_environment": True, "confluent_environment_id": "env-abc12"}
+    monkeypatch.setattr(deploy.setup_rtce, "_read_core_tf_outputs", lambda _: outputs)
+    monkeypatch.setattr(deploy.existing_env, "preflight", lambda *a: pytest.fail("preflight ran"))
+    with pytest.raises(SystemExit, match="uv run destroy"):
+        deploy._existing_environment(
+            deploy._parse_args(["--testing"]), tmp_path / "c.env", {}, ["flight-disruptions"], False, interactive=False
+        )
+
+
+def test_parse_args_keeps_the_existing_checks():
+    assert deploy._parse_args([]).environment is None
+    with pytest.raises(SystemExit):
+        deploy._parse_args(["--automated", "--testing"])
+    with pytest.raises(SystemExit):
+        deploy._parse_args(["--workshop", "--with-labs"])
+
+
+def test_destroy_says_the_environment_is_kept(monkeypatch, tmp_path):
+    assert destroy._kept_environment(tmp_path) == ""
+    (tmp_path / "terraform" / "core").mkdir(parents=True)
+    (tmp_path / "terraform" / "core" / "terraform.tfstate").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        destroy,
+        "run_terraform_output",
+        lambda _: {"existing_environment": True, "confluent_environment_id": "env-abc12"},
+    )
+    assert destroy._kept_environment(tmp_path) == "env-abc12"
+    monkeypatch.setattr(
+        destroy,
+        "run_terraform_output",
+        lambda _: {"existing_environment": False, "confluent_environment_id": "env-new"},
+    )
+    assert destroy._kept_environment(tmp_path) == ""
+
+
+def test_destroy_gives_core_the_user_so_its_variables_validate(monkeypatch):
+    seen = []
+    monkeypatch.setattr(destroy.existing_env, "current_user_id", lambda env_id: seen.append(env_id) or "u-abc123")
+    _clear_env(monkeypatch, "TF_VAR_user_id")
+    destroy._user_for_core({})
+    assert "TF_VAR_user_id" not in os.environ
+    destroy._user_for_core({"TF_VAR_existing_environment_id": "env-abc12"})
+    assert os.environ["TF_VAR_user_id"] == "u-abc123"
+    assert seen == ["env-abc12"]

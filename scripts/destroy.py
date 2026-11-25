@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values, unset_key
 
-from scripts import processes
+from scripts import existing_env, processes
 
 from .credentials import load_or_create_credentials_file
 from .deploy import (
@@ -32,7 +32,7 @@ from .deploy import (
     _export_aws_credentials,
 )
 from .login_checks import ensure_confluent_login
-from .terraform import get_project_root
+from .terraform import get_project_root, run_terraform_output
 from .terraform_runner import run_terraform_destroy
 
 
@@ -181,6 +181,30 @@ def _cleanup_pit_decisions(root: Path) -> None:
     (root / SEED_MARKER).unlink(missing_ok=True)
 
 
+def _kept_environment(root: Path) -> str:
+    """The environment ID when core was deployed into an existing environment (destroy keeps it), else ""."""
+    state = root / "terraform" / "core" / "terraform.tfstate"
+    if not state.exists():
+        return ""
+    try:
+        outputs = run_terraform_output(state)
+    except Exception:
+        return ""
+    return (outputs.get("confluent_environment_id") or "") if outputs.get("existing_environment") else ""
+
+
+def _user_for_core(creds: dict) -> None:
+    """Core's variables require the user's ID in an existing environment, even to destroy."""
+    env_id = (creds.get(existing_env.ENV_KEY) or "").strip()
+    if not env_id:
+        return
+    user_id = existing_env.current_user_id(env_id)
+    if not user_id:  # only core's destroy needs it, and Terraform then names the missing variable
+        print("⚠ Couldn't find your Confluent user ID; if core's destroy fails, run `confluent login` and retry.")
+        return
+    os.environ["TF_VAR_user_id"] = user_id
+
+
 def main():
     """Main entry point for destroy."""
     # Parse command-line arguments
@@ -222,6 +246,9 @@ def main():
         for key, value in creds.items():
             if value:
                 os.environ[key] = value
+        if creds.get(existing_env.ENV_KEY):
+            ensure_confluent_login(creds)  # the user's ID comes from the CLI
+        _user_for_core(creds)
 
         print("✓ Destroying all resources")
         print(f"  Environments: {', '.join(envs_to_destroy)}")
@@ -244,11 +271,16 @@ def main():
         for key, value in creds.items():
             if value:
                 os.environ[key] = value
+        _user_for_core(creds)
 
         # Step 4: Show summary and confirm
         print("\n--- Destroy Summary ---")
         print(f"Destroying: {', '.join(envs_to_destroy)}")
-        print(f"\n⚠️  WARNING: This will permanently destroy {', '.join(envs_to_destroy)}!")
+        kept = _kept_environment(root) if "core" in envs_to_destroy else ""
+        if kept:
+            print(f"\nYour environment {kept} is kept; the cluster, compute pool and keys are deleted.")
+        else:
+            print(f"\n⚠️  WARNING: This will permanently destroy {', '.join(envs_to_destroy)}!")
 
         confirm = input("\nAre you sure you want to proceed? (y/n): ").strip().lower()
         if confirm != "y":
