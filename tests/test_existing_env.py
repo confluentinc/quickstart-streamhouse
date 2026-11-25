@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from dotenv import dotenv_values
 
-from scripts import setup_rtce
+from scripts import existing_env, setup_rtce
 
 CORE = Path(__file__).parent.parent / "terraform" / "core"
 
@@ -79,3 +79,73 @@ def test_without_a_deployment_the_stored_key_is_kept(monkeypatch, tmp_path):
     monkeypatch.setattr(setup_rtce, "_read_core_tf_outputs", lambda _: {})
     creds = {"CONFLUENT_RTCE_API_KEY": "MINE"}
     assert setup_rtce.ensure_global_key(tmp_path / "credentials.env", creds) == "MINE"
+
+
+def test_a_pasted_id_is_trimmed_checked_and_saved(monkeypatch, tmp_path, capsys):
+    answers = iter(["lkc-123", '  "env-abc12" '])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    creds_file, creds = tmp_path / "credentials.env", {}
+    chosen = existing_env.choose(None, creds_file, creds, interactive=True, full=False)
+    assert chosen == "env-abc12"
+    assert creds[existing_env.ENV_KEY] == "env-abc12"
+    assert dotenv_values(creds_file)[existing_env.ENV_KEY] == "env-abc12"
+    assert "env-" in capsys.readouterr().out
+
+
+def test_enter_keeps_the_new_environment_flow(monkeypatch, tmp_path):
+    monkeypatch.setattr("builtins.input", lambda _: "")
+    assert existing_env.choose(None, tmp_path / "c.env", {}, interactive=True, full=False) == ""
+
+
+def test_full_demos_never_ask_and_refuse_an_existing_environment(monkeypatch, tmp_path):
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("no prompt for a full demo"))
+    assert existing_env.choose(None, tmp_path / "c.env", {}, interactive=True, full=True) == ""
+    with pytest.raises(SystemExit, match="stop after 4 hours"):
+        existing_env.choose(None, tmp_path / "c.env", {existing_env.ENV_KEY: "env-abc12"}, interactive=False, full=True)
+
+
+def test_a_bad_flag_exits(tmp_path):
+    with pytest.raises(SystemExit, match="env-"):
+        existing_env.choose("lkc-123", tmp_path / "c.env", {}, interactive=False, full=False)
+
+
+def test_a_saved_id_is_used_without_a_write_or_prompt(monkeypatch, tmp_path):
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("no prompt"))
+    creds_file = tmp_path / "c.env"
+    creds = {existing_env.ENV_KEY: "env-abc12"}
+    assert existing_env.choose(None, creds_file, creds, interactive=True, full=False) == "env-abc12"
+    assert existing_env.choose("env-abc12", creds_file, creds, interactive=True, full=False) == "env-abc12"
+    assert not creds_file.exists()
+
+
+def test_a_flag_that_differs_replaces_the_saved_id(tmp_path):
+    creds_file = tmp_path / "c.env"
+    creds = {existing_env.ENV_KEY: "env-abc12"}
+    assert existing_env.choose("env-zzz9", creds_file, creds, interactive=False, full=False) == "env-zzz9"
+    assert creds[existing_env.ENV_KEY] == "env-zzz9"
+    assert dotenv_values(creds_file)[existing_env.ENV_KEY] == "env-zzz9"
+
+
+@pytest.mark.parametrize("flights,workshop,expected", [(True, True, False), (True, False, True), (False, False, False)])
+def test_only_workshop_deploys_count_as_not_full(flights, workshop, expected):
+    result = existing_env.full_demo(with_labs=False, video_2=False, always_on=False, flights=flights, workshop=workshop)
+    assert result is expected
+
+
+@pytest.mark.parametrize(
+    "env_id,outputs",
+    [
+        ("env-abc12", {"confluent_environment_id": "env-new"}),
+        ("", {"existing_environment": True, "confluent_environment_id": "env-abc12"}),
+        ("env-other", {"existing_environment": True, "confluent_environment_id": "env-abc12"}),
+    ],
+)
+def test_switching_flows_needs_a_destroy_first(env_id, outputs):
+    with pytest.raises(SystemExit, match="uv run destroy"):
+        existing_env.check_flow_switch(env_id, outputs)
+
+
+def test_same_flow_or_nothing_deployed_passes():
+    existing_env.check_flow_switch("", {})
+    existing_env.check_flow_switch("env-abc12", {"existing_environment": True, "confluent_environment_id": "env-abc12"})
+    existing_env.check_flow_switch("", {"confluent_environment_id": "env-new"})
