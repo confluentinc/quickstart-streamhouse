@@ -147,18 +147,11 @@ credit is used first, so you typically won't be charged during the workshop.
     |---|---|
     | `Which lab do you want to deploy?` | Enter `1` for **Flight Disruptions**. This deploys the starting infrastructure; you build the rest in the labs. |
     | `Email (Enter to skip)` and `Password` | The **email and password you used to sign up**. The script verifies your login details and saves them to `credentials.env` for later commands. **Signed in with SSO in step 2?** Press **Enter** to skip. |
-    | `Deploy into an existing environment? Paste its ID (env-xxxxx), or press Enter to create a new one:` | Press **Enter**. **Your admin gave you an environment?** Paste its ID instead (see the [README](../../README.md#deploying-into-an-existing-environment)). |
+    | `Deploy into an existing environment? Paste its ID (env-xxxxx), or press Enter to create a new one:` | Press **Enter**. If your admin gave you an environment ID, paste it instead. |
     | `Generate new Confluent Cloud API keys? (y/N)` | Enter `y`. The script creates and configures the key automatically. |
     | `Ready to deploy? (y/n)` | Enter `y`. |
 
-    **Deploy takes about 10 minutes to create all of the workshop infrastructure and source topics.** When finished, you'll see your environment and cluster names, which you need in Lab 2:
-
-    ```text
-    Environment name: streamhouse-1a2b3c4d-env
-    Cluster name: streamhouse-1a2b3c4d-cluster
-    ```
-
-    In an environment your admin gave you, the environment name is that environment's own name. Use it wherever this guide says `streamhouse-…-env`.
+    **Deploy takes about 10 minutes to create all of the workshop infrastructure and source topics.** When finished, you'll see your environment and cluster names, which you need in Lab 2.
 
 4. Start the datagen:
 
@@ -179,7 +172,7 @@ credit is used first, so you typically won't be charged during the workshop.
 
 River Air's data comes from different systems: itineraries from ticketing, flight status from the airports' operational databases, and hotel rooms from a partner. Let's look at them as they arrive.
 
-1. Open **[Topics](https://confluent.cloud/go/topics)** and select your **environment** (`streamhouse-…-env`) and **cluster** (`streamhouse-…-cluster`). You see the five topics deploy created: `flight_status`, `passenger_itineraries`, `hotel_inventory`, `flight_telemetry`, and `passenger_recommendations`.
+1. Open **[Topics](https://confluent.cloud/go/topics)** and select your **environment** and **cluster** (`streamhouse-…-cluster`). You see the five topics deploy created: `flight_status`, `passenger_itineraries`, `hotel_inventory`, `flight_telemetry`, and `passenger_recommendations`.
 
 <img src="../images/flight-disruptions/topics-view.png" alt="The cluster&#x27;s Topics list with the demo topics, starting with flight_status" width="750">
 
@@ -193,7 +186,7 @@ Use Flink to join each itinerary with the live status of both flights. Connectio
 
 1. Open the Flink SQL workspace:
 
-    1. Go to the [Flink UI](https://confluent.cloud/go/flink) and select the **environment** deploy created (`streamhouse-…-env`).
+    1. Go to the [Flink UI](https://confluent.cloud/go/flink) and select your **environment**.
 
         <img src="../images/select-flink-environment.png" alt="The Navigate to your Flink compute pools dialog with the streamhouse environment selected" width="450">
 
@@ -201,7 +194,7 @@ Use Flink to join each itinerary with the live status of both flights. Connectio
 
         <img src="../images/open-sql-workspace.png" alt="The streamhouse compute pool card with its SQL Workspace button" width="400">
 
-    3. Set the **Catalog** to your environment and the **Database** to your cluster: the names printed at the end of `uv run deploy` (`streamhouse-…-env` and `streamhouse-…-cluster`).
+    3. Set the **Catalog** to your environment and the **Database** to your cluster: the names printed at the end of `uv run deploy` (your environment and `streamhouse-…-cluster`).
 
         <img src="../images/set-catalog-database.png" alt="The SQL workspace with Use catalog set to the streamhouse environment and Use database set to its cluster" width="600">
 
@@ -720,7 +713,7 @@ Congratulations! You built a Streamhouse. It turns raw flight and itinerary feed
     uv run destroy
     ```
 
-    It deletes your environment and everything in it: the cluster, the topics, the tables and agent you created, and the Flink connection. But in an environment your admin gave you, destroy keeps the environment, its Schema Registry subjects and the Flink connection.
+    It deletes everything deploy created: the cluster, the topics, the tables and agent you created, and the environment (with its Flink connection) if deploy made it.
 
     <details>
     <summary>Remove only this lab</summary>

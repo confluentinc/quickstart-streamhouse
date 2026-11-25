@@ -117,11 +117,11 @@ credit is used first, so you typically won't be charged during the workshop.
     |---|---|
     | `Which lab do you want to deploy?` | Enter `2` for **Agentic Pit Decisions**. Deploy builds the lab's starting point, and you build the rest in this walkthrough. |
     | `Email (Enter to skip)` and `Password` | The **email and password you used to sign up**. Deploy checks them with a real login and saves them to `credentials.env`, so later commands log in automatically. **Signed in with SSO in step 2?** Press **Enter** to skip. |
-    | `Deploy into an existing environment? Paste its ID (env-xxxxx), or press Enter to create a new one:` | Press **Enter**. **Your admin gave you an environment?** Paste its ID instead (see the [README](../../README.md#deploying-into-an-existing-environment)). |
+    | `Deploy into an existing environment? Paste its ID (env-xxxxx), or press Enter to create a new one:` | Press **Enter**. If your admin gave you an environment ID, paste it instead. |
     | `Generate new Confluent Cloud API keys? (y/N)` | Enter `y`. Deploy creates the key and uses it, so it doesn't ask for a key or secret. |
     | `Ready to deploy? (y/n)` | Enter `y`. |
 
-    When it finishes, deploy prints your **catalog** and **database** names, which you need in Section 1. In an environment your admin gave you, the catalog is that environment's own name. Use it wherever this walkthrough says `streamhouse-…-env`.
+    When it finishes, deploy prints your **catalog** and **database** names, which you need in Section 1.
 
 ## 1. Enhance the data with built-in ML functions and start the race
 
@@ -129,7 +129,7 @@ The provisioning step sets up source tables for car telemetry, live race standin
 
 1. Open the Flink SQL workspace:
 
-    1. Go to the [Flink UI](https://confluent.cloud/go/flink) and select the **environment** deploy created (`streamhouse-…-env`).
+    1. Go to the [Flink UI](https://confluent.cloud/go/flink) and select your **environment**.
 
         <img src="../images/select-flink-environment.png" alt="The Navigate to your Flink compute pools dialog with the streamhouse environment selected" width="450">
 
@@ -137,7 +137,7 @@ The provisioning step sets up source tables for car telemetry, live race standin
 
         <img src="../images/open-sql-workspace.png" alt="The streamhouse compute pool card with its SQL Workspace button" width="400">
 
-    3. Set the **Catalog** to your environment and the **Database** to your cluster: the names printed at the end of `uv run deploy` (`streamhouse-…-env` and `streamhouse-…-cluster`).
+    3. Set the **Catalog** to your environment and the **Database** to your cluster: the names printed at the end of `uv run deploy` (your environment and `streamhouse-…-cluster`).
 
         <img src="../images/set-catalog-database.png" alt="The SQL workspace with Use catalog set to the streamhouse environment and Use database set to its cluster" width="600">
 
@@ -405,7 +405,7 @@ Real-Time Context Engine (RTCE), powered by Lightning Tables, exposes a Kafka to
 
 Because RTCE reads from Lightning Tables, a topic is available to agents once its **Lightning Table** is enabled. Enable it in the Console for all three race topics: `car_telemetry`, `car_state`, and `pit_decisions`.
 
-1. Open **[Topics](https://confluent.cloud/go/topics)**, select your **environment** (`streamhouse-…-env`) and **cluster** (`streamhouse-…-cluster`), find the **Lightning Tables** column, and click **+ Enable** for `car_telemetry`:
+1. Open **[Topics](https://confluent.cloud/go/topics)**, select your **environment** and **cluster** (`streamhouse-…-cluster`), find the **Lightning Tables** column, and click **+ Enable** for `car_telemetry`:
 
     <img src="../images/agentic-pit-decisions/lightning-tables-enable.png" alt="The cluster's Topics list with + Enable in the Lightning Tables column for car_state and car_telemetry" width="750">
 
@@ -522,7 +522,7 @@ uv run f1-reset
 
 After reset, recreate `car_state`, wait for it to show **Running**, then start `uv run f1-race` again (or run `uv run f1-reset --with-labs` to rebuild `car_state`, `pit_strategy_agent`, and `pit_decisions` automatically before starting `uv run f1-race`).
 
-To tear down everything, including the environment and cluster, run:
+To tear down everything deploy created, including the cluster and the environment if deploy made it, run:
 
 ```bash
 uv run destroy
