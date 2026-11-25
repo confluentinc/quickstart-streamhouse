@@ -231,6 +231,14 @@ def test_lightning_command_for_powershell_quotes_the_sql(monkeypatch):
     assert command.endswith("| ConvertTo-Json -Depth 10")
 
 
+def test_lightning_command_for_curl_pretty_prints_the_json(monkeypatch):
+    monkeypatch.setattr(setup_rtce.sys, "platform", "darwin")
+    infra = {"region": "us-east-1", "env_id": "env-1", "cluster_id": "lkc-1", "org_id": "o"}
+    command = setup_rtce.lightning_command(infra, "key", "secret", "car_telemetry")
+    assert command.startswith("curl -sS -X POST https://")
+    assert command.endswith("| uv run python -m json.tool")  # uv is on every attendee's machine; jq isn't
+
+
 def test_text_files_are_checked_out_with_lf():
     """.gitattributes pins LF, which Terraform's file() sends to Flink byte for byte."""
     for path in [*(ROOT / "terraform" / "airline-demo" / "sql").glob("*.sql"), ROOT / "terraform/airline-demo/main.tf"]:

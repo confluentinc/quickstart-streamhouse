@@ -230,7 +230,6 @@ The provisioning step sets up source tables for car telemetry, live race standin
 4. Open the Pit Wall dashboard. Open a **second terminal**, go to the repo folder, and run:
 
     ```bash
-    cd quickstart-streamhouse
     uv run f1-pitwall
     ```
 
