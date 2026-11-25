@@ -109,6 +109,8 @@ credit is used first, so you typically won't be charged during the workshop.
     uv run deploy
     ```
 
+    Given an existing environment by your admin? Paste its ID when deploy asks; see the [README](../../README.md#deploying-into-an-existing-environment).
+
     <img src="../images/agentic-pit-decisions/selfservice-up.png" alt="uv run deploy: API key generation, configuration prompts, and the ready prompt" width="600">
 
     Deploy asks for the following, in this order:
