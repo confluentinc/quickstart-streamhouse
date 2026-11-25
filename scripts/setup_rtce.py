@@ -642,6 +642,40 @@ def _register_with_claude_code_filewrite(server_name: str, url: str, token: str)
     return "Claude Code local scope (http, direct write)"
 
 
+def unregister_rtce_server(server_name: str = _DEFAULT_SERVER_NAME) -> None:
+    """Remove the RTCE MCP server from Claude Code and Codex, whichever way it was registered.
+
+    Safe to call when nothing is registered. `uv run destroy` calls this, because the server's
+    endpoint and token die with the environment.
+    """
+    remove_argv, _ = _claude_argv_rtce(server_name, "", "")
+    try:
+        subprocess.run(remove_argv, capture_output=True)
+    except FileNotFoundError:
+        pass
+
+    # The direct-write fallback in _register_with_claude_code_filewrite bypasses the CLI.
+    claude_json_path = Path.home() / ".claude.json"
+    try:
+        data = json.loads(claude_json_path.read_text(encoding="utf-8"))
+        servers = data.get("projects", {}).get(_PROJECT_ROOT.as_posix(), {}).get("mcpServers", {})
+        if servers.pop(server_name, None) is not None:
+            claude_json_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    import tomlkit
+
+    for config_path in _codex_config_paths_rtce():
+        try:
+            doc = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+            if server_name in doc.get("mcp_servers", {}):
+                del doc["mcp_servers"][server_name]
+                config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+        except Exception:
+            continue
+
+
 def _codex_config_paths_rtce() -> list[Path]:
     """Return Codex config files that can affect this project (home + project-local)."""
     home_config_path = Path.home() / ".codex" / "config.toml"

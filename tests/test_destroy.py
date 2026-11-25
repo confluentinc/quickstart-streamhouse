@@ -6,7 +6,14 @@ import sys
 
 import pytest
 
-from scripts import destroy
+from scripts import destroy, setup_rtce
+
+
+@pytest.fixture(autouse=True)
+def _no_real_mcp_cleanup(monkeypatch):
+    """A full destroy edits the user's Claude and Codex config; keep tests off the real ones."""
+    monkeypatch.setattr(destroy, "unregister_rtce_server", lambda: None)
+    monkeypatch.setattr(destroy, "_cleanup_mcp", lambda root: None)
 
 
 def _deployment(tmp_path, monkeypatch):
@@ -94,3 +101,48 @@ def test_destroy_stops_the_local_datagen_stream(tmp_path, monkeypatch):
     destroy.main()
 
     assert not pid_file.exists()
+
+
+def test_destroy_unregisters_the_rtce_mcp_server(tmp_path, monkeypatch):
+    _deployment(tmp_path, monkeypatch)
+    monkeypatch.setattr(destroy, "run_terraform_destroy", lambda env_path: True)
+    removed = []
+    monkeypatch.setattr(destroy, "unregister_rtce_server", lambda: removed.append(True))
+
+    destroy.main()
+
+    assert removed == [True]
+
+
+def test_unregister_removes_direct_write_and_codex_entries(tmp_path, monkeypatch):
+    import json
+
+    name = setup_rtce._DEFAULT_SERVER_NAME
+    monkeypatch.setattr(setup_rtce.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(setup_rtce.subprocess, "run", lambda *a, **k: None)
+
+    project = setup_rtce._PROJECT_ROOT.as_posix()
+    claude_json = tmp_path / ".claude.json"
+    claude_json.write_text(
+        json.dumps({"projects": {project: {"mcpServers": {name: {"type": "http"}, "other": {}}}}}),
+        encoding="utf-8",
+    )
+    codex = tmp_path / ".codex" / "config.toml"
+    codex.parent.mkdir()
+    codex.write_text(f'[mcp_servers.{name}]\nurl = "x"\n\n[mcp_servers.other]\nurl = "y"\n', encoding="utf-8")
+
+    setup_rtce.unregister_rtce_server()
+
+    servers = json.loads(claude_json.read_text(encoding="utf-8"))["projects"][project]["mcpServers"]
+    assert servers == {"other": {}}
+    assert name not in codex.read_text(encoding="utf-8")
+    assert "[mcp_servers.other]" in codex.read_text(encoding="utf-8")
+
+
+def test_unregister_with_nothing_registered_is_a_noop(tmp_path, monkeypatch):
+    monkeypatch.setattr(setup_rtce.Path, "home", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(setup_rtce.subprocess, "run", lambda *a, **k: None)
+
+    setup_rtce.unregister_rtce_server()

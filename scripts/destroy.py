@@ -32,6 +32,7 @@ from .deploy import (
     _export_aws_credentials,
 )
 from .login_checks import ensure_confluent_login
+from .setup_rtce import unregister_rtce_server
 from .terraform import get_project_root, run_terraform_output
 from .terraform_runner import run_terraform_destroy
 
@@ -352,6 +353,8 @@ def main():
         return
 
     _cleanup_mcp(root)
+    unregister_rtce_server()
+    print("✓ Removed the RTCE MCP server registration")
     _cleanup_pit_decisions(root)
 
     # With nothing deployed, the next deploy can be either kind again and asks which lab.
