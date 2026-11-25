@@ -149,3 +149,21 @@ def test_same_flow_or_nothing_deployed_passes():
     existing_env.check_flow_switch("", {})
     existing_env.check_flow_switch("env-abc12", {"existing_environment": True, "confluent_environment_id": "env-abc12"})
     existing_env.check_flow_switch("", {"confluent_environment_id": "env-new"})
+
+
+def test_an_invalid_saved_id_exits_naming_the_key(tmp_path):
+    with pytest.raises(SystemExit, match=existing_env.ENV_KEY):
+        existing_env.choose(None, tmp_path / "c.env", {existing_env.ENV_KEY: "lkc-123"}, interactive=False, full=False)
+
+
+def test_ctrl_d_at_the_prompt_means_a_new_environment(monkeypatch, tmp_path):
+    def eof(_):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", eof)
+    assert existing_env.choose(None, tmp_path / "c.env", {}, interactive=True, full=False) == ""
+
+
+def test_a_saved_id_refusal_says_where_it_came_from(tmp_path):
+    with pytest.raises(SystemExit, match="delete that line"):
+        existing_env.choose(None, tmp_path / "c.env", {existing_env.ENV_KEY: "env-abc12"}, interactive=False, full=True)

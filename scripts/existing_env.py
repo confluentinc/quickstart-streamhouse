@@ -32,7 +32,10 @@ def _valid_or_exit(env_id: str, source: str) -> str:
 
 def _ask() -> str:
     while True:
-        answer = _clean(input(_PROMPT))
+        try:
+            answer = _clean(input(_PROMPT))
+        except EOFError:
+            return ""
         if not answer or ENV_ID.match(answer):
             return answer
         print(_HINT)
@@ -50,6 +53,11 @@ def choose(flag: str | None, creds_file: Path, creds: dict, *, interactive: bool
     else:
         env_id = ""
     if env_id and full:
+        if env_id == saved and not _clean(flag):
+            sys.exit(
+                f"{_REFUSAL} The environment comes from {ENV_KEY} in {creds_file.name}; "
+                "delete that line (after `uv run destroy`) to go back to a new environment."
+            )
         sys.exit(_REFUSAL)
     if env_id and env_id != saved:
         from scripts import setup_rtce
