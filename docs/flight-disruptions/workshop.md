@@ -141,7 +141,7 @@ credit is used first, so you typically won't be charged during the workshop.
     uv run deploy
     ```
 
-    Given an existing environment by your admin? Paste its ID when deploy asks; see the [README](../../README.md#deploying-into-an-existing-environment).
+    Given an existing environment by your admin? On a fresh checkout, paste its ID when deploy asks; to switch an existing deployment, see the [README](../../README.md#deploying-into-an-existing-environment).
 
     Deploy asks for the following, in this order:
 
@@ -719,7 +719,7 @@ Congratulations! You built a Streamhouse. It turns raw flight and itinerary feed
     uv run destroy
     ```
 
-    It deletes your environment and everything in it: the cluster, the topics, the tables and agent you created, and the Flink connection. In an environment your admin gave you, destroy keeps the environment, its Schema Registry subjects and the Flink connection.
+    It deletes your environment and everything in it: the cluster, the topics, the tables and agent you created, and the Flink connection. But in an environment your admin gave you, destroy keeps the environment, its Schema Registry subjects and the Flink connection.
 
     <details>
     <summary>Remove only this lab</summary>

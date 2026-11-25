@@ -105,17 +105,17 @@ Then follow its guide: [Agentic Airline Operations](./docs/flight-disruptions/wo
 
 For workshop attendees whose admin created a Confluent Cloud environment for them. Ask your admin for an environment that is yours alone, with you as EnvironmentAdmin on it and Stream Governance set to ADVANCED (with Schema Registry enabled).
 
-Paste the environment ID when deploy asks, or pass it up front:
+On a fresh checkout (nothing deployed yet), deploy asks for the environment ID right after the Confluent CLI login; paste it, or pass it up front:
 
 ```shell
 uv run deploy --environment env-xxxxx
 ```
 
-Workshops only: deploy refuses `--with-labs`, `--video-2` and `--always-on` here, because Flink statements that run as a user stop after 4 hours. Everything runs as you, so each person can own only 2 Global API keys; deploy checks that you have room for the one it creates.
+Workshops only: deploy refuses `--with-labs`, `--video-2` and `--always-on` here, because Flink statements that run as a user stop after 4 hours. Everything runs as you. Each user can own at most 2 Global API keys, and deploy creates one; it checks you have room before running Terraform.
 
 `uv run destroy` keeps the environment and deletes the cluster, compute pool and keys. The Schema Registry subjects and the `rtce-connection` Flink connection stay in it.
 
-To go back to a new environment, run `uv run destroy`, then delete the `TF_VAR_existing_environment_id` line from `credentials.env`.
+To switch an existing deployment, or go back to a new environment, run `uv run destroy`, then delete the `TF_VAR_existing_environment_id` line from `credentials.env`.
 
 ## Always-on demo
 
@@ -128,6 +128,8 @@ Tear down everything deploy created (the environment, cluster, Flink pool, and b
 ```shell
 uv run destroy
 ```
+
+If you deployed into an existing environment, destroy keeps that environment; see [Deploying into an existing environment](#deploying-into-an-existing-environment).
 
 <details>
 <summary>Remove only one lab</summary>
