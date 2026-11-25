@@ -117,7 +117,7 @@ QUICK_IDENTITY_REGION = "us-east-1"
 QUICK_TABLES = ("flight_impact", "passenger_recommendations")
 GLUE_WAIT_SECONDS = 900  # Tableflow's first sync of a topic takes a few minutes
 # Compacted, so a source feed keeps each flight's, passenger's, and hotel's latest row however long it runs.
-COMPACTED_TOPICS = ("flight_status", "passenger_itineraries", "hotel_inventory")
+COMPACTED_TOPICS = ("flight_status", "passenger_itineraries", "hotel_inventory", "flight_telemetry")
 # terraform/always-on creates the Lambda and ECS roles, so the operator must be able to.
 ALWAYS_ON_IAM_ACTIONS = (
     "iam:CreateRole",

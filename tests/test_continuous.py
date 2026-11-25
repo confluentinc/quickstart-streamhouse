@@ -195,6 +195,9 @@ def test_state_has_current_hotels_and_every_live_days_itineraries():
     state = g.continuous_state(g.SEED, NOW)
     hotels = {k: v["available_rooms"] for t, k, v in state if t == g.HOTELS}
     assert hotels == g.rooms_at(g.SEED, NOW)
+    assert all(row["as_of"] == NOW for topic, _, row in state if topic == g.HOTELS)
+    telemetry = [row for topic, _, row in state if topic == g.TELEMETRY]
+    assert telemetry and all(row["as_of"] == NOW and row["stage"] != "LANDED" for row in telemetry)
     itineraries = {k for t, k, _ in state if t == g.ITINERARIES}
     days = [g.continuous_day(g.SEED, DAY + timedelta(days=n)) for n in (-1, 0, 1)]
     assert itineraries == {p.key for d in days for p in d.passengers}
@@ -215,6 +218,9 @@ def test_events_cross_midnight_without_gaps():
     assert any("-20261114" in k for _, t, k, _ in events if t == g.FLIGHTS)  # D+1 published at midnight
     assert any(t == g.ITINERARIES and k.startswith("P-1114-") for _, t, k, _ in events)
     assert len({(at, t, k) for at, t, k, _ in events}) == len(events)  # telemetry shares a flight's key
+    telemetry = [(at, row) for at, topic, _, row in events if topic == g.TELEMETRY and row is not None]
+    assert telemetry and all(row["as_of"] == at for at, row in telemetry)
+    assert all(row["as_of"] == at for at, topic, _, row in events if topic == g.HOTELS)
 
 
 def test_hotels_refill_at_midnight_once():
@@ -234,6 +240,7 @@ def test_midnight_tombstones_the_day_past_retention():
     expected = {f.key for f in g.continuous_day(g.SEED, old).flights}
     assert len(expected) == 180
     assert {k for t, k in tombstones if t == g.FLIGHTS} >= expected
+    assert {k for t, k in tombstones if t == g.TELEMETRY} == {k for t, k in tombstones if t == g.FLIGHTS}
     assert any(t == g.ITINERARIES for t, _ in tombstones)
     assert any(t == g.OFFERS and k.endswith("-O1") for t, k in tombstones)
     assert any(t == g.OFFERS and k.endswith("-O2") for t, k in tombstones)
@@ -354,7 +361,7 @@ def test_start_tombstones_the_days_a_missed_midnight_would_have():
     assert len(expected) == 180 * len(days)
     assert all(value is None for _, _, value in tombstones)
     assert {key for topic, key, _ in tombstones if topic == g.FLIGHTS} == expected
-    assert {t for t, _, _ in tombstones} == {g.FLIGHTS, g.ITINERARIES, g.OFFERS}
+    assert {t for t, _, _ in tombstones} == {g.FLIGHTS, g.TELEMETRY, g.ITINERARIES, g.OFFERS}
 
 
 def test_run_continuous_publishes_the_state_then_the_missed_tombstones(monkeypatch):

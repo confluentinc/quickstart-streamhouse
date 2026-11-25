@@ -31,7 +31,7 @@ plans AS (
     CONCAT(
       'inbound_flight_id=', g.inbound_flight_id,
       '; final_destination=', g.final_destination,
-      '; inbound_query=SELECT * FROM `flight_status` WHERE "KEY" = ''', g.inbound_flight_id, ''' LIMIT 1',
+      '; inbound_query=SELECT * FROM `flight_status` WHERE "KEY" = ''', g.inbound_flight_id, ''' ORDER BY estimated_arrival DESC LIMIT 1',
       '; departures_query=SELECT * FROM `flight_status` WHERE origin = ''SFO'' AND destination = ''',
       g.final_destination, ''' AND scheduled_departure >= TIMESTAMP ''',
       DATE_FORMAT(g.impacted_at - INTERVAL '1' HOUR, 'yyyy-MM-dd HH:mm:ss'),
@@ -44,6 +44,8 @@ plans AS (
 offers AS (
   SELECT
     h.`key` AS passenger_id,
+    h.inbound_flight_id,
+    h.final_destination,
     h.impacted_at,
     o.n,
     NULLIF(REGEXP_EXTRACT(p.response, CONCAT('O', o.n, '_FLIGHT=([^;\s]+)'), 1), 'NONE') AS recommended_flight_id,
@@ -63,5 +65,18 @@ SELECT
   hotel_cost,
   impacted_at,
   CAST(CURRENT_TIMESTAMP AS TIMESTAMP(3)) AS recommended_at
-FROM offers
-WHERE recommended_flight_id IS NOT NULL;
+FROM offers AS o
+JOIN LATERAL SNAPSHOT(
+  input => TABLE flight_status,
+  on_time => DESCRIPTOR($rowtime),
+  load_completed_idle_timeout => INTERVAL '10' SECOND
+) AS inbound ON o.inbound_flight_id = inbound.`key`
+JOIN LATERAL SNAPSHOT(
+  input => TABLE flight_status,
+  on_time => DESCRIPTOR($rowtime),
+  load_completed_idle_timeout => INTERVAL '10' SECOND
+) AS onward ON o.recommended_flight_id = onward.`key`
+WHERE onward.origin = 'SFO'
+  AND onward.destination = o.final_destination
+  AND onward.status NOT IN ('CANCELLED', 'DEPARTED')
+  AND onward.estimated_departure >= inbound.estimated_arrival + INTERVAL '45' MINUTE;

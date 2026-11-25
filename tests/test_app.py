@@ -74,6 +74,8 @@ def test_builder_rejects_invalid_input(kwargs):
 
 
 def _compare(row_value, op, value):
+    if op == "IN":
+        return row_value in value
     if isinstance(value, datetime):
         row_value = airport_app._timestamp(row_value)
     elif isinstance(value, (int, float, Decimal)):
@@ -142,7 +144,7 @@ def _offer(key, hotel_name, cost, status="OFFERED"):
     return {
         "key": key,
         "passenger_id": "P-0928-417-001",
-        "recommended_flight_id": "RA88-20260929",
+        "recommended_flight_id": "RA88-20260928",
         "hotel_name": hotel_name,
         "status": status,
         "hotel_cost": cost,
@@ -205,6 +207,7 @@ def test_hotels_still_read_a_deployment_from_before_as_of_existed(monkeypatch):
 
 
 def test_selecting_a_sold_out_hotel_offers_a_third_hotel_then_book_closes_other(fake):
+    _seed_offer_flights(fake)
     fake.tables["hotel_inventory"] = HOTELS
     fake.tables["passenger_recommendations"] = [
         _offer("P-0928-417-001-O1", GRAND_HYATT, "329.00"),
@@ -232,6 +235,7 @@ def test_selecting_a_sold_out_hotel_offers_a_third_hotel_then_book_closes_other(
 
 
 def test_sold_out_hotel_falls_back_to_the_other_offers_hotel_when_nothing_else_has_rooms(fake):
+    _seed_offer_flights(fake)
     fake.tables["hotel_inventory"] = [
         {**row, "available_rooms": "0" if row["key"] != MARRIOTT else "4"} for row in HOTELS
     ]
@@ -244,6 +248,7 @@ def test_sold_out_hotel_falls_back_to_the_other_offers_hotel_when_nothing_else_h
 
 
 def test_book_rejects_sold_out_hotel(fake):
+    _seed_offer_flights(fake)
     fake.tables["hotel_inventory"] = HOTELS
     fake.tables["passenger_recommendations"] = [_offer("P-0928-417-001-O1", GRAND_HYATT, "329.00", status="SELECTED")]
     with pytest.raises(airport_app.HTTPException) as error:
@@ -252,7 +257,7 @@ def test_book_rejects_sold_out_hotel(fake):
 
 
 def test_passenger_returns_offers_and_hotel_options_cheapest_first(fake):
-    fake.tables["passenger_state"] = [{"key": "P-0928-417-001", "risk": "HIGH"}]
+    _seed_offer_flights(fake)
     fake.tables["passenger_recommendations"] = [
         _offer("P-0928-417-001-O2", MARRIOTT, "229.00"),
         _offer("P-0928-417-001-O1", GRAND_HYATT, "329.00"),
@@ -268,6 +273,7 @@ def test_passenger_returns_offers_and_hotel_options_cheapest_first(fake):
 
 
 def test_select_and_book_offer_without_hotel(fake):
+    _seed_offer_flights(fake)
     fake.tables["hotel_inventory"] = [{**row, "available_rooms": "0"} for row in HOTELS]
     fake.tables["passenger_recommendations"] = [_offer("P-0928-417-001-O1", None, None)]
     chosen = airport_app.select_offer("P-0928-417-001", "P-0928-417-001-O1")
@@ -341,6 +347,35 @@ def _flight(n, scheduled, delay, affected, status="ON_TIME", origin="SFO", desti
 def _set_flights(fake, *flights):
     fake.tables["flight_status"] = [status for status, _ in flights]
     fake.tables["flight_impact"] = [impact for _, impact in flights]
+
+
+def _seed_offer_flights(fake):
+    _set_flights(
+        fake,
+        _flight(417, "2026-09-28 12:00:00", 60, 1, "DELAYED", origin="ORD", destination="SFO"),
+        _flight(88, "2026-09-28 13:45:00", 0, 0),
+    )
+    fake.tables["passenger_state"] = [
+        {"key": "P-0928-417-001", "inbound_flight_id": "RA417-20260928", "final_destination": "SEA", "risk": "HIGH"}
+    ]
+
+
+def test_recovery_rechecks_connection_at_selection_and_booking(fake):
+    _seed_offer_flights(fake)
+    passenger_id = "P-0928-417-001"
+    key = passenger_id + "-O1"
+    fake.tables["passenger_recommendations"] = [_offer(key, None, None)]
+    client = TestClient(airport_app.app)
+    path = f"/api/passenger/{passenger_id}"
+
+    assert client.get(path).json()["offers"][0]["key"] == key  # exactly 45 minutes is eligible
+    delayed = _flight(417, "2026-09-28 12:00:00", 61, 1, "DELAYED", origin="ORD", destination="SFO")
+    fake.tables["flight_status"][0], fake.tables["flight_impact"][0] = delayed
+    assert client.get(path).json()["offers"] == []
+    assert client.post(f"{path}/select/{key}").status_code == 409
+    fake.tables["passenger_recommendations"][0]["status"] = "SELECTED"
+    assert client.post(f"{path}/book/{key}").status_code == 409
+    assert fake.writes == []
 
 
 def test_state_counts_and_delays(fake):
@@ -467,6 +502,26 @@ def test_flight_passengers_high_risk_first(fake):
     assert body["seats"] == list(airport_app.SEATS)
     assert client.get("/api/flight/RA999-20260928").status_code == 404
     assert client.get("/api/passenger/P-missing").status_code == 404
+
+
+def test_flight_and_passenger_choose_the_same_current_risk(fake, monkeypatch):
+    monkeypatch.setattr(airport_app, "PAGE_SIZE", 2)
+    _set_flights(
+        fake,
+        _flight(417, "2026-09-28 11:00:00", 40, 1, "DELAYED", origin="ORD", destination="SFO"),
+        _flight(680, "2026-09-28 12:10:00", 0, 0),
+    )
+    passenger = _passenger(1, "RA417-20260928", "RA680-20260928", "OK")
+    stale = {**passenger, "inbound_estimated_arrival": "2026-09-28 11:00:00", "connection_minutes": 70}
+    live = {**passenger, "inbound_estimated_arrival": "2026-09-28 11:40:00", "connection_minutes": 30, "risk": "HIGH"}
+    stale_onward = {**live, "connection_minutes": 55, "risk": "OK"}
+    fake.tables["passenger_state"] = [stale_onward, live, stale]
+    client = TestClient(airport_app.app)
+    flight = client.get("/api/flight/RA417-20260928").json()
+    assert [(p["key"], p["risk"], p["connection_minutes"]) for p in flight["passengers"]] == [
+        (passenger["key"], "HIGH", 30)
+    ]
+    assert client.get(f"/api/passenger/{passenger['key']}").json()["passenger"] == live
 
 
 def test_a_stale_passenger_state_copy_never_hides_a_high_risk_seat(fake):

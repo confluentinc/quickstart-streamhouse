@@ -847,12 +847,12 @@ def continuous_state(seed: int, now: datetime) -> list[tuple[str, str, dict]]:
 
 
 def _expired_keys(seed: int, service_date: date) -> list[tuple[str, str]]:
-    """Every flight, itinerary, and offer key a continuous day could have written, whatever the settings were.
+    """Every flight, telemetry, itinerary, and offer key a continuous day could have written, whatever the settings.
 
     Passengers are numbered per flight, so every seat number of every arrival covers the passengers of earlier
     settings too (150 stranded per RA417, more delays elsewhere), with both offers each might have had."""
     day = continuous_day.__wrapped__(seed, service_date)  # uncached: an old day is needed once
-    keys = [(FLIGHTS, f.key) for f in day.flights]
+    keys = [(topic, f.key) for f in day.flights for topic in (FLIGHTS, TELEMETRY)]
     for flight in day.arrivals:
         if flight.number == HERO_NUMBER:
             prefix = f"P-{hero_departure(flight.scheduled):%m%d-417-%H%M}"
@@ -1006,6 +1006,11 @@ def _telemetry_events(flight: Flight, after: datetime, until: datetime):
     if (down := telemetry_row(flight, after)) and down["stage"] == "LANDED":
         return
     tick = after + timedelta(seconds=flight.offset % 5 or 5)
+    earliest = flight.scheduled + timedelta(minutes=min(0, min((delay for _, delay in flight.reveals), default=0)))
+    if flight.arrival:
+        earliest -= flight_profile.flight_duration(flight.origin, flight.destination)
+    if tick < earliest:
+        tick += TELEMETRY_EVERY * ((earliest - tick) // TELEMETRY_EVERY)
     while tick <= until:
         if row := telemetry_row(flight, tick):
             yield tick, row
