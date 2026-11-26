@@ -37,7 +37,7 @@ The repo holds two labs that share `terraform/core`. `uv run deploy` asks which 
 * Every Lightning query returns at most 200 rows, even with `LIMIT 500` or a filter, and OFFSET, COUNT, and GROUP BY are rejected. Keep one service day at 180 flights so a single windowed query usually returns it, and page anything larger by key (`WHERE "key" > 'last' ORDER BY "key" LIMIT 200`). The app pages its flights window by each flight's time at SFO instead: arrivals by `scheduled_arrival`, departures by `scheduled_departure`.
 * Lightning returns every version of an upsert row, not just the latest, in key order and capped at 200 (seen on `hotel_inventory`, `flight_status`, `passenger_state`, and `flight_telemetry` on 2026-11-16; it never compacted). `hotel_inventory` has an `as_of` column for this: the app's `_hotels()`, the agent's `hotel_query` (`sql/31`), and `setup-rtce --lightning` read `ORDER BY as_of DESC` and take the first row per hotel. `ORDER BY` sorts across all versions, so a read of the newest rows still sees every hotel.
 * After Lightning is enabled on `flight_status`, it can keep a frozen copy of a flight's row beside the live one (seen in the 2026-10-28 workshop run), and no column tells them apart. The app keeps one row per flight: the copy whose delay `flight_impact` reports, or, before Flink catches up, the copy furthest along.
-* Tableflow writes Iceberg to a customer-owned S3 bucket with an AWS Glue catalog when AWS credentials are present (`terraform/airline-demo/analytics.tf`). No Webhooks source connector is deployed yet; the generator publishes hotel rows directly.
+* Tableflow writes Iceberg to a customer-owned S3 bucket with an AWS Glue catalog when AWS credentials are present (`terraform/tableflow/analytics.tf`). No Webhooks source connector is deployed yet; the generator publishes hotel rows directly.
 * Use synthetic data only; no real passenger/customer PII.
 * Keep secrets and internal material out of tracked files.
 
@@ -45,7 +45,8 @@ The repo holds two labs that share `terraform/core`. `uv run deploy` asks which 
 
 * [`scripts/`](./scripts/) — a Python package (`scripts/pit_decisions/` holds the second lab): deploy/destroy, credential and Terraform helpers, RTCE setup, the generator (`airport_datagen.py`), and the app (`airport_app.py`, `static/`).
 * [`terraform/core/`](./terraform/core/) — Confluent Cloud environment, cluster, Flink pool, service accounts, and keys.
-* [`terraform/airline-demo/`](./terraform/airline-demo/) — the Flight Disruptions pipeline (Flink SQL in `sql/`) and Tableflow to S3/Glue. Separate root because its provider reads core's outputs.
+* [`terraform/airline-demo/`](./terraform/airline-demo/) — the Flight Disruptions pipeline (Flink SQL in `sql/`). Separate root because its provider reads core's outputs.
+* [`terraform/tableflow/`](./terraform/tableflow/) — Tableflow to S3/Glue for the full demo and always-on. The only lab-side root with the AWS provider: deploy applies it only outside the workshop with Tableflow AWS creds, so workshop attendees never download AWS.
 * [`terraform/always-on/`](./terraform/always-on/) — the always-on demo on AWS: ECR, Secrets Manager, Lambda with a function URL (the app), ECS Fargate (the continuous generator), and Athena plus an Amazon Quick Topic over the Tableflow tables (`quick.tf`). Reads core's and airline-demo's outputs.
 * [`terraform/agentic-pit-decisions/`](./terraform/agentic-pit-decisions/) — the Agentic Pit Decisions source tables and hosted model; also reads core's outputs.
 * [`tests/`](./tests/) — pytest suites.

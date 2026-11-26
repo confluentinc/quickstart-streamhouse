@@ -5,7 +5,7 @@ Workshop Key Manager — create and manage scoped AWS credentials for workshops.
 Lets a workshop organizer mint one AWS IAM user + access key pair, scoped to
 exactly what this demo uses that key for: provisioning the Tableflow-to-S3/Glue
 path (Demo 3), an S3 bucket, a cross-account IAM role, and its S3 + Glue Data
-Catalog policies (terraform/airline-demo/analytics.tf).
+Catalog policies (terraform/tableflow/analytics.tf).
 
 The credentials go into API-KEYS-AWS.md and TF_VAR_aws_tableflow_* in
 credentials.env, ready for `uv run deploy --with-labs`.
@@ -120,7 +120,7 @@ def get_demo_policy(account_id: str, region: str, resource_scope: str) -> dict:
 
     provisioning the Tableflow-to-S3/Glue path (Demo 3, optional): an S3 bucket,
     a cross-account IAM role, and its S3 + Glue policies
-    (terraform/airline-demo/analytics.tf), scoped by the names they share
+    (terraform/tableflow/analytics.tf), scoped by the names they share
     (see get_resource_scope).
     """
     bucket_pattern = f"{resource_scope}-analytics"

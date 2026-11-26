@@ -167,7 +167,7 @@ Tables and to a connected agent through RTCE/MCP, and enables Tableflow for Iceb
 - **`queryData` errors on missing args** — pass **all** of `topic_name`, `query`, and
   `max_result_rows`. `getMetadata` takes a single `topic_name` string.
 - **Tableflow topics not listed** — Tableflow needs AWS credentials in core
-  (`aws_tableflow_access_key`) and `enable_analytics = true` in `terraform/airline-demo`.
+  (`aws_tableflow_access_key`) and `enable_analytics = true` in `terraform/tableflow`.
 - **Targeted Terraform change** — never `apply` the full stack for a targeted change; use `-target`.
 
 </details>
@@ -178,7 +178,7 @@ Tables and to a connected agent through RTCE/MCP, and enables Tableflow for Iceb
 uv run destroy
 ```
 
-Removes the Terraform-managed resources (core + airline-demo, including Tableflow and minted keys).
+Removes the Terraform-managed resources (core, airline-demo and tableflow, plus minted keys).
 Confirm the environment is gone in the Confluent Cloud console, and rotate any credentials used for
 a recording. Synthetic data only — no real PII; never commit secrets.
 

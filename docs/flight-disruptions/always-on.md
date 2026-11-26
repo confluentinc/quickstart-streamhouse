@@ -24,7 +24,7 @@
 uv run deploy --always-on
 ```
 
-It deploys the full Flight Disruptions demo with `terraform/core` and `terraform/airline-demo` (with `TF_VAR_continuous`, which drops `sql/27`'s three-flight filter so the agent handles every flight, and adds Tableflow on `passenger_recommendations` next to `flight_impact`). It then publishes 29 finished days plus the current state (on a rerun only the current state, so the agent's offers and the customers' answers in history stay as they are), enables Lightning Tables and RTCE, starts the recovery agent, and compacts the source topics.
+It deploys the full Flight Disruptions demo with `terraform/core`, `terraform/airline-demo` and `terraform/tableflow` (with `TF_VAR_continuous`, which drops `sql/27`'s three-flight filter so the agent handles every flight, and adds Tableflow on `passenger_recommendations` next to `flight_impact`). It then publishes 29 finished days plus the current state (on a rerun only the current state, so the agent's offers and the customers' answers in history stay as they are), enables Lightning Tables and RTCE, starts the recovery agent, and compacts the source topics.
 
 Then [`terraform/always-on/`](../../terraform/always-on/) creates, on AWS:
 

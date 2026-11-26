@@ -126,9 +126,9 @@ def write_tfvars_for_deployment(root: Path, region: str, creds: dict[str, str], 
     """
     Write terraform.tfvars for the core module (AWS-only, airline demo).
 
-    airline-demo needs no tfvars of its own — it inherits everything from core via
-    terraform_remote_state, and enable_analytics defaults to true (auto-skipped
-    when core has no AWS Tableflow credentials).
+    airline-demo and tableflow need no tfvars of their own — they inherit everything
+    from core via terraform_remote_state. Deploy applies tableflow only when core has
+    AWS Tableflow credentials outside the workshop.
 
     Args:
         root: Project root directory
