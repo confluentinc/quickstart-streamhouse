@@ -394,11 +394,13 @@ Next we create the `pit_decisions` table, which invokes `pit_strategy_agent` on 
 >
 > `PIT SOON` can start anywhere from about lap 19 to 23. The exact laps vary by run.
 >
-> The `PIT NOW` call lands on lap 24, the same lap the anomaly appears. An agent reading data even a few laps old would call the stop too late.
+> The `PIT NOW` row is for lap 24, the lap where the anomaly appears. The live leaderboard can advance while the Flink window closes and the agent responds.
 >
 > As `car_state` and `pit_decisions` produce rows, the Pit Wall dashboard unlocks its **Anomaly Detection** and **AI Pit Strategist** panels:
 
 ![Pit Wall dashboard with both Anomaly Detection and AI Pit Strategist panels unlocked, showing the PIT NOW call at lap 24](../images/agentic-pit-decisions/pitwall-pit-now.png)
+
+The Pit Wall may take a few minutes to discover `pit_decisions` if it was open before you created the table. If the SQL query shows decisions and the panel is still locked, restart only `uv run f1-pitwall` and leave `f1-race` running.
 
 ## 5. Enable Lightning Tables on the race topics
 
