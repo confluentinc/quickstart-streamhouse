@@ -22,4 +22,4 @@ provider "confluent" {
 provider "random" {}
 
 # No AWS provider is required: core only ever talks to the Confluent Cloud API.
-# The Tableflow S3/Glue path's AWS provider lives in terraform/airline-demo.
+# The Tableflow S3/Glue path's AWS provider lives in terraform/tableflow.

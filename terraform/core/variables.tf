@@ -68,8 +68,8 @@ variable "confluent_cloud_api_secret" {
 }
 
 # AWS credentials for the Tableflow S3/Glue provider integration
-# (terraform/airline-demo/analytics.tf). Optional: leave empty and
-# airline-demo skips enable_analytics instead of failing.
+# (terraform/tableflow/analytics.tf). Optional: leave empty and
+# deploy skips terraform/tableflow instead of failing.
 variable "aws_tableflow_access_key" {
   description = "AWS Access Key ID for the Tableflow S3/Glue provider integration (optional)"
   type        = string
