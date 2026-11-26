@@ -1,7 +1,7 @@
 # ===========================================================================
 # Amazon Quick over the Tableflow history (scene 3).
 #
-# terraform/airline-demo syncs flight_impact and passenger_recommendations to
+# terraform/tableflow syncs flight_impact and passenger_recommendations to
 # Iceberg in S3 and the Glue database named after the Kafka cluster. This file
 # adds what Quick needs to ask questions of them:
 #   Athena workgroup (+ results bucket) <- Quick data source (own IAM role)

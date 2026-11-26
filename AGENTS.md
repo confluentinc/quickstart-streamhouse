@@ -47,7 +47,7 @@ The repo holds two labs that share `terraform/core`. `uv run deploy` asks which 
 * [`terraform/core/`](./terraform/core/) — Confluent Cloud environment, cluster, Flink pool, service accounts, and keys.
 * [`terraform/airline-demo/`](./terraform/airline-demo/) — the Flight Disruptions pipeline (Flink SQL in `sql/`). Separate root because its provider reads core's outputs.
 * [`terraform/tableflow/`](./terraform/tableflow/) — Tableflow to S3/Glue for the full demo and always-on. The only lab-side root with the AWS provider: deploy applies it only outside the workshop with Tableflow AWS creds, so workshop attendees never download AWS.
-* [`terraform/always-on/`](./terraform/always-on/) — the always-on demo on AWS: ECR, Secrets Manager, Lambda with a function URL (the app), ECS Fargate (the continuous generator), and Athena plus an Amazon Quick Topic over the Tableflow tables (`quick.tf`). Reads core's and airline-demo's outputs.
+* [`terraform/always-on/`](./terraform/always-on/) — the always-on demo on AWS: ECR, Secrets Manager, Lambda with a function URL (the app), ECS Fargate (the continuous generator), and Athena plus an Amazon Quick Topic over the Tableflow tables (`quick.tf`). Reads core's and tableflow's outputs.
 * [`terraform/agentic-pit-decisions/`](./terraform/agentic-pit-decisions/) — the Agentic Pit Decisions source tables and hosted model; also reads core's outputs.
 * [`tests/`](./tests/) — pytest suites.
 * [`docs/`](./docs/) — one folder per lab (`flight-disruptions/`, `agentic-pit-decisions/`) holding its walkthrough and guides, plus `images/<lab>/` for screenshots and architecture diagrams.
