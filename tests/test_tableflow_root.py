@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from scripts import deploy, destroy
+
 TF = Path(__file__).parent.parent / "terraform"
 
 
@@ -24,3 +26,35 @@ def test_tableflow_owns_the_analytics_outputs_and_airline_demo_dropped_them():
 def test_always_on_reads_tableflow_state():
     quick = (TF / "always-on/quick.tf").read_text(encoding="utf-8")
     assert "../tableflow/terraform.tfstate" in quick and "../airline-demo/terraform.tfstate" not in quick
+
+
+def test_workshops_and_creds_free_demos_never_init_a_root_with_the_aws_provider(monkeypatch):
+    monkeypatch.delenv("TF_VAR_enable_analytics", raising=False)
+    for labs, workshop, creds in [
+        (["flight-disruptions"], True, {"TF_VAR_aws_tableflow_access_key": "AKIA"}),
+        (["agentic-pit-decisions"], False, {"TF_VAR_aws_tableflow_access_key": "AKIA"}),
+        (["flight-disruptions", "agentic-pit-decisions"], True, {}),
+        (["flight-disruptions"], False, {}),  # --with-labs without Tableflow creds
+    ]:
+        targets = deploy._targets(labs, deploy._tableflow_on(labs, workshop, creds))
+        assert not any(_declares_aws(t) for t in targets), (labs, workshop)
+
+
+def test_a_full_demo_with_tableflow_creds_applies_tableflow_last(monkeypatch):
+    monkeypatch.delenv("TF_VAR_enable_analytics", raising=False)
+    labs = ["flight-disruptions"]
+    on = deploy._tableflow_on(labs, False, {"TF_VAR_aws_tableflow_access_key": "AKIA"})
+    assert deploy._targets(labs, on) == ["core", "airline-demo", "tableflow"]
+    monkeypatch.setenv("TF_VAR_enable_analytics", "false")
+    assert not deploy._tableflow_on(labs, False, {"TF_VAR_aws_tableflow_access_key": "AKIA"})
+
+
+def test_destroy_takes_tableflow_down_before_airline_demo():
+    assert destroy._envs_to_destroy(None) == ["tableflow", "agentic-pit-decisions", "airline-demo", "core"]
+    assert destroy._envs_to_destroy("flight-disruptions") == ["tableflow", "airline-demo"]
+    assert destroy._envs_to_destroy("agentic-pit-decisions") == ["agentic-pit-decisions"]
+
+
+def test_the_replace_hint_points_at_the_tableflow_root():
+    src = (Path(__file__).parent.parent / "scripts/deploy.py").read_text(encoding="utf-8")
+    assert "-chdir=terraform/tableflow" in src and "-chdir=terraform/airline-demo apply" not in src

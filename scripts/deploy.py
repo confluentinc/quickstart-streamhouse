@@ -12,8 +12,10 @@ Flight Disruptions runs, in order:
   1. terraform/core        — environment, cluster, Flink pool, service accounts,
                              API keys, RTCE reader.
   2. terraform/airline-demo — the River Air Flink pipeline (source tables,
-                             passenger_state, flight_impact) and, with AWS
-                             creds, Tableflow to Iceberg in S3 with AWS Glue.
+                             passenger_state, flight_impact).
+     terraform/tableflow    — with AWS creds outside the workshop, Tableflow to
+                             Iceberg in S3 with AWS Glue (the only root with the
+                             AWS provider, so workshops never download it).
   3. The data generator (same data as `uv run airport-datagen`): 30 days of
      history and today's flights, then a 90-minute live stream in the background.
   4. Lightning Tables and RTCE on the demo topics, plus the RTCE MCP server for
@@ -106,7 +108,7 @@ VIDEO_2_TARGETS = (
 # --always-on: the full demo running around the clock on AWS (terraform/always-on). Saved to credentials.env,
 # so later plain `uv run deploy` runs keep it; `uv run destroy` clears it.
 ALWAYS_ON = "TF_VAR_always_on"
-CONTINUOUS = "TF_VAR_continuous"  # terraform/airline-demo's var.continuous
+CONTINUOUS = "TF_VAR_continuous"  # var.continuous in terraform/airline-demo and terraform/tableflow
 ALWAYS_ON_NAME = "river-air-demo"  # TF_VAR_deployment_name when none is saved
 DEMO_USER_EMAILS = "DEMO_USER_EMAILS"  # credentials.env: the demo users (invited by hand), comma-separated
 DEMO_USER_ROLE = "EnvironmentAdmin"
@@ -212,7 +214,7 @@ def _check_writable(root) -> None:
     creds_file = root / "credentials.env"
     if creds_file.exists() and not os.access(creds_file, os.W_OK):
         problems.append(f"  - {creds_file}: not writable")
-    for folder in (root, root / "terraform" / "core", root / "terraform" / "airline-demo"):
+    for folder in (root, *(root / "terraform" / name for name in ("core", "airline-demo", "tableflow"))):
         if not folder.exists():
             continue
         probe = folder / ".write-check"
@@ -344,8 +346,18 @@ def _ask_demo_emails(creds_file, creds: dict) -> None:
         creds[DEMO_USER_EMAILS] = emails
 
 
-def _targets(labs: list[str]) -> list[str]:
-    return ["core", *(LABS[lab][1] for lab in labs)]
+def _targets(labs: list[str], tableflow: bool = False) -> list[str]:
+    """The Terraform roots to apply, in order. terraform/tableflow comes last, and only when Tableflow is on."""
+    roots = ["core", *(LABS[lab][1] for lab in labs)]
+    return [*roots, "tableflow"] if tableflow and FLIGHT_DISRUPTIONS in labs else roots
+
+
+def _tableflow_on(labs: list[str], workshop: bool, creds: dict) -> bool:
+    """True when this deploy builds Demo 3's Tableflow path: Flight Disruptions outside the workshop, with Tableflow
+    AWS creds. Only terraform/tableflow declares the AWS provider, so no workshop deploy ever downloads it."""
+    enabled = creds.get("TF_VAR_enable_analytics") or os.environ.get("TF_VAR_enable_analytics") or "true"
+    has_creds = bool((creds.get("TF_VAR_aws_tableflow_access_key") or "").strip())
+    return FLIGHT_DISRUPTIONS in labs and not workshop and has_creds and enabled.strip().lower() != "false"
 
 
 def _select_labs(requested: str | None, creds_file, creds: dict, workshop: bool, interactive: bool) -> list[str]:
@@ -501,15 +513,16 @@ def main():
             _preflight_always_on(creds)
         ensure_confluent_login(creds)
         _existing_environment(args, creds_file, creds, labs, workshop, interactive=False)
+        targets = _targets(labs, _tableflow_on(labs, workshop, creds))
         print(
-            f"✓ Credentials loaded. Region: {region}. Deploying: {', '.join(_targets(labs))}"
+            f"✓ Credentials loaded. Region: {region}. Deploying: {', '.join(targets)}"
             f"{' (workshop)' if workshop else ''}\n"
         )
         write_tfvars_for_deployment(root, region, creds, resource_prefix=prefix)
         for key, value in creds.items():
             if value:
                 os.environ[key] = value
-        _deploy(root, _targets(labs), args.video_2)
+        _deploy(root, targets, args.video_2)
         if always_on:
             _finish_always_on(root, args.reset_data)
             return
@@ -596,20 +609,19 @@ def main():
     print(f"Confluent Cloud API key: {api_key_state}")
     print(f"Confluent CLI auto-login: {'saved' if final_creds.get('CONFLUENT_EMAIL') else 'not saved'}")
     print(f"Labs: {', '.join(LABS[lab][0] for lab in labs)}")
+    targets = _targets(labs, _tableflow_on(labs, workshop, final_creds))
     if PIT_DECISIONS in labs:
         print("Pit strategy agent: Claude hosted in Confluent (no AWS credentials needed)")
     if not flights:
-        print(f"Deploying: {', '.join(_targets(labs))}, then the lab's credential card and race history")
+        print(f"Deploying: {', '.join(targets)}, then the lab's credential card and race history")
     elif workshop:
         print("Workshop: source feeds only; you build the Flink tables and the agent, and turn on RTCE")
-        print(f"Deploying: {', '.join(_targets(labs))}")
+        print(f"Deploying: {', '.join(targets)}")
     else:
         print("Recovery agent: Claude hosted in Confluent (no AWS credentials needed)")
-        analytics_state = (
-            "ENABLED" if final_creds.get("TF_VAR_aws_tableflow_access_key") else "skipped (no Tableflow AWS creds)"
-        )
+        analytics_state = "ENABLED" if "tableflow" in targets else "skipped (no Tableflow AWS creds)"
         print(f"Tableflow S3/Glue analytics (Demo 3): {analytics_state}")
-        print(f"Deploying: {', '.join(_targets(labs))}, then demo data and RTCE")
+        print(f"Deploying: {', '.join(targets)}, then demo data and RTCE")
     if always_on:
         print(f"Always-on: then terraform/always-on, and {DEMO_USER_ROLE} for {len(_demo_emails(final_creds))} users")
 
@@ -626,7 +638,7 @@ def main():
     for key, value in final_creds.items():
         if value:
             os.environ[key] = value
-    _deploy(root, _targets(labs), args.video_2)
+    _deploy(root, targets, args.video_2)
     if always_on:
         _finish_always_on(root, args.reset_data)
         return
@@ -1233,7 +1245,7 @@ def _prepare_quick(root, infra: dict[str, str], emails: list[str]) -> list[str]:
     if os.environ.get(QUICK_DENIED) == "1":
         print("⚠ Your AWS credentials can't create the Quick resources, so Quick is skipped.")
         return previous
-    state = root / "terraform" / "airline-demo" / "terraform.tfstate"
+    state = root / "terraform" / "tableflow" / "terraform.tfstate"
     database = (run_terraform_output(state) if state.exists() else {}).get("glue_database", "")
     if not database:
         print("⚠ Tableflow isn't deployed (no AWS credentials for it), so Quick is skipped.")
@@ -1247,7 +1259,7 @@ def _prepare_quick(root, infra: dict[str, str], emails: list[str]) -> list[str]:
             replace = " ".join(f"-replace='confluent_tableflow_topic.analytics[\"{topic}\"]'" for topic in failed)
             print(
                 "  Recreate them (and the Glue integration), then rerun `uv run deploy --always-on`:\n"
-                f"  terraform -chdir=terraform/airline-demo apply {replace} "
+                f"  terraform -chdir=terraform/tableflow apply {replace} "
                 "-replace='confluent_catalog_integration.glue[0]'"
             )
         else:

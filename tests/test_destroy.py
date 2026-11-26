@@ -16,9 +16,9 @@ def _no_real_mcp_cleanup(monkeypatch):
     monkeypatch.setattr(destroy, "_cleanup_mcp", lambda root: None)
 
 
-def _deployment(tmp_path, monkeypatch):
+def _deployment(tmp_path, monkeypatch, roots=("airline-demo", "core")):
     (tmp_path / "credentials.env").write_text("TF_VAR_resource_prefix=test\n", encoding="utf-8")
-    for env in ("airline-demo", "core"):
+    for env in roots:
         (tmp_path / "terraform" / env).mkdir(parents=True)
         (tmp_path / "terraform" / env / "terraform.tfstate").write_text("{}", encoding="utf-8")
     monkeypatch.setattr(destroy, "get_project_root", lambda: tmp_path)
@@ -46,13 +46,13 @@ def test_failed_demo_destroy_keeps_core(tmp_path, monkeypatch):
 
 
 def test_stuck_provider_integration_is_left_to_core(tmp_path, monkeypatch):
-    _deployment(tmp_path, monkeypatch)
+    _deployment(tmp_path, monkeypatch, roots=("tableflow", "airline-demo", "core"))
     attempted = []
     released = []
 
     def fake_destroy(env_path):
         attempted.append(env_path.name)
-        return env_path.name != "airline-demo" or bool(released)
+        return env_path.name != "tableflow" or bool(released)
 
     monkeypatch.setattr(destroy, "run_terraform_destroy", fake_destroy)
     monkeypatch.setattr(
@@ -61,8 +61,8 @@ def test_stuck_provider_integration_is_left_to_core(tmp_path, monkeypatch):
 
     destroy.main()
 
-    assert released == ["airline-demo"]
-    assert attempted == ["airline-demo", "airline-demo", "core"]
+    assert released == ["tableflow"]
+    assert attempted == ["tableflow", "tableflow", "airline-demo", "core"]
 
 
 @pytest.mark.parametrize(

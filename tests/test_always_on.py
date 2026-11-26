@@ -606,7 +606,7 @@ def test_quick_principals_match_emails_case_insensitively(monkeypatch, capsys):
 
 
 def _airline_state(tmp_path, monkeypatch, glue_database="lkc-1"):
-    state = tmp_path / "terraform/airline-demo/terraform.tfstate"
+    state = tmp_path / "terraform/tableflow/terraform.tfstate"
     state.parent.mkdir(parents=True)
     state.write_text("{}")
     monkeypatch.setattr(deploy, "run_terraform_output", lambda path: {"glue_database": glue_database})

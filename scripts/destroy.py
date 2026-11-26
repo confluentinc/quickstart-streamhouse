@@ -93,7 +93,7 @@ def cleanup_terraform_artifacts(env_path: Path) -> None:
 # integration after Tableflow is gone, sometimes for good, so deleting it returns
 # 409 "integration is being used in some confluent resource". The catalog tags
 # 409 the same way while a topic still carries them. Deleting the environment
-# removes both regardless, so when only these are left in airline-demo's state,
+# removes both regardless, so when only these are left in tableflow's state,
 # drop them from state and let core's destroy take them.
 TABLEFLOW_PROVIDER_INTEGRATION = "confluent_provider_integration.tableflow[0]"
 CATALOG_TAG_PREFIX = "confluent_tag.demo["
@@ -158,11 +158,13 @@ def _cleanup_mcp(root: Path) -> None:
 
 
 def _envs_to_destroy(lab: str | None, root: Path | None = None) -> list[str]:
-    """Terraform roots in reverse dependency order: always-on (when deployed), every lab, then core."""
+    """Terraform roots in reverse dependency order: always-on (when deployed), tableflow, every lab, then core.
+
+    A root with no state (never deployed) is skipped by the destroy loop."""
     always_on = ["always-on"] if root and (root / "terraform" / "always-on" / "terraform.tfstate").exists() else []
     if lab:
-        return [*(always_on if lab == FLIGHT_DISRUPTIONS else []), LABS[lab][1]]
-    return [*always_on, "agentic-pit-decisions", "airline-demo", "core"]
+        return [*always_on, "tableflow", LABS[lab][1]] if lab == FLIGHT_DISRUPTIONS else [LABS[lab][1]]
+    return [*always_on, "tableflow", "agentic-pit-decisions", "airline-demo", "core"]
 
 
 def _prepare_always_on_destroy(creds: dict) -> None:
@@ -331,7 +333,7 @@ def main():
             _cleanup_pit_decisions(root)
         if destroyed and env == "always-on":
             (root / ALWAYS_ON_CARD).unlink(missing_ok=True)
-        if not destroyed and env == "airline-demo" and release_provider_integration(env_path):
+        if not destroyed and env == "tableflow" and release_provider_integration(env_path):
             destroyed = run_terraform_destroy(env_path)
 
         if destroyed:
