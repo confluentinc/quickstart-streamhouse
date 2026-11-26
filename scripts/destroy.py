@@ -32,6 +32,7 @@ from .deploy import (
     _export_aws_credentials,
 )
 from .login_checks import ensure_confluent_login
+from .setup_rtce import unregister_rtce_server
 from .terraform import get_project_root, run_terraform_output
 from .terraform_runner import run_terraform_destroy
 
@@ -352,12 +353,15 @@ def main():
         return
 
     _cleanup_mcp(root)
+    unregister_rtce_server()
+    print("✓ Removed the RTCE MCP server registration")
     _cleanup_pit_decisions(root)
 
     # With nothing deployed, the next deploy can be either kind again and asks which lab.
     creds_file = root / "credentials.env"
     saved = dotenv_values(str(creds_file)) if creds_file.exists() else {}
-    for key in (WORKSHOP, DEPLOY_LABS, ALWAYS_ON, CONTINUOUS):
+    # Core's destroy deleted the RTCE Global key, so the saved copy points at nothing.
+    for key in (WORKSHOP, DEPLOY_LABS, ALWAYS_ON, CONTINUOUS, "CONFLUENT_RTCE_API_KEY", "CONFLUENT_RTCE_API_SECRET"):
         if saved.get(key):
             unset_key(str(creds_file), key)
 

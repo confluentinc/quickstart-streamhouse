@@ -393,6 +393,8 @@ Next you will build a Flink SQL recovery agent that checks live flights and hote
 
 2. Return to your existing Flink SQL workspace. Click **+** to add a fresh SQL cell, and use a separate cell for every SQL block in this lab. `passenger_state` updates rows in place as an upsert table, and the Flink agent reads append-only input, so `passenger_state_changes` turns each state update into an append-only row.
 
+    In the Confluent CLI, pass `--property sql.local-time-zone=UTC` for the two cells starting with `SET` and submit only the SQL after the `SET` line.
+
     ```sql
     CREATE OR ALTER MATERIALIZED TABLE passenger_state_changes (
       `key` STRING NOT NULL,
@@ -590,7 +592,7 @@ Next you will build a Flink SQL recovery agent that checks live flights and hote
 
     ![Running INSERT statement](../images/flight-disruptions/flink-workshop-running.png)
 
-8. Query `passenger_recommendations` for RA417 offers and check a passenger such as seat `6B`.
+8. Query `passenger_recommendations` for RA417.
 
     ```sql
     SELECT `key`, recommended_flight_id, hotel_name, hotel_cost, status
@@ -608,7 +610,7 @@ Now you see the recovery from the passenger's side. Some of the agent's offers i
 
 With a Streamhouse architecture, that's not an issue: River Air's app always has the current state of hotel availability. It checks the rooms left with a Lightning Query when a passenger selects an offer, swaps in another hotel if the room is gone, and checks again at booking.
 
-1. In the [dashboard app](http://127.0.0.1:8000), click the **RA417-…** flight, then click a delayed passenger's seat. **Scroll to Passenger recovery**, which shows their two offers. **These offers come from the agent you built!**
+1. Open RA417 in the [dashboard app](http://127.0.0.1:8000) and choose a HIGH-risk seat with two offers under **Passenger recovery**.
 
 <img src="../images/flight-disruptions/dashboard-passenger-hotel-options.png" alt="Hotel options and Passenger recovery in the app, with the Grand Hyatt sold out and one passenger&#x27;s two offers" width="750">
 
@@ -664,7 +666,7 @@ Then open a new PowerShell window and run `cd quickstart-streamhouse`. The old w
     uv run setup-rtce
     ```
 
-    Choose Claude Code or Codex. It reuses your API key, connects every demo topic (and turns on any you skipped in Lab 3), and checks the connection. Restart your coding agent afterward.
+    Choose Claude Code or Codex to register `confluent-streamhouse-rtce` and confirm it can list topics. Restart the client.
 
     <img src="../images/flight-disruptions/setup-rtce.png" alt="Output of uv run setup-rtce: Claude Code chosen, RTCE turned on for passenger_state and flight_impact, and the MCP connection test passed" width="750">
 

@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -401,7 +402,7 @@ def test_the_hosted_app_starts_without_local_terraform_state(monkeypatch):
     assert starts == [airport_app.app]
 
 
-def _run_setup_rtce(tmp_path, monkeypatch, ws):
+def _run_setup_rtce(tmp_path, monkeypatch, ws, check_result=(7, "")):
     """Run `uv run setup-rtce --client none` against a fake cluster with no Lightning Tables on."""
     enabled = []
     monkeypatch.setattr(setup_rtce, "_find_credentials_file", lambda: tmp_path / "credentials.env")
@@ -415,7 +416,7 @@ def _run_setup_rtce(tmp_path, monkeypatch, ws):
     monkeypatch.setattr(setup_rtce, "_list_rtce_topics", lambda *args: [])
     monkeypatch.setattr(setup_rtce, "_discover_demo_topics", lambda creds_file: LIGHTNING_TOPICS)
     monkeypatch.setattr(setup_rtce, "_save_to_env_file", lambda *args: None)
-    monkeypatch.setattr(setup_rtce, "_test_mcp_connection", lambda url, token: (True, 200))
+    monkeypatch.setattr(setup_rtce, "_test_mcp_connection", lambda url, token: check_result)
     monkeypatch.setattr(setup_rtce, "_enable_rtce_topic", lambda key, secret, infra, topic, desc: enabled.append(topic))
     setup_rtce.main(["--client", "none"])
     return enabled
@@ -426,6 +427,52 @@ def test_setup_rtce_still_turns_the_lightning_tables_on_itself(tmp_path, monkeyp
     ws = FakeWorkshop(tmp_path, topics=LIGHTNING_TOPICS)
     ws.creds = {"TF_VAR_workshop": ""}  # the full demo, not the workshop
     assert _run_setup_rtce(tmp_path, monkeypatch, ws) == LIGHTNING_TOPICS
+
+
+@pytest.mark.parametrize("event_stream", [False, True])
+@pytest.mark.parametrize("tool_succeeds", [False, True])
+def test_mcp_connection_checks_list_topics_after_initialization(monkeypatch, event_stream, tool_succeeds):
+    calls = []
+    payload = (
+        {"status": "success", "rows": {"topics": [{"name": "flight_status"}]}}
+        if tool_succeeds
+        else {"status": "error", "error": {"code": "FE_CUSTOMER_NOT_FOUND"}}
+    )
+
+    def open_request(request, timeout):
+        message = json.loads(request.data)
+        calls.append(message["method"])
+        if message["method"] == "initialize":
+            response = BytesIO(b'{"id":1,"result":{"protocolVersion":"2024-11-05"}}')
+            response.headers = {"Mcp-Session-Id": "test-session", "Content-Type": "application/json"}
+            return response
+        assert request.get_header("Mcp-session-id") == "test-session"
+        assert request.get_header("Mcp-protocol-version") == "2024-11-05"
+        if message["method"] == "notifications/initialized":
+            assert "id" not in message
+            response = BytesIO()
+            response.headers = {}
+            return response
+        assert message["params"] == {"name": "listTopics", "arguments": {}}
+        result = {"isError": not tool_succeeds, "content": [{"type": "text", "text": json.dumps(payload)}]}
+        body = json.dumps({"id": 2, "result": result}).encode()
+        response = BytesIO(b"event: message\ndata: " + body + b"\n\n" if event_stream else body)
+        response.headers = {"Content-Type": "text/event-stream" if event_stream else "application/json"}
+        return response
+
+    monkeypatch.setattr(setup_rtce.urllib.request, "urlopen", open_request)
+
+    expected = (1, "") if tool_succeeds else (None, "FE_CUSTOMER_NOT_FOUND")
+    assert setup_rtce._test_mcp_connection("https://example.test/mcp", "token") == expected
+    assert calls == ["initialize", "notifications/initialized", "tools/call"]
+
+
+def test_setup_rtce_names_target_when_list_topics_fails(tmp_path, monkeypatch, capsys):
+    ws = FakeWorkshop(tmp_path, topics=LIGHTNING_TOPICS)
+    _run_setup_rtce(tmp_path, monkeypatch, ws, check_result=(None, "FE_CUSTOMER_NOT_FOUND"))
+    output = capsys.readouterr().out
+    assert "check failed for env-1 / lkc-1 (FE_CUSTOMER_NOT_FOUND)" in output
+    assert "returned" not in output
 
 
 def test_setup_rtce_sends_an_attendee_who_skipped_lab_2_back_to_it(tmp_path, monkeypatch, capsys):
