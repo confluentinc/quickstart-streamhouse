@@ -539,7 +539,9 @@ def _quick() -> str:
 
 def test_quick_never_manages_the_account_subscription():
     # The subscription is shared by the whole AWS account: destroying it would delete every Quick user and asset.
-    text = "".join(p.read_text() for p in (ROOT / "terraform").rglob("*.tf") if ".terraform" not in p.parts)
+    text = "".join(
+        p.read_text(encoding="utf-8") for p in (ROOT / "terraform").rglob("*.tf") if ".terraform" not in p.parts
+    )
     assert "aws_quicksight_account_subscription" not in text
     assert "aws_quicksight_account_settings" not in text
 
