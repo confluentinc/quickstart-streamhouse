@@ -193,10 +193,8 @@ resource "confluent_tableflow_topic" "analytics" {
     secret = confluent_api_key.tableflow[0].secret
   }
 
+  # The topics come from terraform/airline-demo, which deploy applies before this root.
   depends_on = [
-    confluent_flink_statement.tables,
-    confluent_flink_statement.passenger_state,
-    confluent_flink_statement.flight_impact,
     time_sleep.tableflow_role,
     confluent_role_binding.tableflow_provider_integration,
   ]

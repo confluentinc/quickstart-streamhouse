@@ -18,7 +18,8 @@
 # MATERIALIZED TABLES: one object owning both the table and its continuous query,
 # evolvable in place with CREATE OR ALTER (Flink migrates to the same backing topic,
 # so Lightning/RTCE/Tableflow are unaffected). Tableflow syncs selected tables to
-# Iceberg in S3 with an AWS Glue Data Catalog for Demo 3 — see analytics.tf.
+# Iceberg in S3 with an AWS Glue Data Catalog for Demo 3 — see terraform/tableflow, a separate
+# root so a workshop deploy never downloads the AWS provider.
 #
 # The workshop (var.workshop, docs/flight-disruptions/workshop.md) stops at the source tables and
 # passenger_recommendations: attendees create passenger_state, flight_impact, and
@@ -51,10 +52,6 @@ locals {
   # Core's base name (RIVER-AIR-PROD, or prefix plus random suffix). try() keeps a core
   # state from before deployment_name existed working.
   name = try(local.core.resource_name, "${local.core.resource_prefix}-${local.core.random_id}")
-  display_name = {
-    for label in ["tableflow-api-key", "tableflow", "glue"] :
-    label => try(local.core.resource_name_fixed, false) ? upper("${local.name}-${label}") : "${local.name}-${label}"
-  }
 
   # The catalog and database names only resolve table names when a statement starts. Every
   # statement ignores later changes to them (lifecycle below): the provider can't update a running
@@ -71,15 +68,6 @@ locals {
   # statement runs, so this applies on a fresh deploy only (ignore_changes below keeps running ones).
   stateful_sql_props = merge(local.sql_props, { "sql.state-ttl" = "3 d" })
 
-  # Demo 3's S3/Glue path needs both the toggle AND AWS Tableflow creds in core.
-  # Leave the creds empty and this cleanly skips instead of failing terraform
-  # apply. aws_tableflow_credentials_present is a boolean, not a secret, but
-  # Terraform marks it sensitive anyway since it's derived from
-  # var.aws_tableflow_access_key — nonsensitive() is needed because
-  # count/for_each can't take a sensitive value. try() treats a core state from
-  # before this output existed as "no creds", so plan and destroy still work.
-  # The workshop leaves Tableflow out.
-  analytics_enabled = var.enable_analytics && !var.workshop && try(nonsensitive(local.core.aws_tableflow_credentials_present), false)
 
   # The recovery agent runs on Claude hosted in Confluent and needs only the RTCE connection,
   # which `uv run deploy` creates with the CLI after RTCE is enabled and then sets the toggle.
@@ -90,8 +78,6 @@ locals {
   # at render time (the file stays as the workshop guide has it; tests keep this line in sync).
   agent_flight_filter = "    AND SPLIT_INDEX(inbound_flight_id, '-', 0) IN ('RA417', 'RA183', 'RA185')\n"
 
-  # Always-on mode also syncs the offers to Iceberg, so the history includes recovery time.
-  tableflow_topics = var.continuous ? distinct(concat(var.tableflow_topics, ["passenger_recommendations"])) : var.tableflow_topics
 
   # The source feeds (flights, itineraries, hotels, telemetry), the recovery offers, and (outside the workshop) the webhook's landing table.
   tables = merge(
@@ -303,35 +289,6 @@ resource "confluent_flink_statement" "recovery_offers" {
     confluent_flink_statement.impacted_passengers,
     confluent_flink_statement.recovery_agent,
   ]
-}
-
-# --- Tableflow API key ------------------------------------------------------
-# Enabling Tableflow (analytics.tf) requires a Tableflow-scoped API key owned by
-# a principal that can enable Tableflow — app-manager holds EnvironmentAdmin.
-# (Our RTCE Global key can't: it belongs to the DeveloperRead-only rtce-reader SA.)
-resource "confluent_api_key" "tableflow" {
-  count = local.analytics_enabled ? 1 : 0
-
-  display_name = local.display_name["tableflow-api-key"]
-  description  = "Tableflow API key owned by the app-manager service account"
-  owner {
-    id          = local.core.app_manager_service_account_id
-    api_version = "iam/v2"
-    kind        = "ServiceAccount"
-  }
-
-  managed_resource {
-    id          = "tableflow"
-    api_version = "tableflow/v1"
-    kind        = "Tableflow"
-  }
-
-  lifecycle {
-    precondition {
-      condition     = !try(local.core.existing_environment, false)
-      error_message = "Tableflow isn't available when deploying into an existing environment."
-    }
-  }
 }
 
 # --- Hotel feed: webhook -> hotel_availability_updates -> hotel_inventory ----

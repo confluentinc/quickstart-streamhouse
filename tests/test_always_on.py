@@ -521,7 +521,7 @@ def test_settings_secret_is_skipped_without_its_arn(monkeypatch):
 
 def test_tableflow_waits_for_its_iam_role():
     # Propagation time for the new role. It didn't cure the 2026-11-12/17 "Unable to assume" failures.
-    analytics = (ROOT / "terraform/airline-demo/analytics.tf").read_text()
+    analytics = (ROOT / "terraform/tableflow/analytics.tf").read_text()
     sleep = _block(analytics, "time_sleep.tableflow_role")
     assert re.search(r'create_duration\s*=\s*"30s"', sleep)
     assert "aws_iam_role_policy_attachment.tableflow_s3" in sleep

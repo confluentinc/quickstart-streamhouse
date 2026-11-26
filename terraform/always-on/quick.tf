@@ -13,17 +13,17 @@
 # root never declares it: destroying it would delete every Quick user and asset.
 # ===========================================================================
 
-data "terraform_remote_state" "airline_demo" {
+data "terraform_remote_state" "tableflow" {
   backend = "local"
   config = {
-    path = "../airline-demo/terraform.tfstate"
+    path = "../tableflow/terraform.tfstate"
   }
 }
 
 data "aws_caller_identity" "current" {}
 
 locals {
-  analytics     = data.terraform_remote_state.airline_demo.outputs
+  analytics     = data.terraform_remote_state.tableflow.outputs
   quick_enabled = length(var.quick_principal_arns) > 0 && try(local.analytics.analytics_bucket, "") != ""
   account_id    = data.aws_caller_identity.current.account_id
   glue_arns = [

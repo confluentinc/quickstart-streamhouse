@@ -150,7 +150,8 @@ def test_continuous_mode_drops_exactly_the_agent_flight_filter():
 
 
 def test_continuous_mode_turns_on_tableflow_for_both_topics():
-    tf = (DEMO / "analytics.tf").read_text(encoding="utf-8") + (DEMO / "main.tf").read_text(encoding="utf-8")
+    tableflow = DEMO.parent / "tableflow"
+    tf = (tableflow / "analytics.tf").read_text(encoding="utf-8") + (tableflow / "main.tf").read_text(encoding="utf-8")
     assert '["passenger_recommendations"]' in tf and "local.tableflow_topics" in tf
 
 
