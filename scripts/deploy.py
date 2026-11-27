@@ -53,6 +53,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -554,6 +555,8 @@ def main():
         prompted = True
     ensure_confluent_login(creds, creds_file, interactive=not prompted)
     print("✓ Confluent CLI logged in")
+    if email := _signed_in_email():
+        print(f"Deploying as {email}")
     env_id = _existing_environment(args, creds_file, creds, labs, workshop, interactive=True)
 
     # No prompt: us-east-1 unless the user set TF_VAR_cloud_region in credentials.env.
@@ -693,17 +696,39 @@ def _prompt_aws_credentials(creds_file, creds: dict) -> None:
             _save_env_safe(creds_file, "TF_VAR_aws_tableflow_session_token", token)
 
 
+def _signed_in_email() -> str:
+    """The email the Confluent CLI is signed in with, read from its context name (login-<email>-<url>), or ""."""
+    context = existing_env._cli_json("context", "describe")
+    name = context.get("name", "") if isinstance(context, dict) else ""
+    match = re.fullmatch(r"login-(.+@.+?)-https?://.+", name)
+    return match.group(1) if match else ""
+
+
+def _key_in_signed_in_account(key: str) -> bool:
+    """Whether the Confluent CLI's signed-in account can see this API key."""
+    result = subprocess.run(
+        [processes.exe("confluent"), "api-key", "describe", key, "-o", "json"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return result.returncode == 0
+
+
 def _cloud_api_key(creds: dict, prefix: str, env_id: str) -> tuple[str, str]:
     """The saved Cloud API key, or a new one owned by the signed-in user. Asks only when creating one fails.
 
-    Destroy doesn't delete the key, so reusing it keeps keys from piling up. A saved key that was deleted fails in
-    Terraform with a 401: remove both TF_VAR_confluent_cloud_api_* lines from credentials.env and rerun.
+    Destroy doesn't delete the key, so reusing it keeps keys from piling up. A saved key the signed-in account
+    can't see (another Confluent account, or deleted) is replaced: Terraform would build with the wrong account.
     """
     key = (creds.get("TF_VAR_confluent_cloud_api_key") or "").strip()
     secret = (creds.get("TF_VAR_confluent_cloud_api_secret") or "").strip()
     if key and secret:
-        print(f"Using the saved Confluent Cloud API key {key}")
-        return key, secret
+        if _key_in_signed_in_account(key):
+            print(f"Using the saved Confluent Cloud API key {key}")
+            return key, secret
+        print(f"The saved API key {key} isn't in the Confluent account you're signed in to; creating a new one.")
     key, secret = generate_confluent_api_keys(prefix)
     if key and secret:
         print(f"Using the new Confluent Cloud API key {key}")
