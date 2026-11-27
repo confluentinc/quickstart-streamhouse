@@ -167,6 +167,10 @@ resource "time_sleep" "tableflow_role" {
   count = local.analytics_enabled ? 1 : 0
 
   create_duration = "30s"
+  # On destroy, Confluent finishes deleting the Tableflow topics and Glue catalog in the background; deleting the
+  # provider integration right after returns 409 "integration is being used" (seen 2026-11-27). This wait sits
+  # between them. If it's too short, destroy.py's release_provider_integration still recovers.
+  destroy_duration = "60s"
   depends_on = [
     aws_iam_role_policy_attachment.tableflow_s3,
     aws_iam_role_policy_attachment.tableflow_glue,

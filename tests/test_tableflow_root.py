@@ -58,3 +58,10 @@ def test_destroy_takes_tableflow_down_before_airline_demo():
 def test_the_replace_hint_points_at_the_tableflow_root():
     src = (Path(__file__).parent.parent / "scripts/deploy.py").read_text(encoding="utf-8")
     assert "-chdir=terraform/tableflow" in src and "-chdir=terraform/airline-demo apply" not in src
+
+
+def test_destroy_waits_before_deleting_the_provider_integration():
+    """Confluent deletes Tableflow topics in the background; deleting their integration right after returns 409."""
+    analytics = (TF / "tableflow/analytics.tf").read_text(encoding="utf-8")
+    sleep = analytics[analytics.index('resource "time_sleep" "tableflow_role"') :]
+    assert "destroy_duration" in sleep[: sleep.index("\n}\n")]
