@@ -115,6 +115,41 @@ def _cli_json(*args: str) -> object:
         return None
 
 
+def signed_in_email() -> str:
+    """The email the Confluent CLI is signed in with, read from its context name (login-<email>-<url>), or ""."""
+    context = _cli_json("context", "describe")
+    name = context.get("name", "") if isinstance(context, dict) else ""
+    match = re.fullmatch(r"login-(.+@.+?)-https?://.+", name)
+    return match.group(1) if match else ""
+
+
+def signed_in_org_id() -> str:
+    """The ID of the organization the Confluent CLI is using, or ""."""
+    org = _cli_json("organization", "describe")
+    return str(org.get("id") or "") if isinstance(org, dict) else ""
+
+
+def account_mismatch(creds: dict, email: str, org: str) -> str:
+    """Why the signed-in Confluent account isn't the one that deployed ("" when it is, or when unsure).
+
+    Compares the email and organization saved at deploy (CONFLUENT_DEPLOYED_AS/_ORG): one email can be in
+    several organizations. Unknown values on either side aren't counted as a mismatch.
+    """
+    owner = (creds.get("CONFLUENT_DEPLOYED_AS") or "").strip()
+    owner_org = (creds.get("CONFLUENT_DEPLOYED_ORG") or "").strip()
+    if owner and email and owner != email:
+        return (
+            f"This folder has a deployment from another Confluent account ({owner}). "
+            "Sign in to that account with `confluent login`"
+        )
+    if owner_org and org and owner_org != org:
+        return (
+            "This folder has a deployment in another Confluent organization. "
+            f"Switch to it with `confluent organization use {owner_org}`"
+        )
+    return ""
+
+
 def current_user_id(env_id: str) -> str:
     """The signed-in user's `u-...` ID, or "". Needs --environment: an EnvironmentAdmin's bindings are scoped to it."""
     rows = _cli_json("iam", "rbac", "role-binding", "list", "--current-user", "--environment", env_id)

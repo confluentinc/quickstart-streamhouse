@@ -53,22 +53,22 @@ Usage:
 import argparse
 import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
 import sys
 import time
 from datetime import timedelta
+from pathlib import Path
 
-from dotenv import dotenv_values, set_key
+from dotenv import dotenv_values, set_key, unset_key
 
 from scripts import existing_env, processes, setup_rtce
 from scripts.credentials import (
     generate_confluent_api_keys,
     load_or_create_credentials_file,
 )
-from scripts.login_checks import ensure_confluent_login, prompt_and_save_login
+from scripts.login_checks import check_confluent_login, ensure_confluent_login, prompt_and_save_login
 from scripts.terraform import get_project_root, run_terraform_output
 from scripts.terraform_runner import run_terraform
 from scripts.tfvars import write_tfvars_for_deployment
@@ -82,6 +82,8 @@ LABS = {
     "agentic-pit-decisions": ("Agentic Pit Decisions", "agentic-pit-decisions"),
 }
 FLIGHT_DISRUPTIONS, PIT_DECISIONS = LABS
+DEPLOYED_AS = "CONFLUENT_DEPLOYED_AS"  # credentials.env: the email the last deploy ran as
+DEPLOYED_ORG = "CONFLUENT_DEPLOYED_ORG"  # and its organization: one email can be in several
 DEPLOY_LABS = "DEPLOY_LABS"  # credentials.env: the labs the last deploy chose, comma-separated
 WORKSHOP = "TF_VAR_workshop"  # credentials.env flag that keeps a checkout in workshop mode
 # The recovery agent's statements in terraform/airline-demo, applied once RTCE is up.
@@ -263,13 +265,20 @@ def _deploy(root, targets, video_2: bool = False) -> None:
     print("\n✓ All deployments completed successfully!")
 
 
-def _workshop_mode(requested: bool, full: bool, creds_file, creds: dict, default: bool = True) -> bool:
+def _workshop_mode(
+    requested: bool, full: bool, creds_file, creds: dict, default: bool = True, save: bool = True
+) -> bool:
     """True for a Flight Disruptions workshop deploy; saved so later runs stay in it.
 
     The workshop is the default (bots pass default=False), --workshop asks for it, and full (--with-labs or
     --video-2) asks for the full demo. A checkout can't switch either way: a workshop apply destroys what the
     full one built, and a full apply collides with the tables attendees created. `uv run destroy` clears it.
     """
+    airline_state = creds_file.parent / "terraform" / "airline-demo" / "terraform.tfstate"
+    if creds.get(WORKSHOP) == "true" and not _has_resources(airline_state):
+        # Left over from a deploy that was cancelled at Ready, or a lab-only destroy: nothing to protect.
+        unset_key(str(creds_file), WORKSHOP)
+        creds.pop(WORKSHOP, None)
     if creds.get(WORKSHOP) == "true":
         if full:
             sys.exit(
@@ -277,7 +286,7 @@ def _workshop_mode(requested: bool, full: bool, creds_file, creds: dict, default
                 "Run `uv run destroy` first, or deploy the full demo from another clone."
             )
         return True
-    if (creds_file.parent / "terraform" / "airline-demo" / "terraform.tfstate").exists():
+    if _has_resources(airline_state):
         if requested:
             sys.exit(
                 "This checkout already has a full deployment, which --workshop would partly destroy. "
@@ -286,8 +295,9 @@ def _workshop_mode(requested: bool, full: bool, creds_file, creds: dict, default
         return False
     if full or not (requested or default):
         return False
-    _save_env_safe(creds_file, WORKSHOP, "true")
-    creds[WORKSHOP] = "true"
+    if save:  # people save it only once they confirm Ready (see main)
+        _save_env_safe(creds_file, WORKSHOP, "true")
+        creds[WORKSHOP] = "true"
     return True
 
 
@@ -361,34 +371,53 @@ def _tableflow_on(labs: list[str], workshop: bool, creds: dict) -> bool:
     return FLIGHT_DISRUPTIONS in labs and not workshop and has_creds and enabled.strip().lower() != "false"
 
 
+def _has_resources(state: Path) -> bool:
+    """Whether a Terraform state holds real resources. A failed first apply can leave a state with none."""
+    try:
+        data = json.loads(state.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return any(r.get("mode") == "managed" and r.get("instances") for r in data.get("resources") or [])
+
+
+def _deployed_labs(root) -> list[str]:
+    """The labs this checkout has deployed: a state with resources, until destroy removes it."""
+    return [
+        lab for lab, (_, env) in LABS.items() if _has_resources(Path(root) / "terraform" / env / "terraform.tfstate")
+    ]
+
+
 def _select_labs(requested: str | None, creds_file, creds: dict, workshop: bool, interactive: bool) -> list[str]:
     """The labs to deploy: --lab, else asked (interactive), else the saved choice. Saved for the next run.
 
-    The workshop is Flight Disruptions', so it never asks; it keeps Pit Decisions when the last run picked
-    both. Bots with nothing saved get Flight Disruptions,
-    as before this repo had a second lab.
+    People are always asked, and the labs already deployed here are marked. Only the picked labs are deployed; a lab
+    that isn't picked stays as it is. Bots aren't asked: a saved workshop is Flight Disruptions' (keeping Pit Decisions
+    when the last run picked both), and with nothing saved they get Flight Disruptions.
     """
     saved = [lab for lab in (creds.get(DEPLOY_LABS) or "").split(",") if lab in LABS]
+    deployed = _deployed_labs(Path(creds_file).parent)
     if requested:
         labs = list(LABS) if requested == "both" else [requested]
-    elif workshop:
-        labs = saved if FLIGHT_DISRUPTIONS in saved else [FLIGHT_DISRUPTIONS]
     elif not interactive:
-        labs = saved or [FLIGHT_DISRUPTIONS]
+        labs = (
+            (saved if FLIGHT_DISRUPTIONS in saved else [FLIGHT_DISRUPTIONS])
+            if workshop
+            else (saved or [FLIGHT_DISRUPTIONS])
+        )
     else:
-        options = [*(name for name, _ in LABS.values()), "Both"]
-        default = options[-1] if not saved or len(saved) == len(LABS) else LABS[saved[0]][0]
-        last_time = f" (last time: {default})" if saved else ""
-        choice = prompt_choice(f"Which lab do you want to deploy?{last_time}", options)
-        labs = list(LABS) if choice == "Both" else [lab for lab, (name, _) in LABS.items() if name == choice]
-    if workshop and FLIGHT_DISRUPTIONS not in labs:
+        labels = {lab: name + (" (already running)" if lab in deployed else "") for lab, (name, _) in LABS.items()}
+        choice = prompt_choice("Which lab do you want to deploy?", [*labels.values(), "Both"])
+        labs = list(LABS) if choice == "Both" else [lab for lab, label in labels.items() if label == choice]
+    if workshop and FLIGHT_DISRUPTIONS not in labs and not interactive:  # people pick from the question instead
         sys.exit("--workshop deploys the Agentic Airline Operations lab; drop --lab or pick flight-disruptions.")
     _save_env_safe(creds_file, DEPLOY_LABS, ",".join(labs))
     creds[DEPLOY_LABS] = ",".join(labs)
     return labs
 
 
-def _existing_environment(args, creds_file, creds: dict, labs: list[str], workshop: bool, *, interactive: bool) -> str:
+def _existing_environment(
+    args, creds_file, creds: dict, labs: list[str], workshop: bool, *, interactive: bool, save: bool = True
+) -> str:
     """Choose the existing environment to deploy into ("" for a new one) and check it before Terraform runs."""
     full = existing_env.full_demo(
         with_labs=args.with_labs,
@@ -404,7 +433,8 @@ def _existing_environment(args, creds_file, creds: dict, labs: list[str], worksh
     existing_env.check_flow_switch(env_id, outputs)
     if env_id:
         user_id = existing_env.preflight(env_id)
-        existing_env.save(creds_file, creds, env_id)  # only an ID that passed the checks is remembered
+        if save:  # only an ID that passed the checks is remembered; people's once they confirm Ready
+            existing_env.save(creds_file, creds, env_id)
         os.environ["TF_VAR_user_id"] = user_id  # never saved: core needs it each run to own the keys
         os.environ[existing_env.ENV_KEY] = env_id
         print(f"✓ Deploying into your existing environment {env_id}")
@@ -472,9 +502,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main():
     args = _parse_args()
 
-    print("=== Streamhouse Labs — Deploy ===\n")
+    print("=== Streamhouse Labs — Deploy ===")
     root = get_project_root()
-    print(f"Project root: {root}")
     _check_writable(root)
 
     # ---- Non-interactive -------------------------------------------------
@@ -540,40 +569,29 @@ def main():
     always_on = _always_on_mode(args, creds_file, creds)
     labs = _select_labs(args.lab, creds_file, creds, _workshop_saved(args, creds), interactive=True)
     flights = FLIGHT_DISRUPTIONS in labs
-    workshop = flights and _workshop_mode(args.workshop, args.with_labs or args.video_2, creds_file, creds)
+    workshop = flights and _workshop_mode(args.workshop, args.with_labs or args.video_2, creds_file, creds, save=False)
     if always_on:
         print("\nAlways-on: deploys the full demo, then runs the flight board and the generator on AWS.")
-    elif workshop:
-        print("\nWorkshop mode: deploys the source feeds only; docs/flight-disruptions/workshop.md builds the rest.")
-    elif flights:
+    elif flights and not workshop:
         print("\nFull demo: deploys the whole Agentic Airline Operations pipeline, stream, and recovery agent.")
 
-    # Confluent Cloud login (saved for auto-login). A saved login that stopped working is asked for again.
-    prompted = False
-    if not (creds.get("CONFLUENT_EMAIL") and creds.get("CONFLUENT_PASSWORD")):
-        prompt_and_save_login(creds_file, creds)
-        prompted = True
-    ensure_confluent_login(creds, creds_file, interactive=not prompted)
-    print("✓ Confluent CLI logged in")
-    if email := _signed_in_email():
-        print(f"Deploying as {email}")
-    env_id = _existing_environment(args, creds_file, creds, labs, workshop, interactive=True)
+    _sign_in(creds_file, creds)
+    email = _signed_in_email()
+    print(f"\n✓ Signed in as {email}" if email else "\n✓ Signed in to Confluent Cloud")
+    org = existing_env.signed_in_org_id()
+    _check_deploying_account(creds_file, creds, email, org)
+    env_id = _existing_environment(args, creds_file, creds, labs, workshop, interactive=True, save=False)
 
     # No prompt: us-east-1 unless the user set TF_VAR_cloud_region in credentials.env.
     region = creds.get("TF_VAR_cloud_region") or DEFAULT_REGION
-    print(f"\nRegion: {region} (AWS-only; RTCE + Confluent-hosted Claude supported here)")
 
     # No prompt: reuse the saved prefix, else the default. Persisting it keeps
     # resource names stable if DEFAULT_PREFIX changes later.
     prefix = creds.get("TF_VAR_resource_prefix", "") or DEFAULT_PREFIX
     _save_env_safe(creds_file, "TF_VAR_resource_prefix", prefix)
-    if creds.get("TF_VAR_deployment_name"):
-        print(f"Deployment name: {creds['TF_VAR_deployment_name'].upper()} (fixed, from TF_VAR_deployment_name)")
-    else:
-        print(f"Resource name prefix: {prefix} (set TF_VAR_resource_prefix in credentials.env to change)")
 
-    print("\n--- Credential Configuration ---")
-    api_key, api_secret = _cloud_api_key(creds, prefix, env_id)
+    deployed = _has_resources(creds_file.parent / "terraform" / "core" / "terraform.tfstate")
+    api_key, api_secret = _cloud_api_key(creds, prefix, env_id, deployed=deployed, email=email, org=org)
     _save_env_safe(creds_file, "TF_VAR_confluent_cloud_api_key", api_key)
     _save_env_safe(creds_file, "TF_VAR_confluent_cloud_api_secret", api_secret)
 
@@ -589,36 +607,30 @@ def main():
     if always_on:
         _export_aws_credentials(final_creds)
         _preflight_always_on(final_creds)
-    print("\n--- Configuration Summary ---")
-    print(f"Resource name prefix: {prefix}")
-    print(f"Region: {region}")
-    print(f"Environment: existing {env_id} (kept on destroy)" if env_id else "Environment: new")
-    api_key_state = "set" if final_creds.get("TF_VAR_confluent_cloud_api_key") else "MISSING"
-    print(f"Confluent Cloud API key: {api_key_state}")
-    print(f"Confluent CLI auto-login: {'saved' if final_creds.get('CONFLUENT_EMAIL') else 'not saved'}")
-    print(f"Labs: {', '.join(LABS[lab][0] for lab in labs)}")
     targets = _targets(labs, _tableflow_on(labs, workshop, final_creds))
-    if PIT_DECISIONS in labs:
-        print("Pit strategy agent: Claude hosted in Confluent (no AWS credentials needed)")
-    if not flights:
-        print(f"Deploying: {', '.join(targets)}, then the lab's credential card and race history")
-    elif workshop:
-        print("Workshop: source feeds only; you build the Flink tables and the agent, and turn on RTCE")
-        print(f"Deploying: {', '.join(targets)}")
-    else:
-        print("Recovery agent: Claude hosted in Confluent (no AWS credentials needed)")
+    if flights and not workshop:  # the full demo and always-on: presenters and operators
         analytics_state = "ENABLED" if "tableflow" in targets else "skipped (no Tableflow AWS creds)"
-        print(f"Tableflow S3/Glue analytics (Demo 3): {analytics_state}")
-        print(f"Deploying: {', '.join(targets)}, then demo data and RTCE")
+        print(f"\nTableflow S3/Glue analytics (Demo 3): {analytics_state}")
     if always_on:
         print(f"Always-on: then terraform/always-on, and {DEMO_USER_ROLE} for {len(_demo_emails(final_creds))} users")
 
     client = "none" if workshop or not flights or always_on else setup_rtce._pick_client()
 
     print()
-    if not prompt_yes_no("Ready to deploy?"):
+    if not prompt_yes_no(_ready_question(labs, workshop, always_on, env_id, region, final_creds)):
         print("Deployment cancelled.")
         sys.exit(0)
+    # Saved only now, so answering "n" leaves nothing behind for the next run to reuse without asking.
+    if workshop:
+        _save_env_safe(creds_file, WORKSHOP, "true")
+        final_creds[WORKSHOP] = "true"
+    if env_id:
+        existing_env.save(creds_file, creds, env_id)
+        final_creds[existing_env.ENV_KEY] = env_id
+    if email:  # names the account if a later deploy is signed in to another one (see _check_deploying_account)
+        _save_env_safe(creds_file, DEPLOYED_AS, email)
+    if org:
+        _save_env_safe(creds_file, DEPLOYED_ORG, org)
     if always_on:
         _save_always_on(creds_file, final_creds)
 
@@ -696,12 +708,21 @@ def _prompt_aws_credentials(creds_file, creds: dict) -> None:
             _save_env_safe(creds_file, "TF_VAR_aws_tableflow_session_token", token)
 
 
+def _sign_in(creds_file, creds: dict) -> None:
+    """Ask for the Confluent login only when the CLI isn't signed in and none is saved in credentials.env.
+
+    A saved login that stopped working (a changed password) is asked for again by ensure_confluent_login.
+    """
+    prompted = False
+    if not (creds.get("CONFLUENT_EMAIL") and creds.get("CONFLUENT_PASSWORD")) and not check_confluent_login():
+        prompt_and_save_login(creds_file, creds)
+        prompted = True
+    ensure_confluent_login(creds, creds_file, interactive=not prompted)
+
+
 def _signed_in_email() -> str:
-    """The email the Confluent CLI is signed in with, read from its context name (login-<email>-<url>), or ""."""
-    context = existing_env._cli_json("context", "describe")
-    name = context.get("name", "") if isinstance(context, dict) else ""
-    match = re.fullmatch(r"login-(.+@.+?)-https?://.+", name)
-    return match.group(1) if match else ""
+    """The email the Confluent CLI is signed in with, or ""."""
+    return existing_env.signed_in_email()
 
 
 def _key_in_signed_in_account(key: str) -> bool:
@@ -716,22 +737,59 @@ def _key_in_signed_in_account(key: str) -> bool:
     return result.returncode == 0
 
 
-def _cloud_api_key(creds: dict, prefix: str, env_id: str) -> tuple[str, str]:
+def _ready_question(labs: list[str], workshop: bool, always_on: bool, env_id: str, region: str, creds: dict) -> str:
+    """The one-line summary people confirm: the labs (the airline lab's mode), any fixed name, where, and region."""
+    mode = " (always-on)" if always_on else " (workshop)" if workshop else " (full demo)"
+    names = " and ".join(LABS[lab][0] + (mode if lab == FLIGHT_DISRUPTIONS else "") for lab in labs)
+    fixed = (creds.get("TF_VAR_deployment_name") or "").strip()
+    named = f" as {fixed.upper()}" if fixed else ""
+    where = f"environment {env_id}" if env_id else "a new environment"
+    return f"Ready to deploy {names}{named} into {where} in {region}?"
+
+
+def _check_deploying_account(creds_file, creds: dict, email: str, org: str = "") -> None:
+    """Stop early when this folder's deployment came from another account or organization, before the environment
+    check, whose "Can't find env-x" wouldn't say which account to sign in to."""
+    why = existing_env.account_mismatch(creds, email, org)
+    if why and _has_resources(Path(creds_file).parent / "terraform" / "core" / "terraform.tfstate"):
+        sys.exit(f"{why}, or run `uv run destroy` first.")
+
+
+def _cloud_api_key(
+    creds: dict, prefix: str, env_id: str, deployed: bool = False, email: str = "", org: str = ""
+) -> tuple[str, str]:
     """The saved Cloud API key, or a new one owned by the signed-in user. Asks only when creating one fails.
 
     Destroy doesn't delete the key, so reusing it keeps keys from piling up. A saved key the signed-in account
     can't see (another Confluent account, or deleted) is replaced: Terraform would build with the wrong account.
+    Unless this folder has a deployment from another account: it needs its own key, so deploy stops instead.
+    Signed in as the account that deployed (the saved email), the key was deleted: a new one is safe.
     """
     key = (creds.get("TF_VAR_confluent_cloud_api_key") or "").strip()
     secret = (creds.get("TF_VAR_confluent_cloud_api_secret") or "").strip()
     if key and secret:
         if _key_in_signed_in_account(key):
-            print(f"Using the saved Confluent Cloud API key {key}")
+            print("✓ Using your saved API key")
             return key, secret
-        print(f"The saved API key {key} isn't in the Confluent account you're signed in to; creating a new one.")
+        owner = (creds.get(DEPLOYED_AS) or "").strip()
+        why = existing_env.account_mismatch(creds, email, org)
+        same_account = bool(owner and email and not why)
+        if deployed and not same_account:
+            if why:
+                sys.exit(f"{why}, or run `uv run destroy` first.")
+            sys.exit(
+                "This folder has a deployment, and its saved API key no longer works. If you deployed it with "
+                "another account, sign in to that account with `confluent login`. If the key was deleted, delete "
+                "the TF_VAR_confluent_cloud_api_key and TF_VAR_confluent_cloud_api_secret lines from "
+                "credentials.env and rerun."
+            )
+        print(
+            "Your saved API key no longer exists; creating a new one."
+            if same_account
+            else "Your saved API key belongs to another Confluent account; creating a new one."
+        )
     key, secret = generate_confluent_api_keys(prefix)
     if key and secret:
-        print(f"Using the new Confluent Cloud API key {key}")
         return key, secret
     role = "EnvironmentAdmin" if env_id else "OrganizationAdmin"
     print(f"✗ Could not create an API key; enter an existing {role} key.")

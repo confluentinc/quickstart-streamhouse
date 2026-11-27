@@ -37,7 +37,6 @@ def load_or_create_credentials_file(root: Path) -> tuple[Path, dict[str, str]]:
         print(f"\nCreated {creds_file} from example template.")
     else:
         creds_file.touch()
-        print(f"\nCreated new {creds_file}.")
 
     return creds_file, {}
 
@@ -55,7 +54,6 @@ def generate_confluent_api_keys(
     """
     import json
 
-    print("Creating a Cloud API key owned by your Confluent user...")
     result = subprocess.run(
         [
             processes.exe("confluent"),

@@ -135,9 +135,9 @@ confluent version
     | Prompt | Answer |
     |---|---|
     | `Which lab do you want to deploy?` | Enter `1` for **Agentic Airline Operations**. |
-    | `Email (Enter to skip)` and `Password` | Your Confluent Cloud email and password. Already signed in? Press **Enter**. |
+    | `Email (Enter to skip)` and `Password` | Your Confluent Cloud email and password. Only asked if you aren't signed in. |
     | `Deploy into an existing environment? Paste its ID (env-xxxxx), or press Enter to create a new one:` | Press **Enter** for a new environment.<br>Or paste an environment ID to deploy into it. |
-    | `Ready to deploy? (y/n)` | Enter `y`. |
+    | `Ready to deploy … ? (y/n)` | Enter `y`. |
 
     When it finishes, deploy prints your environment and cluster names, which you need in Lab 2.
 

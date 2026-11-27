@@ -74,6 +74,9 @@ def test_workshop_is_the_default_and_sticks_to_the_checkout(monkeypatch, tmp_pat
     creds = {}
     assert deploy._workshop_mode(False, False, creds_file, creds)
     assert saved == {deploy.WORKSHOP: "true"} == {k: v for k, v in creds.items() if k == deploy.WORKSHOP}
+    state = tmp_path / "terraform" / "airline-demo" / "terraform.tfstate"  # the workshop got deployed
+    state.parent.mkdir(parents=True)
+    state.write_text('{"resources": [{"mode": "managed", "instances": [{}]}]}', encoding="utf-8")
     assert deploy._workshop_mode(False, False, creds_file, creds, default=False)  # a later bot run
     with pytest.raises(SystemExit, match="has the workshop"):
         deploy._workshop_mode(False, True, creds_file, creds)  # a later --with-labs
@@ -150,7 +153,7 @@ def test_resume_picks_up_the_last_streams_clock(monkeypatch, tmp_path):
 def test_workshop_mode_refuses_a_checkout_with_a_full_deployment(tmp_path):
     state = tmp_path / "terraform" / "airline-demo" / "terraform.tfstate"
     state.parent.mkdir(parents=True)
-    state.write_text("{}", encoding="utf-8")
+    state.write_text('{"resources": [{"mode": "managed", "instances": [{}]}]}', encoding="utf-8")
     with pytest.raises(SystemExit):
         deploy._workshop_mode(True, False, tmp_path / "credentials.env", {})
     assert not deploy._workshop_mode(False, False, tmp_path / "credentials.env", {})  # a plain rerun stays full

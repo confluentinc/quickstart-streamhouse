@@ -91,12 +91,11 @@ def prompt_and_save_login(creds_file, creds: dict) -> bool:
     Saves only after a login succeeds, so a typo is never stored. Returns True if
     logged in, False if the user skipped or ran out of attempts.
     """
-    print("\nConfluent Cloud login (saved to credentials.env for auto-login):")
+    print()
     for attempt in range(3):
         discard_typeahead()
         email = input("  Email (Enter to skip): ").strip()
         if not email:
-            print("  Skipped. Run `confluent login` manually if your session expires.")
             return False
         password = prompt_secret("  Password: ")
         if _attempt_login_quiet(email, password):

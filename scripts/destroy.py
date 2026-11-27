@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from dotenv import dotenv_values, unset_key
+from dotenv import dotenv_values, set_key, unset_key
 
 from scripts import existing_env, processes
 
@@ -216,11 +216,49 @@ def _ensure_user_for_core(creds: dict, root: Path, envs_to_destroy: list[str]) -
     if not env_id or _user_for_core(creds):
         return
     if "core" in envs_to_destroy and (root / "terraform" / "core" / "terraform.tfstate").exists():
+        email = existing_env.signed_in_email() if creds.get("CONFLUENT_DEPLOYED_AS") else ""
+        org = existing_env.signed_in_org_id() if creds.get("CONFLUENT_DEPLOYED_ORG") else ""
+        if why := existing_env.account_mismatch(creds, email, org):
+            sys.exit(f"{why}, then rerun `uv run destroy`.")
         sys.exit(
             f"Couldn't find your Confluent user ID for {env_id}; run `confluent login` "
             "(as the user with EnvironmentAdmin on it) and retry."
         )
     print("⚠ Couldn't find your Confluent user ID; a later destroy of core needs it (`confluent login`).")
+
+
+def _settings_to_forget(testing: bool) -> tuple[str, ...]:
+    """The deployment's settings a full destroy clears from credentials.env.
+
+    A person's saved environment goes too, so their next deploy asks again; a bot (--testing) keeps it, since it
+    can't be asked and would otherwise create a new environment.
+    """
+    keep_environment = (existing_env.ENV_KEY,) if not testing else ()
+    return (
+        WORKSHOP,
+        DEPLOY_LABS,
+        ALWAYS_ON,
+        CONTINUOUS,
+        "CONFLUENT_RTCE_API_KEY",
+        "CONFLUENT_RTCE_API_SECRET",
+        "CONFLUENT_DEPLOYED_AS",
+        "CONFLUENT_DEPLOYED_ORG",
+        *keep_environment,
+    )
+
+
+def _forget_lab(creds_file: Path, lab: str) -> None:
+    """After a lab-only destroy, drop it from DEPLOY_LABS, and the airline lab's workshop setting with it."""
+    if not creds_file.exists():
+        return
+    saved = dotenv_values(str(creds_file))
+    labs = [name for name in (saved.get(DEPLOY_LABS) or "").split(",") if name and name != lab]
+    if labs:
+        set_key(str(creds_file), DEPLOY_LABS, ",".join(labs))
+    elif saved.get(DEPLOY_LABS):
+        unset_key(str(creds_file), DEPLOY_LABS)
+    if lab == "flight-disruptions" and saved.get(WORKSHOP):
+        unset_key(str(creds_file), WORKSHOP)
 
 
 def main():
@@ -351,6 +389,7 @@ def main():
             sys.exit(1)
 
     if args.lab:
+        _forget_lab(root / "credentials.env", args.lab)
         print("\n✓ Destroy process completed! Core and any other lab are still deployed.")
         return
 
@@ -363,7 +402,7 @@ def main():
     creds_file = root / "credentials.env"
     saved = dotenv_values(str(creds_file)) if creds_file.exists() else {}
     # Core's destroy deleted the RTCE Global key, so the saved copy points at nothing.
-    for key in (WORKSHOP, DEPLOY_LABS, ALWAYS_ON, CONTINUOUS, "CONFLUENT_RTCE_API_KEY", "CONFLUENT_RTCE_API_SECRET"):
+    for key in _settings_to_forget(args.testing):
         if saved.get(key):
             unset_key(str(creds_file), key)
 

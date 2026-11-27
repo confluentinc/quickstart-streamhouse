@@ -336,6 +336,7 @@ def test_always_on_saves_its_mode_and_implies_the_full_flight_demo(tmp_path):
 def _interactive(monkeypatch, tmp_path, text, ready):
     creds_file = tmp_path / "credentials.env"
     creds_file.write_text(text, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)  # core's outputs fall back to the working directory: keep this checkout's state out
     monkeypatch.setattr(sys, "argv", ["deploy", "--always-on"])
     monkeypatch.setattr(deploy, "get_project_root", lambda: tmp_path)
     monkeypatch.setattr(

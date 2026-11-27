@@ -328,6 +328,37 @@ def test_destroy_stops_before_terraform_when_core_needs_a_user_it_cannot_find(mo
         destroy._ensure_user_for_core(creds, tmp_path, ["airline-demo", "core"])
 
 
+def test_destroy_names_the_account_that_deployed_when_the_login_cant_see_it(monkeypatch, tmp_path):
+    monkeypatch.setattr(destroy.existing_env, "current_user_id", lambda env_id: "")
+    _clear_env(monkeypatch, "TF_VAR_user_id")
+    (tmp_path / "terraform" / "core").mkdir(parents=True)
+    (tmp_path / "terraform" / "core" / "terraform.tfstate").write_text("{}", encoding="utf-8")
+    creds = {"TF_VAR_existing_environment_id": "env-abc12", "CONFLUENT_DEPLOYED_AS": "owner@example.com"}
+    monkeypatch.setattr(destroy.existing_env, "signed_in_email", lambda: "someone-else@example.com")
+    with pytest.raises(SystemExit, match=r"another Confluent account \(owner@example.com\).*confluent login"):
+        destroy._ensure_user_for_core(creds, tmp_path, ["core"])
+    monkeypatch.setattr(destroy.existing_env, "signed_in_email", lambda: "owner@example.com")  # same account
+    with pytest.raises(SystemExit, match=r"Couldn't find your Confluent user ID"):
+        destroy._ensure_user_for_core(creds, tmp_path, ["core"])
+
+
+def test_destroy_names_no_account_when_the_signed_in_email_is_unknown(monkeypatch, tmp_path):
+    monkeypatch.setattr(destroy.existing_env, "current_user_id", lambda env_id: "")
+    monkeypatch.setattr(destroy.existing_env, "signed_in_email", lambda: "")
+    _clear_env(monkeypatch, "TF_VAR_user_id")
+    (tmp_path / "terraform" / "core").mkdir(parents=True)
+    (tmp_path / "terraform" / "core" / "terraform.tfstate").write_text("{}", encoding="utf-8")
+    creds = {"TF_VAR_existing_environment_id": "env-abc12", "CONFLUENT_DEPLOYED_AS": "owner@example.com"}
+    with pytest.raises(SystemExit, match=r"Couldn't find your Confluent user ID"):
+        destroy._ensure_user_for_core(creds, tmp_path, ["core"])
+
+
+def test_a_full_destroy_forgets_the_existing_environment_for_people_but_not_bots():
+    """People are asked again on the next deploy; a bot can't be asked, so it keeps its environment."""
+    assert destroy.existing_env.ENV_KEY in destroy._settings_to_forget(testing=False)
+    assert destroy.existing_env.ENV_KEY not in destroy._settings_to_forget(testing=True)
+
+
 def test_deploy_saves_an_environment_only_after_its_checks_pass(monkeypatch, tmp_path):
     creds_file = tmp_path / "credentials.env"
     creds_file.write_text("", encoding="utf-8")
@@ -363,3 +394,19 @@ def test_redeploying_a_new_environment_checkout_asks_nothing(monkeypatch, tmp_pa
             True,
             interactive=True,
         )
+
+
+def test_destroy_names_the_other_organization_for_the_same_email(monkeypatch, tmp_path):
+    monkeypatch.setattr(destroy.existing_env, "current_user_id", lambda env_id: "")
+    monkeypatch.setattr(destroy.existing_env, "signed_in_email", lambda: "owner@example.com")
+    monkeypatch.setattr(destroy.existing_env, "signed_in_org_id", lambda: "org-2")
+    _clear_env(monkeypatch, "TF_VAR_user_id")
+    (tmp_path / "terraform" / "core").mkdir(parents=True)
+    (tmp_path / "terraform" / "core" / "terraform.tfstate").write_text("{}", encoding="utf-8")
+    creds = {
+        "TF_VAR_existing_environment_id": "env-abc12",
+        "CONFLUENT_DEPLOYED_AS": "owner@example.com",
+        "CONFLUENT_DEPLOYED_ORG": "org-1",
+    }
+    with pytest.raises(SystemExit, match=r"another Confluent organization.*confluent organization use org-1"):
+        destroy._ensure_user_for_core(creds, tmp_path, ["core"])
