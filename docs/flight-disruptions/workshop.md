@@ -9,26 +9,20 @@ That leaves River Air with two challenges:
 1. **One live view of every flight.** A simple question like *"How many flights are delayed right now?"* turns into a data integration project.
 2. **Recovering passengers when a flight is disrupted.** Flight RA417 from Chicago is about to run almost two hours late, and 150 of its passengers will miss their connections. Each one needs a new flight, and some need a hotel, before the rooms sell out.
 
-In this workshop, you deploy a **Streamhouse** architecture on Confluent Cloud that tackles both. You compute every passenger's connection risk with Flink and serve it through Lightning Tables to a live operations dashboard. Then you build a streaming agent that reads live flights and hotel rooms through the Real-Time Context Engine (RTCE) and offers every stranded passenger a new flight and, when needed, a hotel.
+In this workshop, you deploy a **Streamhouse** on Confluent Cloud: an architecture that keeps the current state of the business ready for apps and agents. It tackles both challenges. You compute every passenger's connection risk with Flink and serve it through Lightning Tables to a live operations dashboard. Then you build a streaming agent that reads live flights and hotel rooms through the Real-Time Context Engine (RTCE) and offers every stranded passenger a new flight and, when needed, a hotel.
 
 **Watch the demo**
 
 <a href="https://www.youtube.com/watch?v=4pzIwuhAG2s"><img src="../images/flight-disruptions/demo-video-thumbnail.png" alt="Watch the demo video: River Air flight recovery" width="480"></a>
 
-*Watch the finished flight recovery demo before you build it.*
-
 > [!NOTE]
 >
 > **This workshop takes about 60 minutes to complete.**
 
-> [!TIP]
->
-> **Skipped a step, or hit an error you don't recognize?** Run `uv run workshop-status` in a terminal. It checks your environment and points you to the next unfinished step in this guide. See [Skipped a step?](#skipped-a-step).
-
 | Part | Minutes | What you do |
 |---|---|---|
-| [Prerequisites](#0-prerequisites) | 5 | Install the tools (skip on a host-provided workstation) |
 | [Set up Confluent Cloud](#set-up-confluent-cloud) | 5 | Create your account and add a payment method |
+| [Prerequisites](#prerequisites) | 5 | Install the tools (skip on a host-provided workstation) |
 | [Deploy to Confluent Cloud](#deploy-to-confluent-cloud) | 10 | Clone the repo, deploy your environment, and start the data |
 | [Lab 1](#lab-1--explore-the-live-feeds) | 5 | Explore the live feeds |
 | [Lab 2](#lab-2--compute-connection-risk-with-flink) | 10 | Compute every passenger's connection risk with Flink |
@@ -37,15 +31,36 @@ In this workshop, you deploy a **Streamhouse** architecture on Confluent Cloud t
 | [Lab 5](#lab-5--recover-a-passenger) | 5 | Watch hotel rooms change live, then rebook a passenger |
 | [Challenge](#-optional-challenge--ask-your-coding-agent-about-the-live-operation) | optional | Ask Claude Code or Codex about the live operation over MCP |
 | [Clean up](#clean-up) | 5 | Tear everything down |
+| [Skipped a step?](#skipped-a-step) | — | Run `uv run workshop-status` to find the missing step |
 
-## 0. Prerequisites
+## Set up Confluent Cloud
+
+#### Step 1 — Create your Confluent Cloud account
+
+1. Go to the **[Confluent Cloud sign-up page](https://cnfl.io/learnwithcflt)**.
+2. Enter your **name**, **work email**, **company**, and a **password**, then accept the terms
+   and click **Start Free**.
+3. On first sign-in, an **onboarding wizard** asks a few questions, then offers to create your
+   first cluster.
+
+> [!WARNING]
+> **Don't create a cluster.** Deploy creates one for you. Click the Confluent logo (top-left) to exit the wizard.
+
+#### Step 2 — Add a payment method (credit card)
+
+Deploy needs a payment method to create your cluster. New sign-ups get **$400 in free credit**, so the workshop won't charge your card.
+
+1. Go directly to **[Billing & payment](https://confluent.cloud/settings/billing/payment)**.
+2. Open the **Payment details and contacts** tab.
+3. Click **Add credit card / bank account**, enter your **card details**, then **Save**.
+
+   <img src="../images/add-payment-method.png" alt="Payment details and contacts — Add credit card / bank account" width="500">
+
+## Prerequisites
 
 > [!TIP]
 >
-> **Using a host-provided workstation?** Skip this section. It's already set up. Continue to [Set up Confluent Cloud](#set-up-confluent-cloud).
-
-<details>
-<summary><strong>Prerequisites for your own machine</strong> (click to expand)</summary>
+> **Using a host-provided workstation?** Skip to [Deploy to Confluent Cloud](#deploy-to-confluent-cloud).
 
 <details>
 <summary>for Mac</summary>
@@ -64,18 +79,24 @@ brew install --cask confluent-cli
 <details>
 <summary>for Windows</summary>
 
-Open PowerShell (Start menu → type **PowerShell** → **Windows PowerShell**) and run these. If winget asks you to accept its terms, enter `Y`. None of them needs administrator rights.
+1. Open **PowerShell**: Start menu → type **PowerShell** → **Windows PowerShell**.
+2. Install the tools. If winget asks you to accept its terms, enter `Y`.
 
-```powershell
-winget install --id Git.Git -e --scope user --source winget
-winget install --id astral-sh.uv -e --source winget
-winget install --id Hashicorp.Terraform -e --source winget
-winget install --id ConfluentInc.Confluent-CLI -e --source winget
-```
+    ```powershell
+    winget install --id Git.Git -e --scope user --source winget
+    winget install --id astral-sh.uv -e --source winget
+    winget install --id Hashicorp.Terraform -e --source winget
+    winget install --id ConfluentInc.Confluent-CLI -e --source winget
+    ```
 
-Then **close PowerShell and open a new window**, so it finds the new tools.
+3. Close PowerShell and open a new window.
+4. When you clone the repo later, do it in your user folder (where PowerShell opens), not OneDrive or Documents. Long paths break the install.
 
-**`winget` is not recognized, blocked on your work laptop, or you're on Windows on Arm?** See the Windows prerequisites in the [README](../../README.md#prerequisites).
+**Problems?**
+
+- **`winget` is not recognized:** install [App Installer](https://apps.microsoft.com/detail/9NBLGGH4NNS1) from the Microsoft Store, then open a new PowerShell window.
+- **winget is blocked on your laptop:** install [Git](https://git-scm.com/downloads/win), [uv](https://docs.astral.sh/uv/getting-started/installation/), [Terraform](https://developer.hashicorp.com/terraform/install), and the [Confluent CLI](https://docs.confluent.io/confluent-cli/current/install.html) from their download pages. Unzip Terraform and the Confluent CLI into one folder, add it to your `Path` (Start menu → **Edit environment variables for your account**), then open a new PowerShell window.
+- **Windows on Arm** (Surface Pro X, Copilot+ PCs): after you `cd quickstart-streamhouse`, run `uv venv --python cpython-3.12-windows-x86_64-none` once.
 
 </details>
 
@@ -87,38 +108,6 @@ uv --version
 terraform -version
 confluent version
 ```
-
-</details>
-
-## Set up Confluent Cloud
-
-#### Step 1 — Create your Confluent Cloud account
-
-1. Go to the **[Confluent Cloud sign-up page](https://cnfl.io/learnwithcflt)**.
-2. Enter your **name**, **work email**, **company**, and a **password**, then accept the terms
-   and click **Start Free**.
-3. On first sign-in, an **onboarding wizard** asks a few questions, then offers to create your
-   first cluster.
-
-> [!WARNING]
-> **Do NOT create a cluster.** Skip **Add cluster** / **Create cluster**. Terraform
-> creates its own environment *and* cluster for you. Click the Confluent logo (top-left) to
-> exit the wizard.
-
-#### Step 2 — Add a payment method (credit card)
-
-A payment method is required for Terraform to create a **Standard** cluster. Free
-credit is used first, so you typically won't be charged during the workshop.
-
-> [!TIP]
-> All new sign-ups get **$400 in free credit** to use within the first 30 days, so deploying this
-> workshop won't charge your card.
-
-1. Go directly to **[Billing & payment](https://confluent.cloud/settings/billing/payment)**.
-2. Open the **Payment details and contacts** tab.
-3. Click **Add credit card / bank account**, enter your **card details**, then **Save**.
-
-   <img src="../images/add-payment-method.png" alt="Payment details and contacts — Add credit card / bank account" width="500">
 
 ## Deploy to Confluent Cloud
 
@@ -145,20 +134,20 @@ credit is used first, so you typically won't be charged during the workshop.
 
     | Prompt | Answer |
     |---|---|
-    | `Which lab do you want to deploy?` | Enter `1` for **Flight Disruptions**. This deploys the starting infrastructure; you build the rest in the labs. |
-    | `Email (Enter to skip)` and `Password` | The **email and password you used to sign up**. The script verifies your login details and saves them to `credentials.env` for later commands. **Signed in with SSO in step 2?** Press **Enter** to skip. |
-    | `Deploy into an existing environment? Paste its ID (env-xxxxx), or press Enter to create a new one:` | Press **Enter**. If your admin gave you an environment ID, paste it instead. |
-    | `Generate new Confluent Cloud API keys? (y/N)` | Enter `y`. The script creates and configures the key automatically. |
+    | `Which lab do you want to deploy?` | Enter `1` for **Agentic Airline Operations**. |
+    | `Email (Enter to skip)` and `Password` | Your Confluent Cloud email and password. Already signed in? Press **Enter**. |
+    | `Deploy into an existing environment? Paste its ID (env-xxxxx), or press Enter to create a new one:` | Press **Enter** for a new environment.<br>Or paste an environment ID to deploy into it. |
     | `Ready to deploy? (y/n)` | Enter `y`. |
 
-    **Deploy takes about 10 minutes to create all of the workshop infrastructure and source topics.** When finished, you'll see your environment and cluster names, which you need in Lab 2.
+    When it finishes, deploy prints your environment and cluster names, which you need in Lab 2.
 
-4. Start the datagen:
+> [!NOTE]
+>
+> Deploy takes about 10 minutes.
 
-    Open a **second terminal**. It opens in your home folder, so go to the repo folder first, then start the generator:
+4. Start the datagen in a **new terminal** in the `quickstart-streamhouse` folder:
 
     ```bash
-    cd quickstart-streamhouse
     uv run airport-datagen --skip-history
     ```
 
@@ -166,7 +155,7 @@ credit is used first, so you typically won't be charged during the workshop.
 
 > [!WARNING]
 >
-> **Leave this terminal running for the whole workshop.** If you stop it, the flights stop updating. If it stops by accident, run `uv run airport-datagen --resume` to pick the stream back up on the same clock.
+> **Leave it running for the rest of the lab.** If it stops, run `uv run airport-datagen --resume`.
 
 ## Lab 1 — Explore the live feeds
 
@@ -194,7 +183,7 @@ Use Flink to join each itinerary with the live status of both flights. Connectio
 
         <img src="../images/open-sql-workspace.png" alt="The streamhouse compute pool card with its SQL Workspace button" width="400">
 
-    3. Set the **Catalog** to your environment and the **Database** to your cluster: the names printed at the end of `uv run deploy` (your environment and `streamhouse-…-cluster`).
+    3. Set **Catalog** to your environment and **Database** to your cluster: the names `uv run deploy` printed.
 
         <img src="../images/set-catalog-database.png" alt="The SQL workspace with Use catalog set to the streamhouse environment and Use database set to its cluster" width="600">
 
@@ -214,7 +203,7 @@ Use Flink to join each itinerary with the live status of both flights. Connectio
 
     <img src="../images/flight-disruptions/show-tables.png" alt="SHOW TABLES results listing the starting tables, from flight_status" width="750">
 
-3. Create `passenger_state`, which keeps every passenger's connection current and flags it `HIGH` risk when a delay leaves less than 45 minutes to make it. Paste this whole statement into one cell and run it:
+3. Create `passenger_state`, which keeps every passenger's connection current and flags it `HIGH` risk when a delay leaves less than 45 minutes to make it. Run this:
 
     ```sql
     CREATE OR ALTER MATERIALIZED TABLE passenger_state (
@@ -316,7 +305,7 @@ Use Flink to join each itinerary with the live status of both flights. Connectio
     WHERE inbound_flight_id LIKE 'RA417-%';
     ```
 
-    As the flight is further delayed, you'll continue to see passengers delay risk change from "OK" to "HIGH".
+    RA417 may still be on time. As its delay grows, passengers change from `OK` to `HIGH`.
 
     <img src="../images/flight-disruptions/passenger-state-query.png" alt="Query results from passenger_state: RA417&#x27;s passengers with their seat, final destination, connection minutes, and risk" width="750">
 
@@ -328,56 +317,62 @@ Use Flink to join each itinerary with the live status of both flights. Connectio
     WHERE `key` LIKE 'RA417-%';
     ```
 
-    As today's RA417 delay grows, `affected_passengers` increases.
+    You see today's RA417 and tomorrow's. As today's delay grows, `affected_passengers` increases.
 
     <img src="../images/flight-disruptions/flight-impact-query.png" alt="Query results from flight_impact: today&#x27;s RA417 delayed with affected passengers, and tomorrow&#x27;s RA417 on time" width="750">
 
 > [!NOTE]
 >
-> Stop each `SELECT` statement when you're done with it, so your compute pool has room for Lab 4.
+> When you're done with a `SELECT`, click **Stop** in its cell to free up your compute pool.
 
 ## Lab 3 — Power a live operations dashboard with Lightning Tables
 
-Lightning Tables keep a low-latency table of each topic's latest rows in Confluent Cloud. Your operations dashboard and the Lab 4 recovery agent both read this live state.
+Lightning Tables make each topic queryable with low latency. Your operations dashboard and the Lab 4 recovery agent both read this live state.
 
-1. In the cluster sidebar, open **Lightning Tables** and click **Add Lightning Table**.
-
-2. Enable `flight_status`, `flight_impact`, `hotel_inventory`, `passenger_itineraries`, `passenger_recommendations`, `passenger_state`, and `flight_telemetry`.
-
-    You can also enable each table from the cluster's **Topics** page. In the **Lightning Tables** column, click **+ Enable**, then **Enable** in the confirmation panel.
+1. Open your cluster's **[Topics](https://confluent.cloud/go/topics)** page. In the **Lightning Tables** column, click **+ Enable**, then **Enable**. Click **Done** when it says **Lightning Table is enabled** (a couple of minutes). Do this for `flight_status`, `flight_impact`, `hotel_inventory`, `passenger_itineraries`, `passenger_recommendations`, `passenger_state`, and `flight_telemetry`.
 
     ![Enable Lightning Tables from the Topics list](../images/flight-disruptions/enable-lightning-tables.png)
 
     ![Confirm that you want to enable the Lightning Table](../images/flight-disruptions/lightning-tables-panel.png)
 
-3. Close the picker and wait until all seven show **Active**. If the map says **Waiting for telemetry**, check that `flight_telemetry` is **Active**.
+2. Wait until all seven show **Active**.
 
     ![Example of active Lightning Tables in the Topics list](../images/flight-disruptions/lightning-tables-active.png)
 
-4. Use the **Preview** column on `hotel_inventory` to run ``SELECT * FROM `hotel_inventory` LIMIT 100;`` if it does not run automatically. The preview shows inventory updates. Use `as_of` to see when each update was recorded.
+3. Look at the hotel room updates:
 
-    You can run the same inventory check from your terminal.
+    1. On the Topics page, click **Preview** on the `hotel_inventory` row.
+    2. No rows? Run this query in the preview:
+
+        ```sql
+        SELECT * FROM `hotel_inventory` LIMIT 100;
+        ```
+
+    Each row is one update to a hotel's rooms. `as_of` is when it happened.
+
+    Run the same check in a **new terminal** in the `quickstart-streamhouse` folder:
 
     ```bash
     uv run setup-rtce --lightning hotel_inventory --run
     ```
 
-    The terminal command shows the newest updates first. The screenshot shows an earlier output format.
-
     ![Hotel inventory query results in the terminal](../images/flight-disruptions/lightning-query-test.png)
 
-5. Open a new terminal, go to the repo folder, and start the dashboard app.
+4. Back in your terminal, start the dashboard app:
 
     ```bash
-    cd quickstart-streamhouse
     uv run airport-app
     ```
 
-    Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser, and leave both datagen and the app running.
+    Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser.
 
     ![Operations dashboard overview](../images/flight-disruptions/dashboard-workshop.png)
 
-6. Check **Operations** and **Biggest delays**, then select **RA417** (it may be on time initially). Hover a seat on the seat map to view that passenger's itinerary, and watch the live map telemetry update as the flight moves. The generator publishes telemetry every five seconds.
+> [!WARNING]
+>
+> **Leave it running for the rest of the lab.**
+
+5. Check **In the air** and **Biggest delays**, then select **RA417** (it may be on time initially; if you don't see it, find it in **Day view**). Hover a seat on the seat map to view that passenger's itinerary, and watch the live map telemetry update as the flight moves. The generator publishes telemetry every five seconds. If the map says **Waiting for telemetry**, check that `flight_telemetry` is **Active** on the Topics page.
 
     ![RA417 seat map and live telemetry](../images/flight-disruptions/dashboard-ra417-workshop.png)
 
@@ -385,15 +380,13 @@ Lightning Tables keep a low-latency table of each topic's latest rows in Conflue
 
 Next you will build a Flink SQL recovery agent that checks live flights and hotel inventory through RTCE and writes rebooking offers for disrupted passengers.
 
-1. In your commands terminal, run this command from the repo folder to create the Flink connection to RTCE.
+1. Create the Flink connection to RTCE in a **new terminal** in the `quickstart-streamhouse` folder:
 
     ```bash
     uv run setup-rtce --agent-connection
     ```
 
-2. Return to your existing Flink SQL workspace. Click **+** to add a fresh SQL cell, and use a separate cell for every SQL block in this lab. `passenger_state` updates rows in place as an upsert table, and the Flink agent reads append-only input, so `passenger_state_changes` turns each state update into an append-only row.
-
-    In the Confluent CLI, pass `--property sql.local-time-zone=UTC` for the two cells starting with `SET` and submit only the SQL after the `SET` line.
+2. Back in your Flink SQL workspace, create `passenger_state_changes` in a new cell. Use a new cell for each SQL block in this lab.
 
     ```sql
     CREATE OR ALTER MATERIALIZED TABLE passenger_state_changes (
@@ -423,7 +416,7 @@ Next you will build a Flink SQL recovery agent that checks live flights and hote
     );
     ```
 
-3. Create `impacted_passengers` to keep one append-only row per newly `HIGH`-risk passenger. Leave the UTC `SET` statement in its cell so time filters run in UTC.
+3. Create `impacted_passengers`: one append-only row per newly `HIGH`-risk passenger. Keep the UTC `SET` line in the cell.
 
     ```sql
     SET 'sql.local-time-zone' = 'UTC';
@@ -460,7 +453,7 @@ Next you will build a Flink SQL recovery agent that checks live flights and hote
     );
     ```
 
-4. Run `CREATE TOOL` to give Flink live access to RTCE, and wait for **Completed**.
+4. Run `CREATE TOOL` to give Flink live access to RTCE.
 
     ```sql
     CREATE TOOL IF NOT EXISTS hotel_inventory_live_context
@@ -472,7 +465,7 @@ Next you will build a Flink SQL recovery agent that checks live flights and hote
     );
     ```
 
-5. Run `CREATE AGENT` to define the recovery agent and its booking rules, and confirm it finishes as **Completed**.
+5. Run `CREATE AGENT` to define the recovery agent and its booking rules.
 
     ```sql
     CREATE AGENT IF NOT EXISTS passenger_recovery_agent
@@ -502,7 +495,7 @@ Next you will build a Flink SQL recovery agent that checks live flights and hote
     );
     ```
 
-6. Run `SHOW AGENTS` to confirm your new agent appears in the workspace.
+6. Confirm the agent exists:
 
     ```sql
     SHOW AGENTS;
@@ -510,7 +503,7 @@ Next you will build a Flink SQL recovery agent that checks live flights and hote
 
     ![SHOW AGENTS results](../images/flight-disruptions/show-agents.png)
 
-7. Start the long-running `INSERT` statement with its UTC `SET` line kept in the cell. Wait for the cell status to show **Running**, and keep this `INSERT` running.
+7. Start the `INSERT` statement. Keep the UTC `SET` line in the cell.
 
     ```sql
     SET 'sql.local-time-zone' = 'UTC';
@@ -592,6 +585,10 @@ Next you will build a Flink SQL recovery agent that checks live flights and hote
 
     ![Running INSERT statement](../images/flight-disruptions/flink-workshop-running.png)
 
+> [!NOTE]
+>
+> This statement runs continuously. Don't stop or delete it.
+
 8. Query `passenger_recommendations` for RA417.
 
     ```sql
@@ -610,11 +607,11 @@ Now you see the recovery from the passenger's side. Some of the agent's offers i
 
 With a Streamhouse architecture, that's not an issue: River Air's app always has the current state of hotel availability. It checks the rooms left with a Lightning Query when a passenger selects an offer, swaps in another hotel if the room is gone, and checks again at booking.
 
-1. Open RA417 in the [dashboard app](http://127.0.0.1:8000) and choose a HIGH-risk seat with two offers under **Passenger recovery**.
+1. Open RA417 in the [dashboard app](http://127.0.0.1:8000) and click a HIGH-risk seat. Its two offers show under **Passenger recovery**.
 
 <img src="../images/flight-disruptions/dashboard-passenger-hotel-options.png" alt="Hotel options and Passenger recovery in the app, with the Grand Hyatt sold out and one passenger&#x27;s two offers" width="750">
 
-2. Watch the Grand Hyatt in **Hotel options** for a minute or so. The hotel partner's feed updates each hotel's rooms left every 15 seconds, and the dashboard shows them in real time using **Lightning Queries** on `hotel_inventory`. Lightning keeps every update, so the app reads the newest ones first and shows each hotel's latest row. You don't need to wait for it to sell out.
+2. Watch the Grand Hyatt in **Hotel options** for a minute or so. The hotel partner's feed updates each hotel's rooms left every 15 seconds, and the dashboard shows them in real time using **Lightning Queries** on `hotel_inventory`. Lightning keeps every update, so the app shows each hotel's latest. You don't need to wait for it to sell out.
 
 3. Click **Select** on either offer, then click **Book**. The **Book** button appears once Lightning shows your selection, usually within a minute.
 
@@ -624,6 +621,7 @@ With a Streamhouse architecture, that's not an issue: River Air's app always has
 
     - The status bar at the bottom reads **Grand Hyatt at SFO is sold out. Now offering Hilton SFO Airport Bayfront.**
     - The offer now shows the Hilton at $249.
+    - Click **Select** on it again, then **Book**.
 
     The passenger's two choices are then the Marriott and the Hilton.
 
@@ -656,17 +654,17 @@ On Windows:
 winget install --id Anthropic.ClaudeCode -e --source winget
 ```
 
-Then open a new PowerShell window and run `cd quickstart-streamhouse`. The old window can't find `claude` yet.
+Then open a new PowerShell window in the `quickstart-streamhouse` folder.
 
 </details>
 
-1. Register RTCE with your coding agent. In your first terminal:
+1. Back in your terminal, register RTCE with your coding agent:
 
     ```bash
     uv run setup-rtce
     ```
 
-    Choose Claude Code or Codex to register `confluent-streamhouse-rtce` and confirm it can list topics. Restart the client.
+    Enter `1` for Claude Code or `2` for Codex. Already have it open? Restart it.
 
     <img src="../images/flight-disruptions/setup-rtce.png" alt="Output of uv run setup-rtce: Claude Code chosen, RTCE turned on for passenger_state and flight_impact, and the MCP connection test passed" width="750">
 
@@ -695,7 +693,7 @@ RTCE gives your agent three tools, `listTopics`, `getMetadata`, and `queryData`,
 
 ## Skipped a step?
 
-The labs build on each other, and Flink can't tell you which earlier step is missing. To find the gap, run this in a terminal from the repo's root folder:
+The labs build on each other, and Flink can't tell you which earlier step is missing. To find the gap, run this in the `quickstart-streamhouse` folder:
 
 ```bash
 uv run workshop-status
@@ -707,9 +705,9 @@ Congratulations! You built a Streamhouse. It turns raw flight and itinerary feed
 
 ## Clean up
 
-1. Stop the app and the generator: press **Ctrl-C** in their terminal windows.
+1. Stop the app and the generator: press **Ctrl-C** in their terminals.
 
-2. In your first terminal window, tear everything down and answer `y`:
+2. Tear everything down. Enter `y` to confirm:
 
     ```bash
     uv run destroy
@@ -720,7 +718,7 @@ Congratulations! You built a Streamhouse. It turns raw flight and itinerary feed
     <details>
     <summary>Remove only this lab</summary>
 
-    This keeps the shared environment, cluster, and Flink pool, and Agentic Pit Decisions if you deployed it:
+    Keeps the environment, cluster, and the Agentic Pit Decisions lab:
 
     ```bash
     uv run destroy --lab flight-disruptions

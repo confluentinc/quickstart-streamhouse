@@ -119,7 +119,7 @@ source tables, `passenger_state`, `flight_impact`, and Tableflow to S3/Glue when
 uv run deploy --with-labs
 ```
 
-`--with-labs` builds the whole demo. Without it, deploy builds only the [workshop](./workshop.md)'s starting point. It asks which lab to deploy (choose **Flight Disruptions** or **Both**), then prompts for your Confluent Cloud login and API key, optional AWS credentials, and which coding agent should get the RTCE MCP server. After Terraform finishes, it publishes 30 days of history and today's flights, starts a 90-minute live stream in the background, enables RTCE and Lightning on the demo topics, and offers to start the app at http://127.0.0.1:8000. Later, run `uv run airport-app` to restart the app, `uv run airport-datagen` to restart the scene, or `uv run setup-rtce` to re-register the MCP server.
+`--with-labs` builds the whole demo. Without it, deploy builds only the [workshop](./workshop.md)'s starting point. It asks which lab to deploy (choose **Agentic Airline Operations** or **Both**), then prompts for your Confluent Cloud login (it reuses the Cloud API key in `credentials.env`, or creates one), optional AWS credentials, and which coding agent should get the RTCE MCP server. After Terraform finishes, it publishes 30 days of history and today's flights, starts a 90-minute live stream in the background, enables RTCE and Lightning on the demo topics, and offers to start the app at http://127.0.0.1:8000. Later, run `uv run airport-app` to restart the app, `uv run airport-datagen` to restart the scene, or `uv run setup-rtce` to re-register the MCP server.
 
 > [!NOTE]
 >
