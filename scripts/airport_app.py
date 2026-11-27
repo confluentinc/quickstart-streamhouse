@@ -51,7 +51,7 @@ def _lightning_error(topic: str, status: int, body: str) -> str:
     """What a failed Lightning query says; a topic with no Lightning Table yet names the workshop step to do."""
     if "FE_CUSTOMER_NOT_FOUND" in body or "FE_TABLE_NOT_FOUND" in body:
         return (
-            f"{topic} has no Lightning Table yet. Enable it in the Console (Lab 3, steps 1 to 3), "
+            f"{topic} has no Lightning Table yet. Enable it in the Console (Lab 3, steps 1 and 2), "
             "or run `uv run workshop-status`."
         )
     return f"Lightning query returned HTTP {status}: {body[:300]}"

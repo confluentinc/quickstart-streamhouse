@@ -77,7 +77,7 @@ DEFAULT_REGION = "us-east-1"  # RTCE-supported; Confluent-hosted Claude availabl
 DEFAULT_PREFIX = "streamhouse"
 # Lab id -> (display name, Terraform root). Both build on terraform/core.
 LABS = {
-    "flight-disruptions": ("Flight Disruptions", "airline-demo"),
+    "flight-disruptions": ("Agentic Airline Operations", "airline-demo"),
     "agentic-pit-decisions": ("Agentic Pit Decisions", "agentic-pit-decisions"),
 }
 FLIGHT_DISRUPTIONS, PIT_DECISIONS = LABS
@@ -310,7 +310,7 @@ def _always_on_mode(args, creds_file, creds: dict) -> bool:
             "Run `uv run destroy` first, or deploy the always-on demo from another clone."
         )
     if args.lab not in (None, FLIGHT_DISRUPTIONS):
-        sys.exit("--always-on deploys the Flight Disruptions lab; drop --lab or pick flight-disruptions.")
+        sys.exit("--always-on deploys the Agentic Airline Operations lab; drop --lab or pick flight-disruptions.")
     args.with_labs, args.lab = True, FLIGHT_DISRUPTIONS
     return True
 
@@ -381,7 +381,7 @@ def _select_labs(requested: str | None, creds_file, creds: dict, workshop: bool,
         choice = prompt_choice(f"Which lab do you want to deploy?{last_time}", options)
         labs = list(LABS) if choice == "Both" else [lab for lab, (name, _) in LABS.items() if name == choice]
     if workshop and FLIGHT_DISRUPTIONS not in labs:
-        sys.exit("--workshop deploys the Flight Disruptions lab; drop --lab or pick flight-disruptions.")
+        sys.exit("--workshop deploys the Agentic Airline Operations lab; drop --lab or pick flight-disruptions.")
     _save_env_safe(creds_file, DEPLOY_LABS, ",".join(labs))
     creds[DEPLOY_LABS] = ",".join(labs)
     return labs
@@ -420,13 +420,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--with-labs",
         action="store_true",
-        help="Prebuild what attendees write, for a demo: Flight Disruptions' full pipeline, stream, agent, and RTCE; "
-        "Agentic Pit Decisions' Steps 1 and 3 (car_state, the agent, pit_decisions)",
+        help="Prebuild what attendees write, for a demo: Agentic Airline Operations' full pipeline, stream, agent, "
+        "and RTCE; Agentic Pit Decisions' Steps 1 and 3 (car_state, the agent, pit_decisions)",
     )
     parser.add_argument(
         "--workshop",
         action="store_true",
-        help="Deploy only the Flight Disruptions workshop, skipping the lab question",
+        help="Deploy only the Agentic Airline Operations workshop, skipping the lab question",
     )
     parser.add_argument(
         "--automated",
@@ -444,7 +444,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--always-on",
         action="store_true",
-        help="Operators: run the full Flight Disruptions demo around the clock on AWS (saved for later runs)",
+        help="Operators: run the full Agentic Airline Operations demo around the clock on AWS (saved for later runs)",
     )
     parser.add_argument(
         "--reset-data",
@@ -545,7 +545,7 @@ def main():
     elif workshop:
         print("\nWorkshop mode: deploys the source feeds only; docs/flight-disruptions/workshop.md builds the rest.")
     elif flights:
-        print("\nFull demo: deploys the whole Flight Disruptions pipeline, stream, and recovery agent.")
+        print("\nFull demo: deploys the whole Agentic Airline Operations pipeline, stream, and recovery agent.")
 
     # Confluent Cloud login (saved for auto-login). A saved login that stopped working is asked for again.
     prompted = False
@@ -569,23 +569,8 @@ def main():
     else:
         print(f"Resource name prefix: {prefix} (set TF_VAR_resource_prefix in credentials.env to change)")
 
-    # Optionally generate fresh Confluent Cloud API keys; new keys are used as-is, without asking for them again.
-    print()
-    api_key = api_secret = None
-    if prompt_yes_no("Generate new Confluent Cloud API keys?", default=False):
-        api_key, api_secret = generate_confluent_api_keys(prefix)
-        if not (api_key and api_secret):
-            role = "EnvironmentAdmin" if env_id else "OrganizationAdmin"
-            print(f"✗ Could not generate API keys; enter an existing {role} key below.")
-
     print("\n--- Credential Configuration ---")
-    if api_key and api_secret:
-        print(f"Using the new Confluent Cloud API key {api_key}")
-    else:
-        api_key = prompt_with_default("Confluent Cloud API Key", creds.get("TF_VAR_confluent_cloud_api_key", ""))
-        api_secret = prompt_with_default(
-            "Confluent Cloud API Secret", creds.get("TF_VAR_confluent_cloud_api_secret", ""), secret=True
-        )
+    api_key, api_secret = _cloud_api_key(creds, prefix, env_id)
     _save_env_safe(creds_file, "TF_VAR_confluent_cloud_api_key", api_key)
     _save_env_safe(creds_file, "TF_VAR_confluent_cloud_api_secret", api_secret)
 
@@ -708,6 +693,29 @@ def _prompt_aws_credentials(creds_file, creds: dict) -> None:
             _save_env_safe(creds_file, "TF_VAR_aws_tableflow_session_token", token)
 
 
+def _cloud_api_key(creds: dict, prefix: str, env_id: str) -> tuple[str, str]:
+    """The saved Cloud API key, or a new one owned by the signed-in user. Asks only when creating one fails.
+
+    Destroy doesn't delete the key, so reusing it keeps keys from piling up. A saved key that was deleted fails in
+    Terraform with a 401: remove both TF_VAR_confluent_cloud_api_* lines from credentials.env and rerun.
+    """
+    key = (creds.get("TF_VAR_confluent_cloud_api_key") or "").strip()
+    secret = (creds.get("TF_VAR_confluent_cloud_api_secret") or "").strip()
+    if key and secret:
+        print(f"Using the saved Confluent Cloud API key {key}")
+        return key, secret
+    key, secret = generate_confluent_api_keys(prefix)
+    if key and secret:
+        print(f"Using the new Confluent Cloud API key {key}")
+        return key, secret
+    role = "EnvironmentAdmin" if env_id else "OrganizationAdmin"
+    print(f"✗ Could not create an API key; enter an existing {role} key.")
+    return (
+        prompt_with_default("Confluent Cloud API Key", ""),
+        prompt_with_default("Confluent Cloud API Secret", "", secret=True),
+    )
+
+
 def _env_hint(name: str) -> str:
     """How to set an environment variable in this computer's usual shell, for messages."""
     return f"`$env:{name} = '...'`" if sys.platform == "win32" else f"`export {name}=...`"
@@ -782,9 +790,6 @@ def _finish_pit_decisions(root, with_labs: bool = False) -> bool:
     print(f"""
 ✓ Agentic Pit Decisions is ready{"" if ok else " (see the warnings above)"}.
   In the SQL workspace, use catalog {fields["catalog"]} and database {fields["database"]}.
-  In two terminals:
-     uv run f1-race       # {fields["seconds_per_lap"]}s/lap race feed
-     uv run f1-pitwall    # dashboard at http://localhost:8001
   Then follow docs/agentic-pit-decisions/walkthrough.md.""")
     return ok
 

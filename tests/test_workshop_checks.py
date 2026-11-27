@@ -115,7 +115,7 @@ def test_skipping_lab_3_points_to_it_and_enables_nothing(tmp_path, monkeypatch, 
     assert workshop_checks.ensure_lightning(ws, ["flight_status"], "The dashboard reads them.") is False
     out = capsys.readouterr().out
     assert "`flight_status`" in out and "The dashboard reads them." in out
-    assert "Your next step is Lab 3, steps 1 to 3" in out
+    assert "Your next step is Lab 3, steps 1 and 2" in out
     assert f"of {workshop_checks.WORKSHOP_GUIDE})" in out  # the line in the guide
     assert "run this command again" in out
     assert "for you now" not in out and ws.sql_run == []
@@ -175,7 +175,7 @@ def test_a_failed_lightning_table_tells_the_attendee_to_turn_it_off_and_on(tmp_p
     assert workshop_checks.ensure_lightning(ws, ["passenger_state", "flight_impact"], "") is False
     out = capsys.readouterr().out
     assert "failed for: `passenger_state`" in out and "off and on again" in out
-    assert "Your next step is Lab 3, steps 1 to 3" in out
+    assert "Your next step is Lab 3, steps 1 and 2" in out
 
 
 def test_a_bot_turns_a_failed_lightning_table_off_and_on_again(tmp_path, bot, monkeypatch):
@@ -233,7 +233,7 @@ def test_status_lists_steps_in_guide_order():
     assert where == [
         "Deploy, step 4",
         "Lab 2, steps 3 and 4",
-        "Lab 3, steps 1 to 3",
+        "Lab 3, steps 1 and 2",
         "Lab 4, step 1",
         "Lab 4, steps 2 and 3",
         "Lab 4, steps 4 and 5",
@@ -260,7 +260,7 @@ def test_status_reports_and_points_to_the_next_step_without_running_anything(tmp
     assert exit_info.value.code == 1
     out = capsys.readouterr().out
     assert "✓ Lab 2, steps 3 and 4" in out
-    assert "✓ Lab 3, steps 1 to 3" in out
+    assert "✓ Lab 3, steps 1 and 2" in out
     assert "✗ Lab 4, step 1" in out
     assert "✗ Lab 4, step 7" in out
     assert "Your next step is Lab 4, step 1" in out
@@ -321,7 +321,7 @@ def test_every_step_resolves_to_its_numbered_step_in_the_guide():
 
 def test_the_next_step_names_its_line_in_the_guide_and_how_to_open_it(monkeypatch, capsys):
     monkeypatch.setattr(workshop_checks.sys, "platform", "darwin")
-    step = next(s for s in workshop_checks.steps() if s.where == "Lab 3, steps 1 to 3")
+    step = next(s for s in workshop_checks.steps() if s.where == "Lab 3, steps 1 and 2")
     workshop_checks.point_to_step(step, GUIDE_ROOT)
     out = capsys.readouterr().out
     line = workshop_checks.guide_location(step, GUIDE_ROOT)[1]
@@ -384,7 +384,7 @@ def test_the_app_stops_with_a_pointer_when_lab_3_was_skipped(tmp_path, monkeypat
         airport_app.main([])
     assert exit_info.value.code == 1
     out = capsys.readouterr().out
-    assert "Your next step is Lab 3, steps 1 to 3" in out and "for you now" not in out
+    assert "Your next step is Lab 3, steps 1 and 2" in out and "for you now" not in out
 
 
 def test_the_hosted_app_starts_without_local_terraform_state(monkeypatch):
@@ -499,13 +499,14 @@ def test_setup_rtce_names_target_when_list_topics_fails(tmp_path, monkeypatch, c
     assert "returned" not in output
 
 
-def test_setup_rtce_sends_an_attendee_who_skipped_lab_2_back_to_it(tmp_path, monkeypatch, capsys):
+def test_setup_rtce_skips_the_tables_lab_2_has_not_built_and_keeps_going(tmp_path, monkeypatch, capsys):
+    """An F1 attendee with both labs deployed hasn't done the airline Lab 2, and must not be stopped by it."""
     sources = [t for t in LIGHTNING_TOPICS if t not in ("passenger_state", "flight_impact")]
     ws = FakeWorkshop(tmp_path, topics=sources)
     ws.creds = {"TF_VAR_workshop": "true"}
-    with pytest.raises(SystemExit) as exit_info:
-        _run_setup_rtce(tmp_path, monkeypatch, ws)
-    assert exit_info.value.code == 1
+    enabled = _run_setup_rtce(tmp_path, monkeypatch, ws)
+    assert "passenger_state" not in enabled and "flight_impact" not in enabled, "turned on before Flink built it"
+    assert set(enabled) == set(sources)
     out = capsys.readouterr().out
-    assert "Your next step is Lab 2, steps 3 and 4" in out
+    assert "Skipping `passenger_state`, `flight_impact`" in out
     assert ws.sql_run == []

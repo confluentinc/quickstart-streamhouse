@@ -1165,11 +1165,16 @@ def main(argv: list[str] | None = None):
     client = args.client if args.client else _pick_client()
 
     # This command turns the Lightning Tables on itself, as it always has (and `deploy --with-labs` relies on
-    # that). But a table turned on before Flink builds its topic ends up FAILED, so point an attendee who
-    # skipped Lab 2 back to it.
+    # that). But a table turned on before Flink builds its topic ends up FAILED, so skip the airline workshop's
+    # Lab 2 tables until they exist: an F1 attendee with both labs deployed may never build them. Bots build them.
+    not_built: list[str] = []
     if ws and ws.is_workshop and not args.dry_run:
-        if not workshop_checks.require_lab_2(ws):
-            sys.exit(1)
+        if workshop_checks.runs_missing_steps():
+            if not workshop_checks.require_lab_2(ws):
+                sys.exit(1)
+        else:
+            have = ws.kafka_topics()
+            not_built = [table for table, _, _ in workshop_checks.LAB2 if table not in have]
 
     print("\nFetching currently RTCE-enabled topics...")
     already_enabled = _list_rtce_topics(api_key, api_secret, infra)
@@ -1193,6 +1198,10 @@ def main(argv: list[str] | None = None):
     else:
         print()
         topics = _parse_topics(_ask("Topics to connect to this MCP server (comma-separated): "))
+
+    if not_built:
+        print(f"  Skipping {', '.join(f'`{t}`' for t in not_built)}: Agentic Airline Operations Lab 2 creates them.")
+        topics = [t for t in topics if t not in not_built]
 
     # Enable RTCE on any topic not yet enabled — automatically, no prompt. RTCE needs
     # a registered SR schema; every demo topic has one (created at deploy time).

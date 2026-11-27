@@ -66,7 +66,7 @@ LAB4_AGENT = ("passenger_recovery_agent", "30-agent-passenger-recovery.sql", Non
 LAB4_RUN = ("the agent's INSERT", "31-insert-passenger-recommendations.sql", UTC)
 
 LAB2_STEP = "Lab 2, steps 3 and 4"
-LAB3_STEP = "Lab 3, steps 1 to 3"
+LAB3_STEP = "Lab 3, steps 1 and 2"
 
 LIGHTNING_WAIT_SECONDS = 600
 
