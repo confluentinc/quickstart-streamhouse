@@ -416,10 +416,34 @@ def _run_setup_rtce(tmp_path, monkeypatch, ws, check_result=(7, "")):
     monkeypatch.setattr(setup_rtce, "_list_rtce_topics", lambda *args: [])
     monkeypatch.setattr(setup_rtce, "_discover_demo_topics", lambda creds_file: LIGHTNING_TOPICS)
     monkeypatch.setattr(setup_rtce, "_save_to_env_file", lambda *args: None)
-    monkeypatch.setattr(setup_rtce, "_test_mcp_connection", lambda url, token: check_result)
-    monkeypatch.setattr(setup_rtce, "_enable_rtce_topic", lambda key, secret, infra, topic, desc: enabled.append(topic))
+    if check_result is not None:
+        monkeypatch.setattr(setup_rtce, "_test_mcp_connection", lambda url, token: check_result)
+
+    def enable(key, secret, infra, topic, desc):
+        enabled.append(topic)
+        ws.fake_phases.setdefault(topic, "ACTIVE")
+        return True
+
+    monkeypatch.setattr(setup_rtce, "_enable_rtce_topic", enable)
     setup_rtce.main(["--client", "none"])
     return enabled
+
+
+def test_setup_rtce_checks_rtce_only_once_the_tables_it_turned_on_are_active(tmp_path, monkeypatch):
+    """RTCE answers FE_CUSTOMER_NOT_FOUND until a new cluster's first Lightning Table is up."""
+    ws = FakeWorkshop(tmp_path, phases=dict.fromkeys(LIGHTNING_TOPICS, "PROVISIONING"), topics=LIGHTNING_TOPICS)
+    ws.creds = {"TF_VAR_workshop": ""}
+    loading = dict(ws.fake_phases)
+    reads = []
+    ws.phases = lambda: reads.append(1) or (loading if len(reads) == 1 else _active(LIGHTNING_TOPICS))
+    monkeypatch.setattr(workshop_checks.time, "sleep", lambda seconds: None)
+
+    def check(url, token):
+        assert len(reads) >= 2, "checked RTCE before the Lightning Tables were Active"
+        return 7, ""
+
+    monkeypatch.setattr(setup_rtce, "_test_mcp_connection", check)
+    _run_setup_rtce(tmp_path, monkeypatch, ws, check_result=None)
 
 
 def test_setup_rtce_still_turns_the_lightning_tables_on_itself(tmp_path, monkeypatch):

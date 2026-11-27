@@ -1206,6 +1206,8 @@ def main(argv: list[str] | None = None):
             print(f"  • {topic}...", end=" ", flush=True)
             ok = _enable_rtce_topic(api_key, api_secret, infra, topic, desc)
             print("✓" if ok else "✗  (see error above)")
+        if ws:  # RTCE doesn't know a new cluster until its first table is up, so check after they load
+            workshop_checks._wait_active(ws, not_yet_enabled)
 
     if not args.dry_run:
         _save_to_env_file(creds_file, _CRED_TOPICS, ",".join(topics))
