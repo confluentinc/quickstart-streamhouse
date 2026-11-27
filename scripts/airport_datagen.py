@@ -43,6 +43,7 @@ import argparse
 import heapq
 import json
 import logging
+import math
 import os
 import random
 import time
@@ -147,10 +148,13 @@ HERO_CLIMB = (
 HERO_DELAY = HERO_CLIMB[-1][1]
 HERO_CONNECTING = 150
 HERO_LOCAL = 20
+CONTINUOUS_HERO_CONNECTING = 60  # each of the eight daily RA417s around the clock: among the day's biggest impacts
 HERO_BUFFER = (56, 110)  # minutes RA417's connections have to spare: none at risk until it's 12 late
-CONTINUOUS_HERO_BUFFER = (50, 110)
-# On an around-the-clock day each RA417's delay climbs from 75 to 25 minutes before its scheduled arrival.
-CONTINUOUS_HERO_RAMP = (timedelta(minutes=-75), timedelta(minutes=-25))
+# On an around-the-clock day each RA417's delay climbs slowly, from 170 to 15 minutes before its scheduled arrival,
+# and its connections' buffers spread so a passenger turns at risk every couple of minutes along the way: with an
+# RA417 every three hours, the board almost always shows one whose delay and at-risk count keep rising.
+CONTINUOUS_HERO_RAMP = (timedelta(minutes=-170), timedelta(minutes=-15))
+CONTINUOUS_HERO_BUFFER = (50, 155)  # a connection turns at risk once the delay passes its buffer minus 45
 
 
 # Two later arrivals the recovery agent also handles (sql/27-staging-impacted-passengers.sql), so its
@@ -176,9 +180,10 @@ CONNECTING_SHARE = 0.3
 CONNECTION_BUFFER = (60, 180)
 PASSENGERS_PER_FLIGHT = (120, 180)
 SEVERE_PER_DAY = 10
-CONTINUOUS_SEVERE_PER_DAY = 14  # an around-the-clock day has no forced last bank, so it needs more to strand as many
+CONTINUOUS_SEVERE_PER_DAY = 1  # around the clock, the eight RA417s carry the story; a month of history stays small
 SEVERE_DELAY = (90, 240)
 MODERATE_SHARE = 0.25
+CONTINUOUS_MODERATE_SHARE = 0.02
 MODERATE_DELAY = (15, 60)
 DELAYED_AT = 15
 MAP_AT_RISK = 45  # the dashboard's flight map colors a flight this many minutes late as at risk
@@ -214,6 +219,10 @@ STREAM_MINUTES = 90
 SEED = 42
 
 
+def _minute(moment: datetime) -> datetime:
+    return moment.replace(second=0, microsecond=0)
+
+
 @dataclass
 class Flight:
     key: str
@@ -223,6 +232,9 @@ class Flight:
     scheduled: datetime
     offset: int = 0  # shifts this flight's updates by this many seconds, so flights don't all publish at once
     reveals: list[tuple[datetime, int]] = field(default_factory=list)  # (published at, delay minutes), in time order
+    # An always-on RA417 takes off late for this arrival rather than holding off SFO for its whole delay, so its
+    # telemetry keeps closing in. Its flight_status delay still climbs update by update.
+    flies_to: datetime | None = None
 
     @property
     def arrival(self) -> bool:
@@ -243,12 +255,35 @@ class Flight:
             return "BOARDING"
         return "DELAYED" if self.delay_at(at) >= DELAYED_AT else "ON_TIME"
 
+    def times_at(self, at: datetime) -> tuple[datetime, datetime, datetime, datetime]:
+        """(scheduled departure, scheduled arrival, estimated departure, estimated arrival) as known at `at`.
+
+        `scheduled` is the time at SFO; the far end is the gate-to-gate time away, cut to the minute so a delay is
+        the same whole minutes at both ends. A late arrival keeps its scheduled takeoff and circles until it can
+        land, the way its telemetry flies, unless it takes off late instead (flies_to). Such a flight's delay is
+        announced bit by bit, so until it takes off its estimated departure follows the announced arrival, and the
+        two ends never disagree on the board; from takeoff it is the real one.
+        """
+        duration = flight_profile.flight_duration(self.origin, self.destination)
+        estimated = self.estimated_at(at)
+        if self.arrival:
+            if self.flies_to:
+                takeoff = self.flies_to - duration
+                departure = takeoff if at >= takeoff else min(takeoff, max(self.scheduled, estimated) - duration)
+            else:
+                departure = min(self.scheduled, estimated) - duration
+            return _minute(self.scheduled - duration), self.scheduled, _minute(departure), estimated
+        return self.scheduled, _minute(self.scheduled + duration), estimated, _minute(estimated + duration)
+
     def row(self, at: datetime) -> dict:
+        scheduled_departure, scheduled_arrival, estimated_departure, estimated_arrival = self.times_at(at)
         return dict(
             origin=self.origin,
             destination=self.destination,
-            scheduled_time=self.scheduled,
-            estimated_time=self.estimated_at(at),
+            scheduled_departure=scheduled_departure,
+            scheduled_arrival=scheduled_arrival,
+            estimated_departure=estimated_departure,
+            estimated_arrival=estimated_arrival,
             status=self.status_at(at),
         )
 
@@ -315,6 +350,9 @@ class Day:
     departures: list[Flight]
     passengers: list[Passenger]
     schedule: Schedule = SCRIPTED
+    # Around the clock, whether the RA417s climb and strand their connections. The seeded history flies them like
+    # any other flight: the delayed RA417s are for whoever opens the board today.
+    ra417_ramps: bool = True
 
     @property
     def flights(self) -> list[Flight]:
@@ -392,12 +430,17 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
     hero = day.hero if story else None
     scripted = {f.key: AGENT_FLIGHTS[f.number] for f in day.agent_flights[1:]} if story else {}
     forced = {f.key for f in day.departures[LAST_BANK:]} if story else set()
+    continuous = day.live and not day.schedule.scripted
     # An around-the-clock live day climbs each of its eight RA417s the same way, relative to its own schedule.
-    ramps = {id(f) for f in day.heroes} if day.live and not day.schedule.scripted else set()
+    ramps = {id(f) for f in day.heroes} if continuous and day.ra417_ramps else set()
+    # Seeded history flies its RA417s on time, give or take the usual few minutes.
+    quiet = {id(f) for f in day.heroes} if continuous and not day.ra417_ramps else set()
     pool = [
-        f for f in day.flights if f is not hero and id(f) not in ramps and f.key not in forced and f.key not in scripted
+        f
+        for f in day.flights
+        if f is not hero and id(f) not in ramps | quiet and f.key not in forced and f.key not in scripted
     ]
-    severe_count = CONTINUOUS_SEVERE_PER_DAY if ramps else SEVERE_PER_DAY - (1 if hero else 0)
+    severe_count = CONTINUOUS_SEVERE_PER_DAY if continuous else SEVERE_PER_DAY - (1 if hero else 0)
     severe = {f.key for f in rng.sample(pool, severe_count)}
     # The live day streams its updates, so its delays climb the way RA417's does. History days
     # publish only their final rows, so they keep their two or three notices and the
@@ -414,6 +457,7 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
         elif id(flight) in ramps:
             first, last = CONTINUOUS_HERO_RAMP
             flight.reveals = _climb(flight.scheduled + first, flight.scheduled + last, HERO_DELAY)
+            flight.flies_to = flight.scheduled + timedelta(minutes=HERO_DELAY)
         elif flight.key in scripted:
             # On the minute, like RA417, so its passengers turn HIGH at the same stream minutes every day.
             script, flight.offset, start = scripted[flight.key], 0, hero.scheduled - HERO_LEAD
@@ -427,7 +471,7 @@ def _assign_delays(day: Day, rng: random.Random) -> None:
             if makeup:
                 steps.append((delay - 20, delay - makeup))
             _delays(flight, steps, climb)
-        elif rng.random() < MODERATE_SHARE:
+        elif id(flight) not in quiet and rng.random() < (CONTINUOUS_MODERATE_SHARE if continuous else MODERATE_SHARE):
             delay = rng.randint(*MODERATE_DELAY)
             _delays(flight, [(-90, delay // 2), (-45, delay)], climb)
         else:
@@ -458,12 +502,12 @@ def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[P
     passengers = []
     open_seats = {d.key: seat_rng.sample(SEATS, len(SEATS)) for d in day.departures}
     story = day.live and day.schedule.scripted
-    ramps = {id(f) for f in day.heroes} if day.live and not day.schedule.scripted else set()
+    ramps = {id(f) for f in day.heroes} if day.live and not day.schedule.scripted and day.ra417_ramps else set()
     for flight in day.arrivals:
         hero = story and flight is day.hero
         script = AGENT_FLIGHTS.get(flight.number) if story else None
         if hero or id(flight) in ramps:
-            plan = [True] * HERO_CONNECTING + [False] * HERO_LOCAL
+            plan = [True] * (HERO_CONNECTING if hero else CONTINUOUS_HERO_CONNECTING) + [False] * HERO_LOCAL
             rng.shuffle(plan)
             low, high = HERO_BUFFER if hero else CONTINUOUS_HERO_BUFFER
         elif script:
@@ -482,7 +526,7 @@ def _passengers(day: Day, rng: random.Random, seat_rng: random.Random) -> list[P
         seats = seat_rng.sample(SEATS, len(plan))
         for seq, (connects, seat) in enumerate(zip(plan, seats, strict=True), start=1):
             if flight.number == HERO_NUMBER and not day.schedule.scripted:
-                key = f"P-{day.service_date:%m%d}-417-{flight.scheduled:%H%M}-{seq:03d}"
+                key = f"P-{hero_departure(flight.scheduled):%m%d-417-%H%M}-{seq:03d}"
             else:
                 key = f"P-{day.service_date:%m%d}-{flight.number:03d}-{seq:03d}"
             passenger = Passenger(key, flight, seat)
@@ -549,6 +593,15 @@ def _revise_estimates(day: Day, rng: random.Random, start: datetime, end: dateti
             flight.reveals = sorted([*flight.reveals, *revisions, settle])
 
 
+def hero_departure(arrival: datetime) -> datetime:
+    """When an around-the-clock RA417 leaves Chicago for this scheduled arrival: the gate-to-gate time earlier.
+
+    The flight and passenger keys carry its date and time, so a key says when the plane takes off. The
+    first two RA417s of a UTC day leave the evening before, so their keys name the day before.
+    """
+    return _minute(arrival - flight_profile.flight_duration(HERO_ORIGIN, HUB))
+
+
 def build_day(
     seed: int,
     service_date: date,
@@ -556,6 +609,7 @@ def build_day(
     live: bool = False,
     schedule_only: bool = False,
     schedule: Schedule = SCRIPTED,
+    ra417_ramps: bool = True,
 ) -> Day:
     """One service day. The same seed, date, and variant always produce the same keys and values."""
     variant = "live" if live else "schedule" if schedule_only else "history"
@@ -576,7 +630,8 @@ def build_day(
         number = HERO_NUMBER if hero else next(numbers)
         key = f"{AIRLINE}{number}-{suffix}"
         if hero and not schedule.scripted:
-            key += f"-{minute // 60:02d}{minute % 60:02d}"
+            departs = hero_departure(midnight + timedelta(minutes=minute))
+            key = f"{AIRLINE}{number}-{departs:%Y%m%d-%H%M}"
         arrivals.append(
             Flight(
                 key,
@@ -598,7 +653,7 @@ def build_day(
         )
         for i, minute in enumerate(schedule.departures)
     ]
-    day = Day(service_date, live, arrivals, departures, [], schedule)
+    day = Day(service_date, live, arrivals, departures, [], schedule, ra417_ramps)
     if not schedule_only:
         _assign_delays(day, rng)
         # Seats draw from their own stream, so they never shift delays, connections, or offers.
@@ -607,10 +662,12 @@ def build_day(
 
 
 @lru_cache(maxsize=8)
-def continuous_day(seed: int, service_date: date) -> Day:
-    """One around-the-clock service day (UTC), streamed live the way today's scripted day is."""
+def continuous_day(seed: int, service_date: date, seeded: bool = False) -> Day:
+    """One around-the-clock service day (UTC), streamed live the way today's scripted day is.
+
+    `seeded` is the version deploy publishes as history, whose RA417s fly like any other flight."""
     midnight = datetime.combine(service_date, datetime.min.time())
-    day = build_day(seed, service_date, midnight, live=True, schedule=AROUND_THE_CLOCK)
+    day = build_day(seed, service_date, midnight, live=True, schedule=AROUND_THE_CLOCK, ra417_ramps=not seeded)
     _revise_estimates(
         day,
         random.Random(f"{seed}:{service_date.isoformat()}:continuous:revisions"),
@@ -780,21 +837,28 @@ def continuous_state(seed: int, now: datetime) -> list[tuple[str, str, dict]]:
     rows = [(HOTELS, name, _hotel(name, rooms[name], now)) for name in HOTEL_ORDER]
     rows += [(FLIGHTS, flight.key, flight.row(now)) for day in days for flight in day.flights]
     rows += [(ITINERARIES, p.key, _itinerary(p)) for day in days for p in day.passengers]
-    for day in days:
-        for flight in day.flights:
-            if (reading := telemetry_row(flight, now)) and reading["stage"] != "LANDED":
-                rows.append((TELEMETRY, flight.key, reading))
+    # Where each airborne flight is now, so the map places it before the stream's first reading.
+    for flight in (f for day in days for f in day.flights):
+        if (reading := telemetry_row(flight, now)) and reading["stage"] != "LANDED":
+            rows.append((TELEMETRY, flight.key, reading))
     return rows
 
 
 def _expired_keys(seed: int, service_date: date) -> list[tuple[str, str]]:
-    """Every flight, telemetry, itinerary, and offer key a continuous day wrote."""
+    """Every flight, telemetry, itinerary, and offer key a continuous day could have written, whatever the settings.
+
+    Passengers are numbered per flight, so every seat number of every arrival covers the passengers of earlier
+    settings too (150 stranded per RA417, more delays elsewhere), with both offers each might have had."""
     day = continuous_day.__wrapped__(seed, service_date)  # uncached: an old day is needed once
     keys = [(topic, f.key) for f in day.flights for topic in (FLIGHTS, TELEMETRY)]
-    keys += [(ITINERARIES, p.key) for p in day.passengers]
-    for passenger in day.passengers:
-        if passenger.impacted_at:
-            keys += [(OFFERS, f"{passenger.key}-O1"), (OFFERS, f"{passenger.key}-O2")]
+    for flight in day.arrivals:
+        if flight.number == HERO_NUMBER:
+            prefix = f"P-{hero_departure(flight.scheduled):%m%d-417-%H%M}"
+        else:
+            prefix = f"P-{service_date:%m%d}-{flight.number:03d}"
+        for seq in range(1, len(SEATS) + 1):
+            key = f"{prefix}-{seq:03d}"
+            keys += [(ITINERARIES, key), (OFFERS, f"{key}-O1"), (OFFERS, f"{key}-O2")]
     return keys
 
 
@@ -815,8 +879,8 @@ def startup_tombstones(seed: int, now: datetime) -> list[tuple[str, str, None]]:
 
 
 def continuous_events(seed: int, start: datetime, end: datetime) -> list[tuple[datetime, str, str, dict | None]]:
-    """Timed updates in (start, end]: flight ticks, hotel rooms, and at each UTC midnight the day after next's
-    schedule and passengers plus tombstones for the day past RETENTION_DAYS. Offers come from the agent."""
+    """Timed updates in (start, end]: flight ticks, telemetry, hotel rooms, and at each UTC midnight the day after
+    next's schedule and passengers plus tombstones for the day past RETENTION_DAYS. Offers come from the agent."""
     first = start.date() - timedelta(days=1)
     days = [continuous_day(seed, first + timedelta(days=n)) for n in range((end.date() - first).days + 2)]
     events = [
@@ -826,10 +890,10 @@ def continuous_events(seed: int, start: datetime, end: datetime) -> list[tuple[d
         for tick in flight.ticks(start, end)
     ]
     events += [
-        (tick, TELEMETRY, flight.key, row)
+        (tick, TELEMETRY, flight.key, reading)
         for day in days
         for flight in day.flights
-        for tick, row in _telemetry_events(flight, start, end)
+        for tick, reading in _telemetry_events(flight, start, end)
     ]
     for n in range((end.date() - start.date()).days + 1):
         service_date = start.date() + timedelta(days=n)
@@ -858,7 +922,7 @@ def continuous_history(seed: int, now: datetime) -> list[tuple[str, str, dict]]:
     dates = [today - timedelta(days=back) for back in range(HISTORY_DAYS, 1, -1)]
 
     def build(service_date: date) -> Day:  # uncached, so 29 old days don't push the live ones out of the cache
-        return continuous_day.__wrapped__(seed, service_date)
+        return continuous_day.__wrapped__(seed, service_date, seeded=True)
 
     rows = []
     day = build(dates[0])
@@ -898,14 +962,26 @@ def hotel_warmup(plan: Plan, updates: int = 200):
             yield HOTELS, name, _hotel(name, step[name], at)
 
 
+HEADING_SWAY_DEG = 1.5  # the reported heading wanders this far either side of the route, as live data does
+HEADING_SWAY_S = 40
+
+
 def telemetry_row(flight: Flight, at: datetime) -> dict | None:
     """The flight's reading at `at` in the flight_telemetry column order, or None while it is at the gate."""
     status = flight.row(at)
+    if flight.flies_to:
+        scheduled = estimated = flight.flies_to
+    else:
+        scheduled, estimated = flight.scheduled, flight.estimated_at(at)
     found = flight_profile.reading(
-        flight.key, flight.origin, flight.destination, flight.scheduled, status["estimated_time"], status["status"], at
+        flight.key, flight.origin, flight.destination, scheduled, estimated, status["status"], at
     )
     if found is None:
         return None
+    heading = found.heading_deg
+    if found.stage not in ("HOLDING", "LANDED"):
+        phase = at.replace(tzinfo=timezone.utc).timestamp() / HEADING_SWAY_S + flight_profile.flight_seed(flight.key)
+        heading = (heading + HEADING_SWAY_DEG * math.sin(2 * math.pi * phase)) % 360
     return dict(
         as_of=at,
         stage=found.stage,
@@ -914,7 +990,7 @@ def telemetry_row(flight: Flight, at: datetime) -> dict | None:
         altitude_ft=found.altitude_ft,
         ground_speed_kt=found.ground_speed_kt,
         vertical_speed_fpm=found.vertical_speed_fpm,
-        heading_deg=found.heading_deg,
+        heading_deg=heading,
         distance_to_go_nm=found.distance_to_go_nm,
         hold_ends_at=found.hold_ends_at,
     )

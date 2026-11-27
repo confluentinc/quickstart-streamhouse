@@ -25,6 +25,8 @@ locals {
     flight_board_function    = { name = "${local.name}-flight-board", limit = 64 }
     flight_board_role        = { name = "${local.name}-flight-board", limit = 64 }
     generator_execution_role = { name = "${local.name}-flight-generator-execution", limit = 64 }
+    quick_athena_role        = { name = "${local.name}-quick-athena", limit = 64 }
+    athena_results_bucket    = { name = "${local.name}-athena-results", limit = 63 }
   }
   names_too_long = [
     for item in values(local.limited_names) : "${item.name} (${length(item.name)} > ${item.limit})"

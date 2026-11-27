@@ -205,12 +205,6 @@ def test_lightning_run_returns_rows_like_the_app(monkeypatch):
     assert sent["auth"].startswith("Basic ")
 
 
-def test_a_failed_key_check_keeps_the_stored_key(monkeypatch):
-    failed = type("Result", (), {"stdout": "", "stderr": "not logged in", "returncode": 1})()
-    monkeypatch.setattr(setup_rtce.subprocess, "run", lambda *args, **kwargs: failed)
-    assert setup_rtce._key_owned_by("sa-1", "KEY")
-
-
 @pytest.mark.parametrize(
     "argv",
     [["--run"], ["--agent-connection", "--lightning", "flight_status"], ["--agent-connection", "--client", "claude"]],

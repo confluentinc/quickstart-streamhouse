@@ -50,6 +50,16 @@ resource "confluent_provider_integration" "tableflow" {
   }
 }
 
+# The Tableflow API key's owner (app-manager) must own the provider integration, as the provider's
+# tableflow/byob-aws-storage example grants. EnvironmentAdmin alone isn't enough to use it for BYOB storage.
+resource "confluent_role_binding" "tableflow_provider_integration" {
+  count = local.analytics_enabled ? 1 : 0
+
+  principal   = "User:${local.core.app_manager_service_account_id}"
+  role_name   = "ResourceOwner"
+  crn_pattern = "crn://confluent.cloud/organization=${local.core.confluent_organization_id}/environment=${local.core.confluent_environment_id}/provider-integration=${confluent_provider_integration.tableflow[0].id}"
+}
+
 resource "aws_iam_role" "tableflow" {
   count = local.analytics_enabled ? 1 : 0
 
@@ -94,7 +104,7 @@ resource "aws_iam_policy" "tableflow_s3" {
       },
       {
         Effect   = "Allow"
-        Action   = ["s3:PutObject", "s3:PutObjectTagging", "s3:GetObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
+        Action   = ["s3:PutObject", "s3:PutObjectTagging", "s3:GetObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
         Resource = "${aws_s3_bucket.analytics[0].arn}/*"
       }
     ]
@@ -150,6 +160,23 @@ resource "aws_iam_role_policy_attachment" "tableflow_glue" {
   policy_arn = aws_iam_policy.tableflow_glue[0].arn
 }
 
+# Give the new role and its policies time to propagate before Tableflow first assumes it. This alone does not
+# fix "Unable to assume the IAM role": on 2026-11-17 river-air-enablement failed with it after this wait, and
+# again when the topics were recreated minutes later, with the trust policy and external ID matching.
+resource "time_sleep" "tableflow_role" {
+  count = local.analytics_enabled ? 1 : 0
+
+  create_duration = "30s"
+  # On destroy, Confluent finishes deleting the Tableflow topics and Glue catalog in the background; deleting the
+  # provider integration right after returns 409 "integration is being used" (seen 2026-11-27). This wait sits
+  # between them. If it's too short, destroy.py's release_provider_integration still recovers.
+  destroy_duration = "60s"
+  depends_on = [
+    aws_iam_role_policy_attachment.tableflow_s3,
+    aws_iam_role_policy_attachment.tableflow_glue,
+  ]
+}
+
 resource "confluent_tableflow_topic" "analytics" {
   for_each = local.analytics_enabled ? toset(local.tableflow_topics) : toset([])
 
@@ -170,11 +197,10 @@ resource "confluent_tableflow_topic" "analytics" {
     secret = confluent_api_key.tableflow[0].secret
   }
 
+  # The topics come from terraform/airline-demo, which deploy applies before this root.
   depends_on = [
-    confluent_flink_statement.tables,
-    confluent_flink_statement.passenger_state,
-    confluent_flink_statement.flight_impact,
-    aws_iam_role_policy_attachment.tableflow_s3,
+    time_sleep.tableflow_role,
+    confluent_role_binding.tableflow_provider_integration,
   ]
 }
 
@@ -198,6 +224,6 @@ resource "confluent_catalog_integration" "glue" {
 
   depends_on = [
     confluent_tableflow_topic.analytics,
-    aws_iam_role_policy_attachment.tableflow_glue,
+    time_sleep.tableflow_role,
   ]
 }

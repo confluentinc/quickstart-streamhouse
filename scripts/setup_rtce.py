@@ -4,9 +4,9 @@ local coding agent (Claude Code, Codex CLI, or Gemini CLI).
 
 Prerequisites:
 - RTCE is AWS-only. Azure deployments are not supported.
-- A Global-scoped Confluent Cloud API key (--resource global). When deployed via
-  `uv run deploy`, this key is created automatically via the Confluent CLI using the
-  Terraform-provisioned RTCE service account (DeveloperRead on cluster + Schema Registry).
+- A Global-scoped Confluent Cloud API key. When deployed via `uv run deploy`, Terraform
+  creates this key in terraform/core for the RTCE service account (DeveloperRead on
+  cluster + Schema Registry) and setup-rtce copies it into credentials.env.
   For standalone use, create a key manually: Confluent Cloud UI → hamburger menu →
   API keys → Add API key → Global scope.
 - Optionally, the script can enable RTCE on topics for you (requires topics to have a
@@ -37,6 +37,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal
+from http.client import HTTPException
 from pathlib import Path
 
 from scripts import processes
@@ -69,7 +70,8 @@ _TF_ENV = "confluent_environment_id"
 _TF_CLUSTER = "confluent_kafka_cluster_id"
 _TF_REGION = "cloud_region"
 _TF_CLOUD = "cloud_provider"
-_TF_RTCE_SA_ID = "confluent_rtce_service_account_id"
+_TF_RTCE_KEY = "rtce_global_api_key"
+_TF_RTCE_SECRET = "rtce_global_api_secret"
 
 # AWS regions where RTCE is currently available.
 # Source: https://docs.confluent.io/cloud/current/clusters/regions.html
@@ -160,103 +162,20 @@ def _discover_demo_topics(creds_file: Path) -> list[str]:
     return []
 
 
-def _create_rtce_global_key_via_cli(sa_id: str) -> tuple[str, str]:
-    """Create a Global API key for the RTCE service account via Confluent CLI.
-
-    Uses `confluent api-key create --resource global` which is the only way to create
-    a Global-scoped key (the Terraform provider creates Cloud/CRM keys, not Global ones).
-    Returns (api_key, api_secret) or ("", "") on failure.
-    """
-    result = subprocess.run(
-        [
-            processes.exe("confluent"),
-            "api-key",
-            "create",
-            "--resource",
-            "global",
-            "--service-account",
-            sa_id,
-            "--description",
-            "Global API Key for RTCE MCP server (auto-created by setup-rtce)",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if result.returncode != 0:
-        if result.stderr:
-            print(f"  CLI error: {result.stderr.strip()[:300]}")
-        return "", ""
-
-    api_key = api_secret = ""
-    for line in result.stdout.split("\n"):
-        if "|" not in line:
-            continue
-        parts = [p.strip() for p in line.split("|") if p.strip()]
-        if len(parts) < 2:
-            continue
-        if parts[0] == "API Key":
-            api_key = parts[1]
-        elif parts[0] == "API Secret":
-            api_secret = parts[1]
-    return api_key, api_secret
-
-
-def _key_owned_by(sa_id: str, api_key: str) -> bool:
-    """True when api_key is one of sa_id's Global keys. A teardown deletes the service
-    account and its keys, but credentials.env keeps the old key."""
-    result = subprocess.run(
-        [
-            processes.exe("confluent"),
-            "api-key",
-            "list",
-            "--resource",
-            "global",
-            "--service-account",
-            sa_id,
-            "-o",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if result.returncode != 0:
-        return True  # can't tell (an expired login, say); keep the stored key
-    try:
-        return any(k.get("key") == api_key for k in json.loads(result.stdout or "[]"))
-    except (json.JSONDecodeError, AttributeError):
-        return True  # can't tell; keep the stored key and let the MCP check report it
-
-
 def ensure_global_key(creds_file: Path, creds: dict) -> str:
-    """The RTCE reader's Global API key, created and saved to credentials.env (and `creds`) when
-    there's none yet or the stored one belongs to a service account from an earlier deployment.
-
-    Terraform provisions the service account + role bindings; this creates the Global key
-    (--resource global) via CLI, which the Terraform provider can't do. Returns "" when
-    neither works.
+    """The RTCE reader's Global API key. Terraform creates it in core; this copies it from
+    core's outputs into credentials.env (and `creds`) when it differs from the stored one.
+    Without a deployment (no core outputs) the stored key is returned, or "" if none.
     """
-    sa_id = _read_core_tf_outputs(creds_file).get(_TF_RTCE_SA_ID, "").strip()
-    stored = (creds.get(_CRED_KEY) or "").strip()
-    if stored and sa_id and not _key_owned_by(sa_id, stored):
-        print(f"Stored RTCE key {stored[:8]}... is not a key of {sa_id} (earlier deployment).")
-        creds[_CRED_KEY] = creds[_CRED_SECRET] = ""
-    if not creds.get(_CRED_KEY) and sa_id:
-        print(f"Creating Global API key for RTCE service account {sa_id} via CLI...")
-        key, secret = _create_rtce_global_key_via_cli(sa_id)
-        if key and secret:
-            print(f"  ✓ Created Global API key: {key[:8]}...")
+    outputs = _read_core_tf_outputs(creds_file)
+    key = (outputs.get(_TF_RTCE_KEY) or "").strip()
+    secret = (outputs.get(_TF_RTCE_SECRET) or "").strip()
+    if key and secret:
+        if key != (creds.get(_CRED_KEY) or "").strip() or secret != (creds.get(_CRED_SECRET) or "").strip():
             creds[_CRED_KEY] = key
             creds[_CRED_SECRET] = secret
             _save_to_env_file(creds_file, _CRED_KEY, key)
             _save_to_env_file(creds_file, _CRED_SECRET, secret)
-        else:
-            print("  ✗ CLI key creation failed — check that `confluent login` is active.")
     return creds.get(_CRED_KEY) or ""
 
 
@@ -724,6 +643,40 @@ def _register_with_claude_code_filewrite(server_name: str, url: str, token: str)
     return "Claude Code local scope (http, direct write)"
 
 
+def unregister_rtce_server(server_name: str = _DEFAULT_SERVER_NAME) -> None:
+    """Remove the RTCE MCP server from Claude Code and Codex, whichever way it was registered.
+
+    Safe to call when nothing is registered. `uv run destroy` calls this, because the server's
+    endpoint and token die with the environment.
+    """
+    remove_argv, _ = _claude_argv_rtce(server_name, "", "")
+    try:
+        subprocess.run(remove_argv, capture_output=True)
+    except FileNotFoundError:
+        pass
+
+    # The direct-write fallback in _register_with_claude_code_filewrite bypasses the CLI.
+    claude_json_path = Path.home() / ".claude.json"
+    try:
+        data = json.loads(claude_json_path.read_text(encoding="utf-8"))
+        servers = data.get("projects", {}).get(_PROJECT_ROOT.as_posix(), {}).get("mcpServers", {})
+        if servers.pop(server_name, None) is not None:
+            claude_json_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    import tomlkit
+
+    for config_path in _codex_config_paths_rtce():
+        try:
+            doc = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+            if server_name in doc.get("mcp_servers", {}):
+                del doc["mcp_servers"][server_name]
+                config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+        except Exception:
+            continue
+
+
 def _codex_config_paths_rtce() -> list[Path]:
     """Return Codex config files that can affect this project (home + project-local)."""
     home_config_path = Path.home() / ".codex" / "config.toml"
@@ -822,36 +775,65 @@ def _register_gemini(server_name: str, url: str, token: str, dry_run: bool = Fal
     return "gemini user scope"
 
 
-def _test_mcp_connection(url: str, token: str) -> tuple[bool, int]:
-    """Send an MCP initialize POST to verify the Global API key works with the endpoint."""
-    body = json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "setup-rtce", "version": "0.1"},
-            },
-        }
-    ).encode()
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            "Authorization": f"Basic {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        },
-    )
+def _test_mcp_connection(url: str, token: str) -> tuple[int | None, str]:
+    """Return the topic count from the RTCE tool, or a diagnostic without credentials."""
+    headers = {
+        "Authorization": f"Basic {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+
+    def post(message: dict):
+        request = urllib.request.Request(url, data=json.dumps({"jsonrpc": "2.0", **message}).encode(), headers=headers)
+        with urllib.request.urlopen(request, timeout=15) as response:
+            session_id = response.headers.get("Mcp-Session-Id")
+            if session_id:
+                headers["Mcp-Session-Id"] = session_id
+            if "id" not in message:
+                return None
+            if response.headers.get("Content-Type", "").startswith("text/event-stream"):
+                for line in response:
+                    if line.startswith(b"data:"):
+                        reply = json.loads(line[5:])
+                        if reply.get("id") == message["id"]:
+                            return reply
+                raise ValueError("Missing MCP reply")
+            return json.load(response)
+
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return True, resp.status
+        initialized = post(
+            {
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "setup-rtce", "version": "0.1"},
+                },
+            }
+        )
+        headers["MCP-Protocol-Version"] = initialized["result"]["protocolVersion"]
+        post({"method": "notifications/initialized"})
+        reply = post({"id": 2, "method": "tools/call", "params": {"name": "listTopics", "arguments": {}}})
+        if "error" in reply:
+            return None, "MCP_RPC_ERROR"
+        result = reply["result"]
+        payload = json.loads(result["content"][0]["text"])
+        if result.get("isError") or payload["status"] != "success":
+            code = payload.get("error", {}).get("code")
+            if isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z_0-9]{1,63}", code):
+                return None, code
+            return None, "MCP_TOOL_ERROR"
+        topics = payload["rows"]["topics"]
+        if not isinstance(topics, list):
+            return None, "INVALID_MCP_RESPONSE"
+        return len(topics), ""
     except urllib.error.HTTPError as exc:
-        return False, exc.code
-    except Exception:
-        return False, 0
+        return None, f"HTTP {exc.code}"
+    except (HTTPException, OSError):
+        return None, "CONNECTION_ERROR"
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+        return None, "INVALID_MCP_RESPONSE"
 
 
 def _parse_topics(raw: str) -> list[str]:
@@ -1011,7 +993,7 @@ def lightning_command(
             "curl -sS -X POST " + shlex.quote(url),
             "-H " + shlex.quote("Authorization: Basic " + token),
             "-H " + shlex.quote("Content-Type: application/json"),
-            "-d " + shlex.quote(json.dumps(body, indent=2)),
+            "-d " + shlex.quote(json.dumps(body, indent=2)) + " | uv run lightning-table",
         )
     )
 
@@ -1030,7 +1012,7 @@ def _lightning_powershell(url: str, token: str, body: dict) -> str:
             "Invoke-RestMethod -Method Post -Uri " + quote(url),
             "-Headers @{ Authorization = " + quote("Basic " + token) + " }",
             "-ContentType 'application/json'",
-            "-Body " + quote(json.dumps(body, indent=2)) + " | ConvertTo-Json -Depth 10",
+            "-Body " + quote(json.dumps(body, indent=2)) + " | ConvertTo-Json -Depth 10 | uv run lightning-table",
         )
     )
 
@@ -1183,11 +1165,16 @@ def main(argv: list[str] | None = None):
     client = args.client if args.client else _pick_client()
 
     # This command turns the Lightning Tables on itself, as it always has (and `deploy --with-labs` relies on
-    # that). But a table turned on before Flink builds its topic ends up FAILED, so point an attendee who
-    # skipped Lab 2 back to it.
+    # that). But a table turned on before Flink builds its topic ends up FAILED, so skip the airline workshop's
+    # Lab 2 tables until they exist: an F1 attendee with both labs deployed may never build them. Bots build them.
+    not_built: list[str] = []
     if ws and ws.is_workshop and not args.dry_run:
-        if not workshop_checks.require_lab_2(ws):
-            sys.exit(1)
+        if workshop_checks.runs_missing_steps():
+            if not workshop_checks.require_lab_2(ws):
+                sys.exit(1)
+        else:
+            have = ws.kafka_topics()
+            not_built = [table for table, _, _ in workshop_checks.LAB2 if table not in have]
 
     print("\nFetching currently RTCE-enabled topics...")
     already_enabled = _list_rtce_topics(api_key, api_secret, infra)
@@ -1212,6 +1199,10 @@ def main(argv: list[str] | None = None):
         print()
         topics = _parse_topics(_ask("Topics to connect to this MCP server (comma-separated): "))
 
+    if not_built:
+        print(f"  Skipping {', '.join(f'`{t}`' for t in not_built)}: Agentic Airline Operations Lab 2 creates them.")
+        topics = [t for t in topics if t not in not_built]
+
     # Enable RTCE on any topic not yet enabled — automatically, no prompt. RTCE needs
     # a registered SR schema; every demo topic has one (created at deploy time).
     not_yet_enabled = [t for t in topics if t not in already_enabled]
@@ -1224,6 +1215,8 @@ def main(argv: list[str] | None = None):
             print(f"  • {topic}...", end=" ", flush=True)
             ok = _enable_rtce_topic(api_key, api_secret, infra, topic, desc)
             print("✓" if ok else "✗  (see error above)")
+        if ws:  # RTCE doesn't know a new cluster until its first table is up, so check after they load
+            workshop_checks._wait_active(ws, not_yet_enabled)
 
     if not args.dry_run:
         _save_to_env_file(creds_file, _CRED_TOPICS, ",".join(topics))
@@ -1232,53 +1225,45 @@ def main(argv: list[str] | None = None):
 
     url = _mcp_url(infra)
 
-    if client == "none":
-        print(f"\n✓ RTCE enabled on: {', '.join(topics)} (no coding agent registered)")
-        if args.dry_run:
-            return
-        ok, status = _test_mcp_connection(url, token)
-        print(f"  MCP endpoint check: {'✓' if ok else '⚠'} ({status or 'connection error'})")
-        return
-
+    restart_note = ""
     if client == "gemini":
         scope_note = _register_gemini(server_name, url, token, dry_run=args.dry_run)
         restart_note = "Restart Gemini to activate."
     elif client == "codex":
         scope_note = _register_with_codex_rtce(server_name, url, token, dry_run=args.dry_run)
         restart_note = "Restart Codex CLI to activate."
-    else:
+    elif client == "claude":
         scope_note = _register_with_claude_code(server_name, url, token, dry_run=args.dry_run)
         restart_note = "Restart Claude Code to activate."
 
-    print(f"\n✓ RTCE MCP server registered as '{server_name}' ({scope_note})")
-    print(f"  Topics:   {', '.join(topics)}")
-    print(f"  Endpoint: {url}")
+    if restart_note:
+        print(f"\n✓ RTCE MCP server registered as '{server_name}' ({scope_note})")
+        print(f"  Endpoint: {url}")
+    else:
+        print("\nNo coding agent was registered.")
 
     if args.dry_run:
-        print("\n[dry-run] Skipping MCP connection test (no config was written).")
+        print("Dry-run skips the RTCE check.")
         return
 
-    print("\nTesting MCP connection...", end=" ", flush=True)
-    ok, status = _test_mcp_connection(url, token)
-    if ok:
-        print(f"✓ ({status}) MCP connection test passed — agent can query your topics")
-    elif status in (401, 403):
-        print(
-            f"✗ ({status}) Global API key is invalid or lacks RTCE roles "
-            f"(DeveloperRead + SchemaRegistryRead).\n"
-            f"  Update CONFLUENT_RTCE_API_KEY / CONFLUENT_RTCE_API_SECRET in credentials.env\n"
-            f"  and re-run: uv run setup-rtce"
-        )
-    elif status == 404:
-        print(
-            "⚠ (404) RTCE MCP endpoint not yet provisioned for this cluster.\n"
-            "  Try connecting in Claude Code (/mcp) in a few minutes."
-        )
+    count, detail = _test_mcp_connection(url, token)
+    env, cluster = infra["env_id"], infra["cluster_id"]
+    if count is not None:
+        print(f"✓ RTCE listTopics returned {count} topics for {env} / {cluster}.")
     else:
-        code_str = str(status) if status else "connection error"
-        print(f"⚠ ({code_str}) Unexpected response — verify the endpoint manually.")
+        print(f"✗ RTCE listTopics check failed for {env} / {cluster} ({detail}).")
+        if detail in {"HTTP 401", "HTTP 403"}:
+            print("  Check the Global API key and the DeveloperRead and SchemaRegistryRead roles.")
+        elif detail in {"HTTP 404", "FE_CUSTOMER_NOT_FOUND"}:
+            print(
+                "  Check the target environment and cluster. If Lightning Tables are still loading, "
+                "wait and rerun uv run setup-rtce."
+            )
+        else:
+            print("  Check the connection and rerun uv run setup-rtce.")
 
-    print(f"\n  {restart_note}")
+    if restart_note:
+        print(f"\n  {restart_note}")
 
 
 if __name__ == "__main__":

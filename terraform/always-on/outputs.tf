@@ -45,3 +45,27 @@ output "app_log_group" {
   value       = aws_cloudwatch_log_group.flight_board.name
   description = "CloudWatch log group for the flight board"
 }
+
+output "athena_workgroup" {
+  value       = local.quick_enabled ? aws_athena_workgroup.analytics[0].name : ""
+  description = "Athena workgroup for the Tableflow history (empty when Quick is skipped)"
+}
+
+output "quick_datasets" {
+  value = local.quick_enabled ? [
+    aws_quicksight_data_set.flight_impact[0].data_set_id,
+    aws_quicksight_data_set.passenger_recommendations[0].data_set_id,
+  ] : []
+  description = "Quick datasets over the Tableflow history"
+}
+
+output "quick_topic_id" {
+  value       = local.quick_enabled ? local.topic_id : ""
+  description = "The Quick Topic people ask the history questions in"
+}
+
+# deploy keeps these on a rerun that can't prepare Quick, so a lagging Tableflow never deletes the Topic.
+output "quick_principal_arns" {
+  value       = var.quick_principal_arns
+  description = "The Quick users the datasets and the Topic are shared with"
+}

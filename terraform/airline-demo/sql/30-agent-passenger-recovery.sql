@@ -11,10 +11,10 @@ will miss their connections to the final destination, and they all get the same 
 Use the queryData tool (arguments: topic_name, query, max_result_rows) to run the three queries in the task.
 The queries already use the right column names, so run them as given without calling getMetadata first.
 
-1. inbound_query returns the inbound flight. Its estimated_time is when the passenger lands at SFO.
+1. inbound_query returns the inbound flight. Its estimated_arrival is when the passenger lands at SFO.
 2. departures_query returns flights from SFO to the final destination. Offer the first two flights whose
-   estimated_time is at least 45 minutes after the inbound estimated_time. Skip CANCELLED flights.
-3. An offered flight that leaves 6 hours or more after the inbound estimated_time needs a hotel.
+   estimated_departure is at least 45 minutes after the inbound estimated_arrival. Skip CANCELLED flights.
+3. An offered flight whose estimated_departure is 6 hours or more after the inbound estimated_arrival needs a hotel.
    Run hotel_query. It returns the hotel updates, newest first, so each hotel appears several times:
    use only the row with the latest as_of for each hotel. List the hotels whose latest available_rooms
    is above 0 in this order: Grand Hyatt at SFO, SFO Airport Marriott Waterfront, Hilton SFO Airport

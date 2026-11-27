@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -114,7 +115,7 @@ def test_skipping_lab_3_points_to_it_and_enables_nothing(tmp_path, monkeypatch, 
     assert workshop_checks.ensure_lightning(ws, ["flight_status"], "The dashboard reads them.") is False
     out = capsys.readouterr().out
     assert "`flight_status`" in out and "The dashboard reads them." in out
-    assert "Your next step is Lab 3, steps 1 to 3" in out
+    assert "Your next step is Lab 3, steps 1 and 2" in out
     assert f"of {workshop_checks.WORKSHOP_GUIDE})" in out  # the line in the guide
     assert "run this command again" in out
     assert "for you now" not in out and ws.sql_run == []
@@ -174,7 +175,7 @@ def test_a_failed_lightning_table_tells_the_attendee_to_turn_it_off_and_on(tmp_p
     assert workshop_checks.ensure_lightning(ws, ["passenger_state", "flight_impact"], "") is False
     out = capsys.readouterr().out
     assert "failed for: `passenger_state`" in out and "off and on again" in out
-    assert "Your next step is Lab 3, steps 1 to 3" in out
+    assert "Your next step is Lab 3, steps 1 and 2" in out
 
 
 def test_a_bot_turns_a_failed_lightning_table_off_and_on_again(tmp_path, bot, monkeypatch):
@@ -232,7 +233,7 @@ def test_status_lists_steps_in_guide_order():
     assert where == [
         "Deploy, step 4",
         "Lab 2, steps 3 and 4",
-        "Lab 3, steps 1 to 3",
+        "Lab 3, steps 1 and 2",
         "Lab 4, step 1",
         "Lab 4, steps 2 and 3",
         "Lab 4, steps 4 and 5",
@@ -259,7 +260,7 @@ def test_status_reports_and_points_to_the_next_step_without_running_anything(tmp
     assert exit_info.value.code == 1
     out = capsys.readouterr().out
     assert "✓ Lab 2, steps 3 and 4" in out
-    assert "✓ Lab 3, steps 1 to 3" in out
+    assert "✓ Lab 3, steps 1 and 2" in out
     assert "✗ Lab 4, step 1" in out
     assert "✗ Lab 4, step 7" in out
     assert "Your next step is Lab 4, step 1" in out
@@ -320,7 +321,7 @@ def test_every_step_resolves_to_its_numbered_step_in_the_guide():
 
 def test_the_next_step_names_its_line_in_the_guide_and_how_to_open_it(monkeypatch, capsys):
     monkeypatch.setattr(workshop_checks.sys, "platform", "darwin")
-    step = next(s for s in workshop_checks.steps() if s.where == "Lab 3, steps 1 to 3")
+    step = next(s for s in workshop_checks.steps() if s.where == "Lab 3, steps 1 and 2")
     workshop_checks.point_to_step(step, GUIDE_ROOT)
     out = capsys.readouterr().out
     line = workshop_checks.guide_location(step, GUIDE_ROOT)[1]
@@ -383,7 +384,7 @@ def test_the_app_stops_with_a_pointer_when_lab_3_was_skipped(tmp_path, monkeypat
         airport_app.main([])
     assert exit_info.value.code == 1
     out = capsys.readouterr().out
-    assert "Your next step is Lab 3, steps 1 to 3" in out and "for you now" not in out
+    assert "Your next step is Lab 3, steps 1 and 2" in out and "for you now" not in out
 
 
 def test_the_hosted_app_starts_without_local_terraform_state(monkeypatch):
@@ -401,7 +402,7 @@ def test_the_hosted_app_starts_without_local_terraform_state(monkeypatch):
     assert starts == [airport_app.app]
 
 
-def _run_setup_rtce(tmp_path, monkeypatch, ws):
+def _run_setup_rtce(tmp_path, monkeypatch, ws, check_result=(7, "")):
     """Run `uv run setup-rtce --client none` against a fake cluster with no Lightning Tables on."""
     enabled = []
     monkeypatch.setattr(setup_rtce, "_find_credentials_file", lambda: tmp_path / "credentials.env")
@@ -415,10 +416,34 @@ def _run_setup_rtce(tmp_path, monkeypatch, ws):
     monkeypatch.setattr(setup_rtce, "_list_rtce_topics", lambda *args: [])
     monkeypatch.setattr(setup_rtce, "_discover_demo_topics", lambda creds_file: LIGHTNING_TOPICS)
     monkeypatch.setattr(setup_rtce, "_save_to_env_file", lambda *args: None)
-    monkeypatch.setattr(setup_rtce, "_test_mcp_connection", lambda url, token: (True, 200))
-    monkeypatch.setattr(setup_rtce, "_enable_rtce_topic", lambda key, secret, infra, topic, desc: enabled.append(topic))
+    if check_result is not None:
+        monkeypatch.setattr(setup_rtce, "_test_mcp_connection", lambda url, token: check_result)
+
+    def enable(key, secret, infra, topic, desc):
+        enabled.append(topic)
+        ws.fake_phases.setdefault(topic, "ACTIVE")
+        return True
+
+    monkeypatch.setattr(setup_rtce, "_enable_rtce_topic", enable)
     setup_rtce.main(["--client", "none"])
     return enabled
+
+
+def test_setup_rtce_checks_rtce_only_once_the_tables_it_turned_on_are_active(tmp_path, monkeypatch):
+    """RTCE answers FE_CUSTOMER_NOT_FOUND until a new cluster's first Lightning Table is up."""
+    ws = FakeWorkshop(tmp_path, phases=dict.fromkeys(LIGHTNING_TOPICS, "PROVISIONING"), topics=LIGHTNING_TOPICS)
+    ws.creds = {"TF_VAR_workshop": ""}
+    loading = dict(ws.fake_phases)
+    reads = []
+    ws.phases = lambda: reads.append(1) or (loading if len(reads) == 1 else _active(LIGHTNING_TOPICS))
+    monkeypatch.setattr(workshop_checks.time, "sleep", lambda seconds: None)
+
+    def check(url, token):
+        assert len(reads) >= 2, "checked RTCE before the Lightning Tables were Active"
+        return 7, ""
+
+    monkeypatch.setattr(setup_rtce, "_test_mcp_connection", check)
+    _run_setup_rtce(tmp_path, monkeypatch, ws, check_result=None)
 
 
 def test_setup_rtce_still_turns_the_lightning_tables_on_itself(tmp_path, monkeypatch):
@@ -428,13 +453,60 @@ def test_setup_rtce_still_turns_the_lightning_tables_on_itself(tmp_path, monkeyp
     assert _run_setup_rtce(tmp_path, monkeypatch, ws) == LIGHTNING_TOPICS
 
 
-def test_setup_rtce_sends_an_attendee_who_skipped_lab_2_back_to_it(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("event_stream", [False, True])
+@pytest.mark.parametrize("tool_succeeds", [False, True])
+def test_mcp_connection_checks_list_topics_after_initialization(monkeypatch, event_stream, tool_succeeds):
+    calls = []
+    payload = (
+        {"status": "success", "rows": {"topics": [{"name": "flight_status"}]}}
+        if tool_succeeds
+        else {"status": "error", "error": {"code": "FE_CUSTOMER_NOT_FOUND"}}
+    )
+
+    def open_request(request, timeout):
+        message = json.loads(request.data)
+        calls.append(message["method"])
+        if message["method"] == "initialize":
+            response = BytesIO(b'{"id":1,"result":{"protocolVersion":"2024-11-05"}}')
+            response.headers = {"Mcp-Session-Id": "test-session", "Content-Type": "application/json"}
+            return response
+        assert request.get_header("Mcp-session-id") == "test-session"
+        assert request.get_header("Mcp-protocol-version") == "2024-11-05"
+        if message["method"] == "notifications/initialized":
+            assert "id" not in message
+            response = BytesIO()
+            response.headers = {}
+            return response
+        assert message["params"] == {"name": "listTopics", "arguments": {}}
+        result = {"isError": not tool_succeeds, "content": [{"type": "text", "text": json.dumps(payload)}]}
+        body = json.dumps({"id": 2, "result": result}).encode()
+        response = BytesIO(b"event: message\ndata: " + body + b"\n\n" if event_stream else body)
+        response.headers = {"Content-Type": "text/event-stream" if event_stream else "application/json"}
+        return response
+
+    monkeypatch.setattr(setup_rtce.urllib.request, "urlopen", open_request)
+
+    expected = (1, "") if tool_succeeds else (None, "FE_CUSTOMER_NOT_FOUND")
+    assert setup_rtce._test_mcp_connection("https://example.test/mcp", "token") == expected
+    assert calls == ["initialize", "notifications/initialized", "tools/call"]
+
+
+def test_setup_rtce_names_target_when_list_topics_fails(tmp_path, monkeypatch, capsys):
+    ws = FakeWorkshop(tmp_path, topics=LIGHTNING_TOPICS)
+    _run_setup_rtce(tmp_path, monkeypatch, ws, check_result=(None, "FE_CUSTOMER_NOT_FOUND"))
+    output = capsys.readouterr().out
+    assert "check failed for env-1 / lkc-1 (FE_CUSTOMER_NOT_FOUND)" in output
+    assert "returned" not in output
+
+
+def test_setup_rtce_skips_the_tables_lab_2_has_not_built_and_keeps_going(tmp_path, monkeypatch, capsys):
+    """An F1 attendee with both labs deployed hasn't done the airline Lab 2, and must not be stopped by it."""
     sources = [t for t in LIGHTNING_TOPICS if t not in ("passenger_state", "flight_impact")]
     ws = FakeWorkshop(tmp_path, topics=sources)
     ws.creds = {"TF_VAR_workshop": "true"}
-    with pytest.raises(SystemExit) as exit_info:
-        _run_setup_rtce(tmp_path, monkeypatch, ws)
-    assert exit_info.value.code == 1
+    enabled = _run_setup_rtce(tmp_path, monkeypatch, ws)
+    assert "passenger_state" not in enabled and "flight_impact" not in enabled, "turned on before Flink built it"
+    assert set(enabled) == set(sources)
     out = capsys.readouterr().out
-    assert "Your next step is Lab 2, steps 3 and 4" in out
+    assert "Skipping `passenger_state`, `flight_impact`" in out
     assert ws.sql_run == []

@@ -70,7 +70,12 @@ def test_flight_board_is_a_lambda_behind_a_public_function_url():
 
     role = _block(aws, "aws_iam_role.flight_board")
     assert "lambda.amazonaws.com" in role
-    assert "AWSLambdaBasicExecutionRole" in aws
+    # It writes only to its own log group and can't create one, so an instance still shutting down after a
+    # destroy can't re-create the group and break the next deploy.
+    write_logs = _block(aws, "aws_iam_role_policy.flight_board_logs")
+    assert '"logs:CreateLogStream", "logs:PutLogEvents"' in write_logs
+    assert "aws_cloudwatch_log_group.flight_board.arn" in write_logs
+    assert "policy/service-role/AWSLambdaBasicExecutionRole" not in aws and '"logs:CreateLogGroup"' not in aws
     logs = _block(aws, "aws_cloudwatch_log_group.flight_board")
     assert '"/aws/lambda/' in logs and re.search(r"retention_in_days\s*=\s*14", logs)
 
@@ -121,6 +126,7 @@ def _stub_finish(monkeypatch, tmp_path, calls):
     monkeypatch.setattr(deploy.setup_rtce, "core_infra", lambda _: INFRA)
     monkeypatch.setattr(deploy, "_start_agent", lambda root: calls.append("agent"))
     monkeypatch.setattr(deploy, "_compact_sources", lambda infra: calls.append("compact"))
+    monkeypatch.setattr(deploy, "_prepare_quick", lambda root, infra, emails: calls.append(("quick", emails)))
     monkeypatch.setattr(deploy, "_push_image", lambda root, region: calls.append("image") or "repo:new")
     monkeypatch.setattr(deploy, "_always_on_outputs", lambda root: outputs)
     monkeypatch.setattr(deploy, "run_terraform", lambda path, **k: calls.append(("terraform", path.name, k)) or True)
@@ -140,13 +146,14 @@ def test_always_on_finish_order(monkeypatch, tmp_path):
     calls = []
     _stub_finish(monkeypatch, tmp_path, calls)
     deploy._finish_always_on(tmp_path)
-    assert _names(calls) == ["history", "rtce", "agent", "compact", "image", "terraform", "users", "card"]
+    assert _names(calls) == ["history", "rtce", "agent", "compact", "quick", "image", "terraform", "users", "card"]
     history = calls[0]
     assert history[1] == (airport_datagen.SEED,) and history[2]["history"] is True
     assert history[2]["until"] == history[2]["now"]  # publishes and returns, never streams
     assert calls[1][1] == ["--client", "none"]
-    assert calls[5] == ("terraform", "always-on", {})
-    assert calls[6] == ("users", "env-1", ["a+1@x.io", "a+2@x.io"])
+    assert calls[4] == ("quick", ["a+1@x.io", "a+2@x.io"])  # before terraform/always-on, which reads the ARNs
+    assert calls[6] == ("terraform", "always-on", {})
+    assert calls[7] == ("users", "env-1", ["a+1@x.io", "a+2@x.io"])
     assert deploy.os.environ["TF_VAR_image_uri"] == "repo:new"
     assert deploy.os.environ["TF_VAR_rtce_api_key"] == "k"
 
@@ -510,3 +517,235 @@ def test_settings_secret_is_skipped_without_its_arn(monkeypatch):
     monkeypatch.delenv("STREAMHOUSE_SETTINGS_SECRET_ARN", raising=False)
     monkeypatch.setitem(sys.modules, "boto3", None)  # importing it would fail
     airport_app.load_settings_secret()
+
+
+def test_tableflow_waits_for_its_iam_role():
+    # Propagation time for the new role. It didn't cure the 2026-11-12/17 "Unable to assume" failures.
+    analytics = (ROOT / "terraform/tableflow/analytics.tf").read_text()
+    sleep = _block(analytics, "time_sleep.tableflow_role")
+    assert re.search(r'create_duration\s*=\s*"30s"', sleep)
+    assert "aws_iam_role_policy_attachment.tableflow_s3" in sleep
+    assert "aws_iam_role_policy_attachment.tableflow_glue" in sleep
+    for address in ("confluent_tableflow_topic.analytics", "confluent_catalog_integration.glue"):
+        assert "time_sleep.tableflow_role" in _block(analytics, address)
+
+
+# --- Amazon Quick over the Tableflow history ---------------------------------
+
+
+def _quick() -> str:
+    return (TF / "quick.tf").read_text()
+
+
+def test_quick_never_manages_the_account_subscription():
+    # The subscription is shared by the whole AWS account: destroying it would delete every Quick user and asset.
+    text = "".join(
+        p.read_text(encoding="utf-8") for p in (ROOT / "terraform").rglob("*.tf") if ".terraform" not in p.parts
+    )
+    assert "aws_quicksight_account_subscription" not in text
+    assert "aws_quicksight_account_settings" not in text
+
+
+def test_quick_reads_athena_through_its_own_role():
+    quick = _quick()
+    source = _block(quick, "aws_quicksight_data_source.athena")
+    assert re.search(r'type\s*=\s*"ATHENA"', source)
+    assert "aws_iam_role.quick_athena[0].arn" in source and "aws_athena_workgroup.analytics[0].name" in source
+    assert "quicksight.amazonaws.com" in _block(quick, "aws_iam_role.quick_athena")
+    for name in ("flight_impact", "passenger_recommendations"):
+        dataset = _block(quick, f"aws_quicksight_data_set.{name}")
+        assert re.search(r'import_mode\s*=\s*"DIRECT_QUERY"', dataset)
+        assert f'"{name}"' in dataset and "local.analytics.glue_database" in dataset
+    assert "{delay_minutes} >= 15" in _block(quick, "aws_quicksight_data_set.flight_impact")
+    assert "dateDiff({impacted_at}, {recommended_at}" in _block(
+        quick, "aws_quicksight_data_set.passenger_recommendations"
+    )
+
+
+def test_athena_results_bucket_force_destroys():
+    quick = _quick()
+    assert re.search(r"force_destroy\s*=\s*true", _block(quick, "aws_s3_bucket.athena_results"))
+    workgroup = _block(quick, "aws_athena_workgroup.analytics")
+    assert re.search(r"force_destroy\s*=\s*true", workgroup) and "aws_s3_bucket.athena_results[0]" in workgroup
+
+
+def test_quick_is_skipped_without_principals():
+    variables = (TF / "variables.tf").read_text()
+    assert re.search(r'variable "quick_principal_arns" \{[^}]*default\s*=\s*\[\]', variables, re.S)
+    assert "length(var.quick_principal_arns) > 0" in _quick()
+
+
+def test_topic_create_is_idempotent_and_destroy_tolerates_a_missing_topic():
+    # The AWS provider has no Topic resource, so terraform_data drives the CLI.
+    topic = _block(_quick(), "terraform_data.quick_topic")
+    assert "aws quicksight delete-topic" in topic and "aws quicksight create-topic" in topic
+    assert topic.index("delete-topic") < topic.index("create-topic")  # a rerun replaces a leftover topic
+    assert "update-topic-permissions" in topic
+    assert re.search(r"when\s*=\s*destroy", topic) and "|| true" in topic
+    assert "aws_quicksight_data_set.flight_impact[0].arn" in topic
+    assert "aws_quicksight_data_set.passenger_recommendations[0].arn" in topic
+
+
+def test_topic_spells_out_the_demo_definitions():
+    quick = _quick()
+    assert "15 minutes or more" in quick and "BOOKED" in quick
+    for synonym in ("hotel spend", "impacted passengers", "recovery time"):
+        assert f'"{synonym}"' in quick
+    assert 'output "quick_topic_id"' in (TF / "outputs.tf").read_text()
+
+
+def test_quick_principals_match_emails_case_insensitively(monkeypatch, capsys):
+    users = {"UserList": [{"Email": "Me@X.io", "Arn": "arn:q:me"}, {"Email": "other@x.io", "Arn": "arn:q:o"}]}
+    seen = []
+    monkeypatch.setattr(
+        deploy.subprocess, "run", lambda cmd, **k: seen.append(cmd) or _completed(cmd, json.dumps(users))
+    )
+    assert deploy._quick_principals("1", ["me@x.io", "nobody@x.io"]) == ["arn:q:me"]
+    assert "No Quick user for nobody@x.io" in capsys.readouterr().out
+    assert seen[0][seen[0].index("--region") + 1] == deploy.QUICK_IDENTITY_REGION == "us-east-1"
+
+
+def _airline_state(tmp_path, monkeypatch, glue_database="lkc-1"):
+    state = tmp_path / "terraform/tableflow/terraform.tfstate"
+    state.parent.mkdir(parents=True)
+    state.write_text("{}")
+    monkeypatch.setattr(deploy, "run_terraform_output", lambda path: {"glue_database": glue_database})
+    monkeypatch.setattr(deploy, "_aws_account_id", lambda: "1")
+    monkeypatch.delenv("TF_VAR_quick_principal_arns", raising=False)
+
+
+def test_prepare_quick_shares_with_the_matched_users(monkeypatch, tmp_path):
+    _airline_state(tmp_path, monkeypatch)
+    waited = []
+    monkeypatch.setattr(deploy, "_wait_for_glue_tables", lambda *a, **k: waited.append(a) or True)
+    monkeypatch.setattr(deploy, "_quick_principals", lambda account, emails: ["arn:q:me"])
+    deploy._prepare_quick(tmp_path, INFRA, ["me@x.io"])
+    assert json.loads(deploy.os.environ["TF_VAR_quick_principal_arns"]) == ["arn:q:me"]
+    assert waited == [("us-east-1", "lkc-1", deploy.QUICK_TABLES)]
+    monkeypatch.delenv("TF_VAR_quick_principal_arns")
+
+
+def test_prepare_quick_skips_when_glue_tables_never_appear(monkeypatch, tmp_path, capsys):
+    _airline_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(deploy, "_wait_for_glue_tables", lambda *a, **k: False)
+    monkeypatch.setattr(deploy, "_tableflow_errors", lambda infra: {"flight_impact": "Unable to assume the IAM role"})
+    monkeypatch.setattr(deploy, "_quick_principals", lambda *a: pytest.fail("shared without tables"))
+    deploy._prepare_quick(tmp_path, INFRA, ["me@x.io"])
+    out = capsys.readouterr().out
+    assert deploy.os.environ["TF_VAR_quick_principal_arns"] == "[]"
+    assert "Unable to assume the IAM role" in out
+    assert """-replace='confluent_tableflow_topic.analytics["flight_impact"]'""" in out
+    monkeypatch.delenv("TF_VAR_quick_principal_arns")
+
+
+def test_prepare_quick_skips_without_tableflow(monkeypatch, tmp_path, capsys):
+    _airline_state(tmp_path, monkeypatch, glue_database="")
+    monkeypatch.setattr(deploy, "_wait_for_glue_tables", lambda *a, **k: pytest.fail("waited without Tableflow"))
+    deploy._prepare_quick(tmp_path, INFRA, ["me@x.io"])
+    assert deploy.os.environ["TF_VAR_quick_principal_arns"] == "[]"
+    monkeypatch.delenv("TF_VAR_quick_principal_arns")
+
+
+def test_wait_for_glue_tables_polls_until_both_exist(monkeypatch):
+    found = iter([{"flight_impact"}, {"flight_impact", "passenger_recommendations"}])
+    monkeypatch.setattr(deploy, "_glue_tables", lambda region, database: next(found))
+    monkeypatch.setattr(deploy.time, "sleep", lambda seconds: None)
+    assert deploy._wait_for_glue_tables("us-east-1", "lkc-1", deploy.QUICK_TABLES, timeout_s=60)
+
+
+def test_wait_for_glue_tables_gives_up(monkeypatch):
+    monkeypatch.setattr(deploy, "_glue_tables", lambda region, database: set())
+    clock = iter(range(0, 10_000, 30))
+    monkeypatch.setattr(deploy.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(deploy.time, "sleep", lambda seconds: None)
+    assert not deploy._wait_for_glue_tables("us-east-1", "lkc-1", deploy.QUICK_TABLES, timeout_s=90)
+
+
+def test_prepare_quick_keeps_the_existing_quick_when_a_rerun_cant_prepare(monkeypatch, tmp_path, capsys):
+    # "[]" on a rerun would make Terraform delete the datasets and the Topic people already use.
+    _airline_state(tmp_path, monkeypatch)
+    monkeypatch.setattr(deploy, "_wait_for_glue_tables", lambda *a, **k: False)
+    monkeypatch.setattr(deploy, "_tableflow_errors", lambda infra: {})
+    monkeypatch.setattr(deploy, "_always_on_outputs", lambda root: {"quick_principal_arns": ["arn:q:me"]})
+    deploy._prepare_quick(tmp_path, INFRA, ["me@x.io"])
+    assert json.loads(deploy.os.environ["TF_VAR_quick_principal_arns"]) == ["arn:q:me"]
+    assert "keeping the Quick setup" in capsys.readouterr().out
+    monkeypatch.delenv("TF_VAR_quick_principal_arns")
+
+
+def test_always_on_outputs_the_quick_users_it_shared_with():
+    assert re.search(
+        r'output "quick_principal_arns" \{\s*value\s*=\s*var\.quick_principal_arns', (TF / "outputs.tf").read_text()
+    )
+
+
+# --- Quick never blocks the always-on deploy (final review fixes) ----------------
+
+
+def test_preflight_warns_and_skips_quick_when_quick_actions_are_denied(monkeypatch, capsys):
+    monkeypatch.delenv(deploy.QUICK_DENIED, raising=False)
+    _aws(monkeypatch, {"quicksight:CreateTopic": "implicitDeny"})
+    deploy._preflight_always_on({"TF_VAR_aws_tableflow_access_key": "AKIA"})  # no SystemExit
+    assert deploy.os.environ[deploy.QUICK_DENIED] == "1"
+    assert "quicksight:CreateTopic" in capsys.readouterr().out
+    monkeypatch.delenv(deploy.QUICK_DENIED)
+
+
+def test_prepare_quick_skips_when_the_operator_cant_create_quick(monkeypatch, tmp_path):
+    _airline_state(tmp_path, monkeypatch)
+    monkeypatch.setenv(deploy.QUICK_DENIED, "1")
+    monkeypatch.setattr(deploy, "_wait_for_glue_tables", lambda *a, **k: pytest.fail("waited although denied"))
+    assert deploy._prepare_quick(tmp_path, INFRA, ["me@x.io"]) == []
+    assert deploy.os.environ["TF_VAR_quick_principal_arns"] == "[]"
+    monkeypatch.delenv("TF_VAR_quick_principal_arns")
+
+
+def test_quick_principals_leave_out_readers(monkeypatch, capsys):
+    # Quick rejects owner permissions on a data source or dataset for a Reader, which would fail the whole apply.
+    users = {
+        "UserList": [
+            {"Email": "author@x.io", "Arn": "arn:q:author", "Role": "AUTHOR_PRO"},
+            {"Email": "reader@x.io", "Arn": "arn:q:reader", "Role": "READER"},
+        ]
+    }
+    monkeypatch.setattr(deploy.subprocess, "run", lambda cmd, **k: _completed(cmd, json.dumps(users)))
+    assert deploy._quick_principals("1", ["author@x.io", "reader@x.io"]) == ["arn:q:author"]
+    assert "reader@x.io is a Quick READER" in capsys.readouterr().out
+
+
+def test_wait_for_glue_tables_stops_when_tableflow_failed(monkeypatch):
+    monkeypatch.setattr(deploy, "_glue_tables", lambda region, database: set())
+    monkeypatch.setattr(deploy.time, "sleep", lambda seconds: pytest.fail("waited after Tableflow failed"))
+    assert not deploy._wait_for_glue_tables("us-east-1", "lkc-1", deploy.QUICK_TABLES, stop=lambda: True)
+
+
+def test_a_failed_quick_apply_retries_with_the_last_quick_users(monkeypatch, tmp_path, capsys):
+    calls = []
+    _stub_finish(monkeypatch, tmp_path, calls)
+
+    def prepare(root, infra, emails):
+        deploy.os.environ["TF_VAR_quick_principal_arns"] = '["arn:q:new"]'
+        return []
+
+    applies = iter([False, True])
+    monkeypatch.setattr(deploy, "_prepare_quick", prepare)
+    monkeypatch.setattr(
+        deploy, "run_terraform", lambda path, **k: calls.append(("terraform", path.name)) or next(applies)
+    )
+    deploy._finish_always_on(tmp_path)
+    assert [c for c in calls if c[0] == "terraform"] == [("terraform", "always-on")] * 2
+    assert deploy.os.environ["TF_VAR_quick_principal_arns"] == "[]"
+    assert "card" in calls and "Quick" in capsys.readouterr().out
+    monkeypatch.delenv("TF_VAR_quick_principal_arns")
+
+
+def test_the_scene_3_queries_are_saved_in_the_workgroup():
+    names = {p.name for p in (TF / "athena").glob("*.sql")}
+    assert names == {
+        "delays-impact-and-hotel-cost.sql",
+        "average-recovery-time.sql",
+        "hotel-cost-ra417-vs-other-flights.sql",
+        "one-row-per-key.sql",
+    }
+    query = _block(_quick(), "aws_athena_named_query.history")
+    assert 'fileset("${path.module}/athena", "*.sql")' in query and "aws_athena_workgroup.analytics[0].id" in query

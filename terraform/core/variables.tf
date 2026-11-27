@@ -68,8 +68,8 @@ variable "confluent_cloud_api_secret" {
 }
 
 # AWS credentials for the Tableflow S3/Glue provider integration
-# (terraform/airline-demo/analytics.tf). Optional: leave empty and
-# airline-demo skips enable_analytics instead of failing.
+# (terraform/tableflow/analytics.tf). Optional: leave empty and
+# deploy skips terraform/tableflow instead of failing.
 variable "aws_tableflow_access_key" {
   description = "AWS Access Key ID for the Tableflow S3/Glue provider integration (optional)"
   type        = string
@@ -88,5 +88,19 @@ variable "aws_tableflow_session_token" {
   description = "AWS Session Token for temporary Tableflow credentials (required when the access key starts with ASIA)"
   type        = string
   sensitive   = true
+  default     = ""
+}
+
+# Deploy into an environment the attendee already has. They may be only EnvironmentAdmin there,
+# so core creates no environment or service accounts, and user_id owns every API key.
+variable "existing_environment_id" {
+  description = "ID of an existing Confluent environment (env-...) to deploy into. Leave empty (the default) to create a new environment."
+  type        = string
+  default     = ""
+}
+
+variable "user_id" {
+  description = "ID of the deploying Confluent user (u-...). Owns every API key when existing_environment_id is set."
+  type        = string
   default     = ""
 }

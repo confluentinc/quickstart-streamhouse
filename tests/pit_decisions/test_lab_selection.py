@@ -60,7 +60,7 @@ def test_targets_always_start_with_core():
 
 def test_destroy_one_lab_keeps_core_and_the_other_lab():
     assert destroy._envs_to_destroy("agentic-pit-decisions") == ["agentic-pit-decisions"]
-    assert destroy._envs_to_destroy("flight-disruptions") == ["airline-demo"]
+    assert destroy._envs_to_destroy("flight-disruptions") == ["tableflow", "airline-demo"]
     assert destroy._envs_to_destroy(None)[-1] == "core"
 
 

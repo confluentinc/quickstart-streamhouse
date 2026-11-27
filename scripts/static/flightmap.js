@@ -9,11 +9,12 @@
 // flies the plane on from that reading (planeState). The readings are
 // synthetic, not real tracking data.
 //
-// flight_status only carries ONE meaningful timestamp per flight (see
-// airport_datagen.py Flight.estimated_at): the arrival time for a flight
-// landing at the SFO hub, or the departure time for a flight leaving it. The
-// info box's other times come from the real distance between the two
-// airports at a plausible cruise speed (estimateDurationMs).
+// flight_status carries each flight's scheduled and estimated departure and
+// arrival. The generator plans every flight from its time at the SFO hub (the
+// arrival for a flight landing there, the departure for one leaving it), so the
+// info box starts from that time too (sfoTime) and derives the far end from the
+// real distance between the two airports at a plausible cruise speed
+// (estimateDurationMs).
 
 const HUB = "SFO";
 const CRUISE_KMH = 850; // typical narrow-body cruise speed
@@ -141,18 +142,23 @@ const NM_PX = MAP_H / (BOUNDS.latMax - BOUNDS.latMin) / 60;
 const FRESH_MS = 15000;
 const clampAge = (ms) => Math.max(0, Math.min(FRESH_MS, ms));
 
-// The route's curve and the three moments the info box shows. Only the
-// departure OR arrival instant is real data (see file header); the other two
-// are derived from the estimated duration, so they're approximations, not
-// authoritative times. A late arrival keeps its scheduled takeoff and circles
-// until it can land at its estimated time, the same rule the generator flies.
+// The flight's scheduled time at SFO: its arrival there, or its departure from it.
+function sfoTime(row) {
+  return row.destination === HUB ? row.scheduled_arrival : row.scheduled_departure;
+}
+
+// The route's curve and the moments the info box shows: the scheduled and
+// estimated departure and arrival, as flight_status reports them. Only a row
+// missing one falls back to deriving it from the flight's time at SFO and the
+// estimated duration: a late arrival keeps its scheduled takeoff and circles
+// until it can land at its estimated time.
 function flightTimes(row) {
   const a = AIRPORTS[row.origin], b = AIRPORTS[row.destination];
   if (!a || !b) return null;
   const duration = estimateDurationMs(row.origin, row.destination);
-  const known = parseTsMs(row.scheduled_time);
-  if (known == null) return null;
   const isArrival = row.destination === HUB;
+  const known = parseTsMs(sfoTime(row));
+  if (known == null) return null;
   const delayMs = (Number(row.delay_minutes) || 0) * 60000;
 
   let departureMs, scheduledArrivalMs, estimatedArrivalMs;
@@ -165,9 +171,16 @@ function flightTimes(row) {
     scheduledArrivalMs = known + duration;
     estimatedArrivalMs = departureMs + duration;
   }
+  let scheduledDepartureMs = isArrival ? scheduledArrivalMs - duration : known;
+  scheduledDepartureMs = parseTsMs(row.scheduled_departure) ?? scheduledDepartureMs;
+  departureMs = parseTsMs(row.estimated_departure) ?? departureMs;
+  scheduledArrivalMs = parseTsMs(row.scheduled_arrival) ?? scheduledArrivalMs;
+  estimatedArrivalMs = parseTsMs(row.estimated_arrival) ?? estimatedArrivalMs;
   const [x0, y0] = project(a), [x1, y1] = project(b);
   const { cx, cy } = routeCurve(x0, y0, x1, y1);
-  return { isArrival, x0, y0, cx, cy, x1, y1, departureMs, scheduledArrivalMs, estimatedArrivalMs };
+  return {
+    isArrival, x0, y0, cx, cy, x1, y1, scheduledDepartureMs, departureMs, scheduledArrivalMs, estimatedArrivalMs,
+  };
 }
 
 // "waiting" at the gate, "enroute", or "done", from flight_status alone.
@@ -220,10 +233,13 @@ function planeState(row, sample, nowMs) {
   const knots = Number(reading.ground_speed_kt);
   const verticalFpm = Number(reading.vertical_speed_fpm);
   const headingDeg = Number(reading.heading_deg);
-  const angleDeg = headingDeg - 90;
-  const angle = (angleDeg * Math.PI) / 180;
   const movedNm = (knots * elapsedS) / 3600;
   const [rx, ry] = project([Number(reading.latitude), Number(reading.longitude)]);
+  // An airborne plane faces (and flies toward) its destination airport, so it never seems to turn
+  // away between readings. A hold keeps its own heading while it circles.
+  const towardDestination = (Math.atan2(times.y1 - ry, times.x1 - rx) * 180) / Math.PI;
+  const angleDeg = stage === "HOLDING" ? headingDeg - 90 : towardDestination;
+  const angle = (angleDeg * Math.PI) / 180;
   return {
     ...times,
     x: rx + movedNm * NM_PX * Math.cos(angle),
@@ -430,14 +446,16 @@ function renderInfoBox(svg, row, pos) {
 
   // Same thresholds as the rest of the app: delayed from 15 min (the
   // "Delayed" count), at risk of missed connections from 45.
-  const delay = Number(row.delay_minutes) || 0;
-  const lateClass = delay >= 45 ? "miss" : delay >= 15 ? "tight" : "";
+  const lateness = (minutes) => (minutes >= 45 ? "miss" : minutes >= 15 ? "tight" : "");
+  const lateClass = lateness(Number(row.delay_minutes) || 0);
+  const departureLate = lateness((pos.departureMs - pos.scheduledDepartureMs) / 60000);
 
   box.innerHTML = "";
   box.appendChild(el("infobox-title", row.key));
   box.appendChild(el("infobox-route", `${row.origin} → ${row.destination}`));
   for (const [label, ms, valueClass] of [
-    ["Departure", pos.departureMs, ""],
+    ["Sched. departure", pos.scheduledDepartureMs, ""],
+    ["Est. departure", pos.departureMs, departureLate],
     ["Sched. arrival", pos.scheduledArrivalMs, ""],
     ["Est. arrival", pos.estimatedArrivalMs, lateClass],
   ]) {
@@ -669,4 +687,4 @@ function buildMapSvg(svgSelector) {
   svg.dataset.built = "1";
 }
 
-window.FlightMap = { buildMapSvg, renderFlightMap, flightColorClass };
+window.FlightMap = { buildMapSvg, renderFlightMap, flightColorClass, sfoTime };

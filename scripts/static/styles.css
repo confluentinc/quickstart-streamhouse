@@ -189,6 +189,7 @@ code { color: #cdd7ff; background: var(--panel-2); padding: 1px 5px; border-radi
   box-shadow: 0 0 10px rgba(34, 211, 238, .55);
 }
 .src { font: 500 11.5px/1.35 var(--font-sans); color: var(--muted); text-align: right; }
+.empty-row td { color: var(--muted); text-align: center; padding: 14px; }
 .src .link { font-family: var(--font-sans); font-weight: 600; color: var(--accent); }
 
 /* --- Tables -------------------------------------------------------------- */

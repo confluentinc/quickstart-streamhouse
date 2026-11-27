@@ -20,14 +20,14 @@ Every source field, Flink column, and generator rule below exists to answer thos
 
 Recovery time runs from the moment a connection became HIGH risk (`impacted_at`) to the moment the recovery offer was ready (`recommended_at`). It deliberately excludes the customer's decision time: a passenger who waits an hour to tap **Book** does not make River Air look an hour slow.
 
-"Last 30 days" is a trailing window: `scheduled_time >= current_date - INTERVAL '30' DAY` for flights and `recommended_at >= current_date - INTERVAL '30' DAY` for cost.
+"Last 30 days" is a trailing window: `scheduled_departure >= current_date - INTERVAL '30' DAY` for flights and `recommended_at >= current_date - INTERVAL '30' DAY` for cost.
 
 ```sql
 -- Athena, over the Glue database Tableflow syncs into
 SELECT count_if(delay_minutes >= 15) AS delayed_flights,
        sum(affected_passengers)      AS impacted_passengers
 FROM flight_impact
-WHERE scheduled_time >= current_date - INTERVAL '30' DAY;
+WHERE scheduled_departure >= current_date - INTERVAL '30' DAY;
 
 SELECT sum(hotel_cost)                                                    AS hotel_cost,
        avg(to_unixtime(recommended_at) - to_unixtime(impacted_at))        AS avg_recovery_seconds
@@ -48,8 +48,10 @@ Four source feeds carry the facts shown on screen. The deployed Flink tables cal
 | `flight_id` | STRING, key | One dated flight, for example `RA417-20260928`. |
 | `origin` | STRING | Route shown on screen. |
 | `destination` | STRING | Route shown on screen. |
-| `scheduled_time` | TIMESTAMP | Baseline for delay. |
-| `estimated_time` | TIMESTAMP | Latest estimate, used for delay and connection time. |
+| `scheduled_departure` | TIMESTAMP | When the flight is due to leave its origin. |
+| `scheduled_arrival` | TIMESTAMP | When it is due to land at its destination; the baseline for delay. |
+| `estimated_departure` | TIMESTAMP | When it now takes off. A late arrival into SFO usually keeps its scheduled takeoff and circles. The departure side of a connection. |
+| `estimated_arrival` | TIMESTAMP | When it now lands. The arrival side of a connection, and the delay (`estimated_arrival - scheduled_arrival`). |
 | `status` | STRING | `ON_TIME`, `DELAYED`, `BOARDING`, `DEPARTED`, or `LANDED`. |
 
 Every flight either arrives at or leaves the SFO hub, never both. For an arrival, the two times mean arrival at SFO; for a departure, they mean departure from SFO.
@@ -99,13 +101,13 @@ Only the latest reading per flight is kept. The final reading is `LANDED`.
 
 | Topic | Key | Columns | Producer and use |
 | --- | --- | --- | --- |
-| `passenger_state` | `passenger_id` | `inbound_flight_id`, `inbound_seat`, `connecting_flight_id`, `connecting_seat`, `final_destination`, `connection_minutes`, `risk`, `inbound_estimated_time` | Flink joins each itinerary to its inbound flight and (left join) its connecting flight, and keeps the itinerary's seats. `risk` is `HIGH` when the estimated connection is under 45 minutes, `OK` otherwise, and `NO_CONNECTION` when the trip ends at SFO. The app's passenger drill-down and the agent trigger read it. |
-| `flight_impact` | `flight_id` | `origin`, `destination`, `scheduled_time`, `status`, `delay_minutes`, `affected_passengers` | Flink computes the delay and counts `HIGH` passengers per inbound flight. The operations dashboard takes its at-risk counts from it, and each flight's status and delay from `flight_status`, which reaches Lightning within seconds rather than at Flink's once-a-minute commit. It is also the Iceberg table for question 1. |
+| `passenger_state` | `passenger_id` | `inbound_flight_id`, `inbound_seat`, `connecting_flight_id`, `connecting_seat`, `final_destination`, `connection_minutes`, `risk`, `inbound_estimated_arrival` | Flink joins each itinerary to its inbound flight and (left join) its connecting flight, and keeps the itinerary's seats. `risk` is `HIGH` when the estimated connection is under 45 minutes, `OK` otherwise, and `NO_CONNECTION` when the trip ends at SFO. The app's passenger drill-down and the agent trigger read it. |
+| `flight_impact` | `flight_id` | `origin`, `destination`, `scheduled_departure`, `scheduled_arrival`, `status`, `delay_minutes`, `affected_passengers` | Flink computes the delay and counts `HIGH` passengers per inbound flight. The operations dashboard takes its at-risk counts from it, and each flight's status and delay from `flight_status`, which reaches Lightning within seconds rather than at Flink's once-a-minute commit. It is also the Iceberg table for question 1. |
 | `passenger_recommendations` | `offer_id` | `passenger_id`, `recommended_flight_id`, `hotel_name`, `status`, `hotel_cost`, `impacted_at`, `recommended_at` | Two offers (`{passenger_id}-O1`, `-O2`) per HIGH-risk passenger. `hotel_name` and `hotel_cost` are null for a same-day rebooking and set when the wait is six hours or more. Status moves `OFFERED` → `SELECTED` → `BOOKED`; the other offer becomes `CLOSED`. Offers nobody picks are `CLOSED` after 90 minutes. |
 
 Flink performs every join and aggregation. Lightning Tables only serves current rows, and RTCE/MCP gives a connected agent the same rows.
 
-**Internal staging table.** `passenger_state_changes` (key `passenger_id`; columns `inbound_flight_id`, `connecting_flight_id`, `final_destination`, `risk`, `inbound_estimated_time`) is an append-only copy of every `passenger_state` change, because `AI_RUN_AGENT` can't read an upsert table. `impacted_passengers` (same key; `inbound_flight_id`, `connecting_flight_id`, `final_destination`, `impacted_at`) keeps one row per passenger on RA417, RA183, and RA185, the first time they turn HIGH while their inbound flight is still due to land (`$rowtime` before `inbound_estimated_time`), so history days never reach the agent; that change row's `$rowtime` is `impacted_at`. The agent runs once per final destination and gives every passenger in the group the same two offers. Neither table is a data product or on the architecture diagram.
+**Internal staging table.** `passenger_state_changes` (key `passenger_id`; columns `inbound_flight_id`, `connecting_flight_id`, `final_destination`, `risk`, `inbound_estimated_arrival`) is an append-only copy of every `passenger_state` change, because `AI_RUN_AGENT` can't read an upsert table. `impacted_passengers` (same key; `inbound_flight_id`, `connecting_flight_id`, `final_destination`, `impacted_at`) keeps one row per passenger on RA417, RA183, and RA185, the first time they turn HIGH while their inbound flight is still due to land (`$rowtime` before `inbound_estimated_arrival`), so history days never reach the agent; that change row's `$rowtime` is `impacted_at`. The agent runs once per final destination and gives every passenger in the group the same two offers. Neither table is a data product or on the architecture diagram.
 
 ## ERD
 
@@ -124,8 +126,10 @@ erDiagram
         string flight_id PK
         string origin
         string destination
-        timestamp scheduled_time
-        timestamp estimated_time
+        timestamp scheduled_departure
+        timestamp scheduled_arrival
+        timestamp estimated_departure
+        timestamp estimated_arrival
         string status
     }
     passenger_itineraries {
@@ -163,13 +167,14 @@ erDiagram
         string final_destination
         int connection_minutes
         string risk
-        timestamp inbound_estimated_time
+        timestamp inbound_estimated_arrival
     }
     flight_impact {
         string flight_id PK
         string origin
         string destination
-        timestamp scheduled_time
+        timestamp scheduled_departure
+        timestamp scheduled_arrival
         string status
         int delay_minutes
         int affected_passengers
@@ -223,7 +228,7 @@ uv run airport-datagen --reset         # tombstone every generated key
 
 ### Continuous mode (always-on demo)
 
-`uv run airport-datagen --continuous` streams forever instead of for 90 minutes, for the [always-on demo](./always-on.md). Each UTC day has 180 flights and eight RA417s from Chicago O'Hare at 00:40, 03:40, ... 21:40 UTC (keys like `RA417-20261112-0040`); the Grand Hyatt sells out at 18:00 UTC and refills at midnight. Every row follows from the seed and the wall clock, so a restarted stream resumes where it was. At each UTC midnight it publishes the day after next and tombstones the day 35 days back (`RETENTION_DAYS`). `--history` first publishes the 29 finished days before yesterday.
+`uv run airport-datagen --continuous` streams forever instead of for 90 minutes, for the [always-on demo](./always-on.md). Each UTC day has 180 flights and eight RA417s from Chicago O'Hare that land at 00:40, 03:40, ... 21:40 UTC (keys carry the departure date and time, so the first is `RA417-20261111-2045`: it leaves at 20:45 the evening before it lands); the Grand Hyatt sells out at 18:00 UTC and refills at midnight. Every row follows from the seed and the wall clock, so a restarted stream resumes where it was. At each UTC midnight it publishes the day after next and tombstones the day 35 days back (`RETENTION_DAYS`). `--history` first publishes the 29 finished days before yesterday.
 
 The generator writes no live offers: the recovery agent handles every flight (`TF_VAR_continuous` drops `sql/27`'s three-flight filter). Simulated customers answer the offers ([`offer_customers.py`](../../scripts/offer_customers.py)): about 85% book, the rest expire after 90 minutes, unless someone decided in the app first.
 

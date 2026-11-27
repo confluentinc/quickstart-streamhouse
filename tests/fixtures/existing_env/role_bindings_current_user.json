@@ -1,0 +1,15 @@
+[
+  {
+    "id": "rb-abc123",
+    "principal": "User:u-abc123",
+    "email": "attendee@example.com",
+    "role": "EnvironmentAdmin",
+    "environment": "env-abc123",
+    "cloud_cluster": "",
+    "cluster_type": "",
+    "logical_cluster": "",
+    "resource_type": "",
+    "name": "",
+    "pattern_type": ""
+  }
+]

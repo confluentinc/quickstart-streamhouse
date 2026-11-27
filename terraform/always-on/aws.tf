@@ -39,9 +39,20 @@ resource "aws_iam_role" "flight_board" {
   }
 }
 
-resource "aws_iam_role_policy_attachment" "flight_board_logs" {
-  role       = aws_iam_role.flight_board.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+# Writes to its own log group only. Without logs:CreateLogGroup (which AWSLambdaBasicExecutionRole grants), an
+# instance still shutting down after a destroy can't re-create the group Terraform just deleted, which would make
+# the next deploy fail with "log group already exists".
+resource "aws_iam_role_policy" "flight_board_logs" {
+  name = "write-logs"
+  role = aws_iam_role.flight_board.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+      Resource = "${aws_cloudwatch_log_group.flight_board.arn}:*"
+    }]
+  })
 }
 
 resource "aws_iam_role_policy" "flight_board_settings" {
@@ -87,7 +98,7 @@ resource "aws_lambda_function" "flight_board" {
 
   depends_on = [
     aws_cloudwatch_log_group.flight_board,
-    aws_iam_role_policy_attachment.flight_board_logs,
+    aws_iam_role_policy.flight_board_logs,
     aws_iam_role_policy.flight_board_settings,
   ]
 }

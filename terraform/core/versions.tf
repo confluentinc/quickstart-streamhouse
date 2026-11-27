@@ -3,7 +3,7 @@ terraform {
   required_providers {
     confluent = {
       source  = "confluentinc/confluent"
-      version = "~> 2.38"
+      version = "~> 2.73"
     }
     random = {
       source  = "hashicorp/random"
@@ -22,4 +22,4 @@ provider "confluent" {
 provider "random" {}
 
 # No AWS provider is required: core only ever talks to the Confluent Cloud API.
-# The Tableflow S3/Glue path's AWS provider lives in terraform/airline-demo.
+# The Tableflow S3/Glue path's AWS provider lives in terraform/tableflow.

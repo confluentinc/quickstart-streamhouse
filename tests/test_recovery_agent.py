@@ -44,10 +44,10 @@ def test_agent_handles_the_generators_agent_flights():
 def test_agent_filter_keeps_the_live_flights_and_drops_history_at_any_hour():
     """sql/27 keeps a HIGH passenger only while their inbound flight is still due to land, not by UTC date."""
     sql = _sql("27")
-    assert "CAST($rowtime AS TIMESTAMP(3)) < inbound_estimated_time" in sql
+    assert "CAST($rowtime AS TIMESTAMP(3)) < inbound_estimated_arrival" in sql
     assert "CURRENT_TIMESTAMP" not in sql
-    assert "inbound.estimated_time AS inbound_estimated_time" in _sql("24")
-    assert "  inbound_estimated_time\nFROM TO_CHANGELOG(" in _sql("26")
+    assert "inbound.estimated_arrival AS inbound_estimated_arrival" in _sql("24")
+    assert "  inbound_estimated_arrival\nFROM TO_CHANGELOG(" in _sql("26")
     # Noon, and a start whose agent flights turn HIGH after UTC midnight.
     for start in (datetime(2026, 9, 28, 12, 0), datetime(2026, 9, 28, 23, 40)):
         plan = airport_datagen.build_plan(start)
@@ -87,13 +87,6 @@ class _Run:
     def __call__(self, cmd, **_):
         self.calls.append(cmd)
         return type("Result", (), {"stdout": self.stdout, "stderr": "", "returncode": self.returncode})()
-
-
-def test_stale_rtce_key_is_detected(monkeypatch):
-    run = _Run(stdout='[{"key": "NEWKEY"}]')
-    monkeypatch.setattr(setup_rtce.subprocess, "run", run)
-    assert setup_rtce._key_owned_by("sa-1", "NEWKEY")
-    assert not setup_rtce._key_owned_by("sa-1", "OLDKEY")
 
 
 def test_existing_agent_connection_gets_the_current_key(monkeypatch):
@@ -157,7 +150,8 @@ def test_continuous_mode_drops_exactly_the_agent_flight_filter():
 
 
 def test_continuous_mode_turns_on_tableflow_for_both_topics():
-    tf = (DEMO / "analytics.tf").read_text(encoding="utf-8") + (DEMO / "main.tf").read_text(encoding="utf-8")
+    tableflow = DEMO.parent / "tableflow"
+    tf = (tableflow / "analytics.tf").read_text(encoding="utf-8") + (tableflow / "main.tf").read_text(encoding="utf-8")
     assert '["passenger_recommendations"]' in tf and "local.tableflow_topics" in tf
 
 

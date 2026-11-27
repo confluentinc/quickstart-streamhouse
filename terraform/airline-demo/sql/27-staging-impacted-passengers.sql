@@ -31,7 +31,7 @@ AS WITH first_high AS (
   FROM passenger_state_changes
   WHERE risk = 'HIGH'
     AND SPLIT_INDEX(inbound_flight_id, '-', 0) IN ('RA417', 'RA183', 'RA185')
-    AND CAST($rowtime AS TIMESTAMP(3)) < inbound_estimated_time
+    AND CAST($rowtime AS TIMESTAMP(3)) < inbound_estimated_arrival
   GROUP BY `key`, inbound_flight_id, connecting_flight_id, final_destination
 )
 SELECT `key`, inbound_flight_id, connecting_flight_id, final_destination, impacted_at

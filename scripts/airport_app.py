@@ -51,7 +51,7 @@ def _lightning_error(topic: str, status: int, body: str) -> str:
     """What a failed Lightning query says; a topic with no Lightning Table yet names the workshop step to do."""
     if "FE_CUSTOMER_NOT_FOUND" in body or "FE_TABLE_NOT_FOUND" in body:
         return (
-            f"{topic} has no Lightning Table yet. Enable it in the Console (Lab 3, steps 1 to 3), "
+            f"{topic} has no Lightning Table yet. Enable it in the Console (Lab 3, steps 1 and 2), "
             "or run `uv run workshop-status`."
         )
     return f"Lightning query returned HTTP {status}: {body[:300]}"
@@ -253,21 +253,35 @@ def _hotel_options() -> list[dict]:
     )
 
 
+# Every flight starts or ends at SFO: an arrival's time at SFO is its scheduled arrival, a departure's its scheduled
+# departure. The day's board and its paging go by that time.
+SFO_TIME = (("destination", "scheduled_arrival"), ("origin", "scheduled_departure"))
+
+
+def _sfo_time(row: dict):
+    return row.get("scheduled_arrival") if row.get("destination") == HUB else row.get("scheduled_departure")
+
+
 def _scheduled_rows(topic: str, start: datetime, end: datetime) -> list[dict]:
-    """Every row scheduled in [start, end), paging on scheduled_time past Lightning's 200-row cap."""
+    """Every row at SFO in [start, end): arrivals by scheduled arrival, departures by scheduled departure.
+
+    Each side pages on its own column past Lightning's 200-row cap.
+    """
     rows: dict[tuple, dict] = {}
-    since = start
-    while True:
-        page = _rows(
-            topic,
-            where=[("scheduled_time", ">=", since), ("scheduled_time", "<", end)],
-            order_by=("scheduled_time", "ASC"),
-        )
-        rows.update((tuple(row.items()), row) for row in page)  # each page repeats the last one's final time
-        last = _timestamp(page[-1].get("scheduled_time")) if page else None
-        if len(page) < PAGE_SIZE or last is None or last == since:
-            return list(rows.values())
-        since = last
+    for side, column in SFO_TIME:
+        since = start
+        while True:
+            page = _rows(
+                topic,
+                where=[(side, "=", HUB), (column, ">=", since), (column, "<", end)],
+                order_by=(column, "ASC"),
+            )
+            rows.update((tuple(row.items()), row) for row in page)  # each page repeats the last one's final time
+            last = _timestamp(page[-1].get(column)) if page else None
+            if len(page) < PAGE_SIZE or last is None or last == since:
+                break
+            since = last
+    return list(rows.values())
 
 
 def _live_copies(flights: list[dict], impact: dict[str, dict]) -> list[dict]:
@@ -287,7 +301,7 @@ def _live_copies(flights: list[dict], impact: dict[str, dict]) -> list[dict]:
         chosen.append(
             max(
                 matching or rows,
-                key=lambda row: (STAGES.get(row.get("status"), 0), row["estimated_time"] or datetime.min),
+                key=lambda row: (STAGES.get(row.get("status"), 0), row["estimated_arrival"] or datetime.min),
             )
         )
     return chosen
@@ -315,13 +329,14 @@ def _flights(
     impact = _pool.submit(read, "flight_impact")
     flights = []
     for row in read("flight_status"):
-        scheduled, estimated = _timestamp(row.get("scheduled_time")), _timestamp(row.get("estimated_time"))
+        # The arrival delay; a flight leaving SFO is late by the same minutes at both ends.
+        scheduled, estimated = _timestamp(row.get("scheduled_arrival")), _timestamp(row.get("estimated_arrival"))
         delay = round((estimated - scheduled) / timedelta(minutes=1)) if scheduled and estimated else 0
-        flights.append({**row, "estimated_time": estimated, "delay_minutes": delay})
+        flights.append({**row, "estimated_arrival": estimated, "delay_minutes": delay})
     impact = {row["key"]: row for row in impact.result()}
     flights = sorted(
         _live_copies(flights, impact),
-        key=lambda row: (_timestamp(row.get("scheduled_time")) or datetime.min, row["key"]),
+        key=lambda row: (_timestamp(_sfo_time(row)) or datetime.min, row["key"]),
     )
     return [
         {**row, "affected_passengers": _int(impact.get(row["key"], {}).get("affected_passengers"))} for row in flights
@@ -341,12 +356,12 @@ def _current_passengers(rows: list[dict]) -> list[dict]:
         for field in ("inbound_flight_id", "connecting_flight_id")
         if row.get(field)
     }
-    estimates = {flight["key"]: flight["estimated_time"] for flight in _flights(keys=flight_ids)} if flight_ids else {}
+    flights = {flight["key"]: flight for flight in _flights(keys=flight_ids)} if flight_ids else {}
 
     def distance(row: dict) -> tuple:
-        inbound = _timestamp(row.get("inbound_estimated_time"))
-        current_inbound = estimates.get(row.get("inbound_flight_id"))
-        current_onward = estimates.get(row.get("connecting_flight_id"))
+        inbound = _timestamp(row.get("inbound_estimated_arrival"))
+        current_inbound = flights.get(row.get("inbound_flight_id"), {}).get("estimated_arrival")
+        current_onward = _timestamp(flights.get(row.get("connecting_flight_id"), {}).get("estimated_departure"))
         minutes = row.get("connection_minutes")
         inbound_gap = abs((inbound - current_inbound).total_seconds()) if inbound and current_inbound else 0
         onward_gap = 0
@@ -372,14 +387,14 @@ def _eligible_offer_ids(passenger: dict, offers: list[dict]) -> set[str]:
     inbound_id = passenger["inbound_flight_id"]
     flight_ids = {offer["recommended_flight_id"] for offer in offers if offer.get("recommended_flight_id")}
     flights = {row["key"]: row for row in _flights(keys={inbound_id, *flight_ids})}
-    inbound_eta = flights.get(inbound_id, {}).get("estimated_time")
+    inbound_eta = flights.get(inbound_id, {}).get("estimated_arrival")
     if not inbound_eta:
         return set()
     earliest = max(inbound_eta + timedelta(minutes=CONNECTION_MINUTES), _now())
     eligible = set()
     for offer in offers:
         flight = flights.get(offer.get("recommended_flight_id"), {})
-        departure = flight.get("estimated_time")
+        departure = _timestamp(flight.get("estimated_departure"))
         if (
             departure
             and departure >= earliest
@@ -439,14 +454,31 @@ def state():
     telemetry, notice = telemetry.result()
     if not flights:
         notice = NO_FLIGHTS_NOTICE
+
     # Most passengers at risk first, then the longest delay, so a flight stranding connections leads the list.
+    def biggest_impact(row):
+        return (-row["affected_passengers"], -row["delay_minutes"], row.get("key") or "")
+
+    def flying(row):
+        return telemetry.get(row["key"], {}).get("stage") not in (None, "LANDED")
+
+    # In the air: what's flying now. Biggest delays: what's flying or still to leave and at least DELAYED_MINUTES
+    # late; a landed arrival or a departure that's left and stopped reporting is done.
+    in_air = sorted((row for row in flights if flying(row)), key=biggest_impact)
     delays = sorted(
-        flights, key=lambda row: (-row["affected_passengers"], -row["delay_minutes"], row.get("key") or "")
+        (
+            row
+            for row in flights
+            if row["delay_minutes"] >= DELAYED_MINUTES
+            and (flying(row) or row.get("status") in ("ON_TIME", "DELAYED", "BOARDING"))
+        ),
+        key=biggest_impact,
     )[:10]
     return {
         "now": now,
         "flights": flights,
         "delays": delays,
+        "in_air": in_air,
         "telemetry": telemetry,
         "notice": notice,
         "counts": {
@@ -605,6 +637,16 @@ def _same(supplied: str, expected: str) -> bool:
 
 
 @app.middleware("http")
+async def recheck_the_page(request: Request, call_next):
+    """The page and its scripts revalidate on every load (ETag), so a new deploy never pairs a cached app.js
+    with a new index.html."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.middleware("http")
 async def require_app_password(request: Request, call_next):
     """When APP_PASSWORD is set, every path needs HTTP Basic auth (any username, that password) or a sign-in cookie."""
     expected = os.environ.get("APP_PASSWORD")
@@ -675,8 +717,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
-    load_settings_secret()
-    if not os.environ.get("STREAMHOUSE_ENVIRONMENT_ID"):
+    if os.environ.get(SETTINGS_SECRET_ARN):
+        # Always-on on AWS: the settings come from the secret, and there's no checkout or Terraform state to check.
+        load_settings_secret()
+    elif not os.environ.get("STREAMHOUSE_ENVIRONMENT_ID"):
         ws = workshop_checks.require_deployment("uv run airport-app")
         if not workshop_checks.ensure_lightning(ws, workshop_checks.LIGHTNING_TOPICS, "The dashboard reads them."):
             sys.exit(1)

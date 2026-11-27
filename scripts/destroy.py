@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values, unset_key
 
-from scripts import processes
+from scripts import existing_env, processes
 
 from .credentials import load_or_create_credentials_file
 from .deploy import (
@@ -32,7 +32,8 @@ from .deploy import (
     _export_aws_credentials,
 )
 from .login_checks import ensure_confluent_login
-from .terraform import get_project_root
+from .setup_rtce import unregister_rtce_server
+from .terraform import get_project_root, run_terraform_output
 from .terraform_runner import run_terraform_destroy
 
 
@@ -92,7 +93,7 @@ def cleanup_terraform_artifacts(env_path: Path) -> None:
 # integration after Tableflow is gone, sometimes for good, so deleting it returns
 # 409 "integration is being used in some confluent resource". The catalog tags
 # 409 the same way while a topic still carries them. Deleting the environment
-# removes both regardless, so when only these are left in airline-demo's state,
+# removes both regardless, so when only these are left in tableflow's state,
 # drop them from state and let core's destroy take them.
 TABLEFLOW_PROVIDER_INTEGRATION = "confluent_provider_integration.tableflow[0]"
 CATALOG_TAG_PREFIX = "confluent_tag.demo["
@@ -157,11 +158,13 @@ def _cleanup_mcp(root: Path) -> None:
 
 
 def _envs_to_destroy(lab: str | None, root: Path | None = None) -> list[str]:
-    """Terraform roots in reverse dependency order: always-on (when deployed), every lab, then core."""
+    """Terraform roots in reverse dependency order: always-on (when deployed), tableflow, every lab, then core.
+
+    A root with no state (never deployed) is skipped by the destroy loop."""
     always_on = ["always-on"] if root and (root / "terraform" / "always-on" / "terraform.tfstate").exists() else []
     if lab:
-        return [*(always_on if lab == FLIGHT_DISRUPTIONS else []), LABS[lab][1]]
-    return [*always_on, "agentic-pit-decisions", "airline-demo", "core"]
+        return [*always_on, "tableflow", LABS[lab][1]] if lab == FLIGHT_DISRUPTIONS else [LABS[lab][1]]
+    return [*always_on, "tableflow", "agentic-pit-decisions", "airline-demo", "core"]
 
 
 def _prepare_always_on_destroy(creds: dict) -> None:
@@ -179,6 +182,45 @@ def _cleanup_pit_decisions(root: Path) -> None:
 
     delete_card(root)
     (root / SEED_MARKER).unlink(missing_ok=True)
+
+
+def _kept_environment(root: Path) -> str:
+    """The environment ID when core was deployed into an existing environment (destroy keeps it), else ""."""
+    state = root / "terraform" / "core" / "terraform.tfstate"
+    if not state.exists():
+        return ""
+    try:
+        outputs = run_terraform_output(state)
+    except Exception:
+        return ""
+    return (outputs.get("confluent_environment_id") or "") if outputs.get("existing_environment") else ""
+
+
+def _user_for_core(creds: dict) -> str:
+    """Core's variables require the user's ID in an existing environment, even to destroy.
+
+    Sets TF_VAR_user_id and returns the ID; returns "" when no existing environment is saved or the lookup fails.
+    """
+    env_id = (creds.get(existing_env.ENV_KEY) or "").strip()
+    if not env_id:
+        return ""
+    user_id = existing_env.current_user_id(env_id)
+    if user_id:
+        os.environ["TF_VAR_user_id"] = user_id
+    return user_id
+
+
+def _ensure_user_for_core(creds: dict, root: Path, envs_to_destroy: list[str]) -> None:
+    """Exit before any Terraform runs when core's destroy would fail for want of the user's ID."""
+    env_id = (creds.get(existing_env.ENV_KEY) or "").strip()
+    if not env_id or _user_for_core(creds):
+        return
+    if "core" in envs_to_destroy and (root / "terraform" / "core" / "terraform.tfstate").exists():
+        sys.exit(
+            f"Couldn't find your Confluent user ID for {env_id}; run `confluent login` "
+            "(as the user with EnvironmentAdmin on it) and retry."
+        )
+    print("⚠ Couldn't find your Confluent user ID; a later destroy of core needs it (`confluent login`).")
 
 
 def main():
@@ -222,6 +264,9 @@ def main():
         for key, value in creds.items():
             if value:
                 os.environ[key] = value
+        if creds.get(existing_env.ENV_KEY):
+            ensure_confluent_login(creds)  # the user's ID comes from the CLI
+        _ensure_user_for_core(creds, root, envs_to_destroy)
 
         print("✓ Destroying all resources")
         print(f"  Environments: {', '.join(envs_to_destroy)}")
@@ -244,11 +289,16 @@ def main():
         for key, value in creds.items():
             if value:
                 os.environ[key] = value
+        _ensure_user_for_core(creds, root, envs_to_destroy)
 
         # Step 4: Show summary and confirm
         print("\n--- Destroy Summary ---")
         print(f"Destroying: {', '.join(envs_to_destroy)}")
-        print(f"\n⚠️  WARNING: This will permanently destroy {', '.join(envs_to_destroy)}!")
+        kept = _kept_environment(root) if "core" in envs_to_destroy else ""
+        if kept:
+            print(f"\nYour environment {kept} is kept; the cluster, compute pool and keys are deleted.")
+        else:
+            print(f"\n⚠️  WARNING: This will permanently destroy {', '.join(envs_to_destroy)}!")
 
         confirm = input("\nAre you sure you want to proceed? (y/n): ").strip().lower()
         if confirm != "y":
@@ -283,7 +333,7 @@ def main():
             _cleanup_pit_decisions(root)
         if destroyed and env == "always-on":
             (root / ALWAYS_ON_CARD).unlink(missing_ok=True)
-        if not destroyed and env == "airline-demo" and release_provider_integration(env_path):
+        if not destroyed and env == "tableflow" and release_provider_integration(env_path):
             destroyed = run_terraform_destroy(env_path)
 
         if destroyed:
@@ -305,12 +355,15 @@ def main():
         return
 
     _cleanup_mcp(root)
+    unregister_rtce_server()
+    print("✓ Removed the RTCE MCP server registration")
     _cleanup_pit_decisions(root)
 
     # With nothing deployed, the next deploy can be either kind again and asks which lab.
     creds_file = root / "credentials.env"
     saved = dotenv_values(str(creds_file)) if creds_file.exists() else {}
-    for key in (WORKSHOP, DEPLOY_LABS, ALWAYS_ON, CONTINUOUS):
+    # Core's destroy deleted the RTCE Global key, so the saved copy points at nothing.
+    for key in (WORKSHOP, DEPLOY_LABS, ALWAYS_ON, CONTINUOUS, "CONFLUENT_RTCE_API_KEY", "CONFLUENT_RTCE_API_SECRET"):
         if saved.get(key):
             unset_key(str(creds_file), key)
 

@@ -36,12 +36,12 @@ Start the stream at least 40 minutes before scene 2.4.
 | 1 min | 1.1 | Start with Topic UI showing many topics Open Passenger Data and show one message Open Flight status one and open one message | So, here you can see data coming in from all of our different systems, in real time.  Let me highlight two.  First, **passenger itineraries**, coming directly from our ticketing systems, showing us who’s flying and which flight they’re on.  And then **flight status**, a universal, real-time data product showing  data from the Airport Operational Databases across our network. So for any flight, we can see **where it’s coming from, where it’s going, and its latest status — all in one place. Transition**: Now look at this….. |
 | ▶ | 1.1a | **On screen:** Topic UI showing many topics | ⚠️ Confluent Cloud → the cluster → **Topics**. It lists 7 topics: `flight_status`, `passenger_itineraries`, `hotel_inventory`, `flight_telemetry`, `passenger_state`, `flight_impact` and `passenger_recommendations`. The script says "many topics", and 7 may look thin. |
 | ▶ | 1.1b | **On screen:** one passenger itinerary message: “who’s flying and which flight they’re on” | ✅ **Topics → `passenger_itineraries` → Messages**, then filter by key `P-0928-417-081`. The key is who; the value is which flights and seats:<br>`{"inbound_flight_id": "RA417-20260928", "inbound_seat": "19F", "connecting_flight_id": "RA680-20260928", "connecting_seat": "21C"}` |
-| ▶ | 1.1c | **On screen:** one flight status message: “where it’s coming from, where it’s going, and its latest status” | ✅ **Topics → `flight_status` → Messages**, then filter by key `RA417-20260928`. The newest message looks like:<br>`{"origin": "ORD", "destination": "SFO", "scheduled_time": "…17:50", "estimated_time": "…19:45", "status": "DELAYED"}`<br>New messages arrive about once a minute per flight. |
+| ▶ | 1.1c | **On screen:** one flight status message: “where it’s coming from, where it’s going, and its latest status” | ✅ **Topics → `flight_status` → Messages**, then filter by key `RA417-20260928`. The newest message looks like:<br>`{"origin": "ORD", "destination": "SFO", "scheduled_departure": "…13:55", "scheduled_arrival": "…17:50", "estimated_departure": "…13:55", "estimated_arrival": "…19:45", "status": "DELAYED"}`<br>New messages arrive about once a minute per flight. |
 | 0.5 min | 1.2 | Enable LT on Passenger Enable LT on Flight status | With just a few clicks in the UI, we can enable **Lightning Tables** on both of these topics.  Now that same real-time data is available for low-latency querying.  **Transition**: So instead of just viewing the data, we can start querying it instantly and  build an **always-on** dashboard that shows us the current state of the business, in real-time. |
 | ▶ | 1.2a | **On screen:** enable Lightning Tables on `passenger_itineraries` and `flight_status` | ✅ **Topics → the topic → Lightning Tables**. `uv run deploy --with-labs` has already turned it on for all 7 topics, so show the setting as on and narrate the click. |
 | ▶ | 1.2b | **On screen (optional):** “start querying it instantly” | ✅ One Lightning query in the console:<br>``SELECT * FROM `flight_status` WHERE "key" = 'RA417-20260928' LIMIT 1`` |
 | 1.5 mins | 1.3 | Show dashboard Drill into one flight \[OPTIONAL\]Show passenger app (Figma \- design team) Show flight with 150 affected passengers | On the left, you can see the **latest status of every flight**. On the right, we’re highlighting the flights with the **biggest delays** and, more importantly, how many passengers are affected and may miss their connections. And we can drill down into any flight to see **exactly which passengers are impacted and where they’re going.** And all of this is **updated in real time**, with low-latency queries serving our operations teams. Because we have Lightning Tables enabled, we can expose the same real-time view to our passengers. And here’s where it gets really interesting. We can see that one delayed flight has **150 passengers impacted**, many of whom may miss their connecting flights. Now the question becomes: **how do we recover those passengers?** Which flights can we rebook them onto? How do we handle their bags? And who needs a hotel? That’s where **Streamhouse for AI** comes in. **Transition**: More on this a little bit later. For now, let’s jump back to the slides. |
-| ▶ | 1.3a | **On screen:** dashboard, left side: “latest status of every flight” | ✅ App at http://127.0.0.1:8000, **Flights** table (Flight · Route · Scheduled · Status · Delay · At risk). It shows one service day, 180 flights, and opens on the flights around now. Status and delay come straight from `flight_status`, so they change within seconds; **At risk** comes from Flink's `flight_impact`. Both use the same window:<br>``SELECT * FROM `flight_status` WHERE scheduled_time >= TIMESTAMP '2026-09-27 23:00:00' AND scheduled_time < TIMESTAMP '2026-09-28 23:00:00' ORDER BY scheduled_time ASC LIMIT 200``<br>``SELECT * FROM `flight_impact` WHERE scheduled_time >= TIMESTAMP '2026-09-27 23:00:00' AND scheduled_time < TIMESTAMP '2026-09-28 23:00:00' ORDER BY scheduled_time ASC LIMIT 200`` |
+| ▶ | 1.3a | **On screen:** dashboard, left side: “latest status of every flight” | ✅ App at http://127.0.0.1:8000, **Flights** table (Flight · Route · Departs · Arrives · Status · Delay · At risk). It shows one service day, 180 flights, and opens on the flights around now. Status and delay come straight from `flight_status`, so they change within seconds; **At risk** comes from Flink's `flight_impact`. Both use the same window:<br>``SELECT * FROM `flight_status` WHERE destination = 'SFO' AND scheduled_arrival >= TIMESTAMP '2026-09-27 23:00:00' AND scheduled_arrival < TIMESTAMP '2026-09-28 23:00:00' ORDER BY scheduled_arrival ASC LIMIT 200``, then the same for departures (`origin = 'SFO'` on `scheduled_departure`)<br>``SELECT * FROM `flight_impact` WHERE destination = 'SFO' AND scheduled_arrival >= TIMESTAMP '2026-09-27 23:00:00' AND scheduled_arrival < TIMESTAMP '2026-09-28 23:00:00' ORDER BY scheduled_arrival ASC LIMIT 200``, then the same for departures (`origin = 'SFO'` on `scheduled_departure`) |
 | ▶ | 1.3b | **On screen:** dashboard, right side: “biggest delays … how many passengers are affected” | ✅ **Biggest delays** panel: the same 1.3a rows, sorted in the app by **At risk** (`affected_passengers`), then `delay_minutes`, top 10, each with its **At risk** count (`affected_passengers`). The app sorts because Lightning has no aggregation; Flink already computed each count. |
 | ▶ | 1.3c | **On screen:** counts bar | ✅ **Affected** is the sum of `affected_passengers` over the 1.3a rows. **Booked** counts booked offers, paged by key:<br>``SELECT * FROM `passenger_recommendations` WHERE status = 'BOOKED' AND recommended_at >= TIMESTAMP '2026-09-27 23:00:00' ORDER BY "key" ASC LIMIT 200``<br>(then the same query with ``AND "key" > '<last key>'`` for each next page). |
 | ▶ | 1.3d | **On screen:** “drill down into any flight … which passengers are impacted and where they’re going” | ✅ Click a flight. A seat map of the plane (nose on the left, First in rows 1–5) colors every seat: red at risk, green not at risk, grey open. Hover a seat for the passenger and their itinerary, or click it to open the passenger. Below it, the table shows Passenger · Seat · Going to (`final_destination`) · Connection · Minutes · Risk. A departure shows the passengers connecting onto it, in their connecting seats (`WHERE connecting_flight_id = …`), with **Arriving on** in place of **Connection**. Header:<br>``SELECT * FROM `flight_status` WHERE "key" = 'RA417-20260928' LIMIT 1`` and the same query on `flight_impact` for its at-risk count<br>Passengers, HIGH first. A flight carries at most 182, so one page returns all of RA417's 170:<br>``SELECT * FROM `passenger_state` WHERE inbound_flight_id = 'RA417-20260928' ORDER BY "key" ASC LIMIT 200`` |
@@ -72,10 +72,10 @@ Start the stream at least 40 minutes before scene 2.4.
 | **Demo 3 Streamhouse for Analytics Reporting (2 mins)** |  |  |  |
 | 1 min | 3-1 | Show Enable tableflow with Delta for the passenger\_recommedations data product Start in topic view Enable Tableflow Show pending \>\> syncing status End in topic view w/ tableflow enable  | Tableflow makes it push-button simple to turn your Kafka topics into Iceberg or Delta Lake tables. Here, we want to make our rebooking data available in Amazon Athena. And watch how easy this is — it’s just two steps. First, I choose the format — Iceberg. Then, I select our S3 bucket for storage. And we’re done. Our Kafka topic and its schema are now automatically synced to an Iceberg table in the AWS Glue Data Catalog. No custom code. No pipelines to build or manage. With Tableflow, your streams simply become tables, ready to query with the BI and SQL tools you already use. |
 | ▶ | 3-1a | **On screen:** enable Tableflow on `passenger_recommendations` | ⚠️ **Topics → `passenger_recommendations` → Enable Tableflow**. The Visual column says **Delta**, but the narration and the Glue/Athena path use **Iceberg**, so pick Iceberg. |
-| ▶ | 3-1b | **On screen:** “select our S3 bucket for storage” | ✅ Choose your own storage and the provider integration Terraform created, then the bucket from `terraform -chdir=terraform/airline-demo output analytics_bucket`. The Glue catalog integration already exists, so the table shows up in Glue on its own. |
+| ▶ | 3-1b | **On screen:** “select our S3 bucket for storage” | ✅ Choose your own storage and the provider integration Terraform created, then the bucket from `terraform -chdir=terraform/tableflow output analytics_bucket`. The Glue catalog integration already exists, so the table shows up in Glue on its own. |
 | ▶ | 3-1c | **On screen:** Pending → Syncing, ending in the topic view with Tableflow enabled | ⚠️ Topic view, **Tableflow** column. Time the first sync in rehearsal, because 3-2 needs this table in Athena about a minute later. `flight_impact` is already synced by Terraform, off screen; question 1 needs it. |
 | 1 min | 3-2 | In Quick ask a question  Show SQL In Quick ask question  Show SQL  | Now in AWS, we’re using Amazon Quick to interact with this data using natural language. So I can simply ask, *“**How many flights were delayed last month? How many passengers were impacted, and how much did it cost us?”*** Quick understands the question and uses Amazon Athena to get the answer. We can also measure how well our agent is performing. For example, *“**What’s the average time it takes to recover an impacted passenger?**”* And this is just the beginning. Because this data is continuously flowing into AWS in near real time, you can use it to power many more analytics and AI use cases. **Transition:** And with that, let’s go back to the slides. |
-| ▶ | 3-2a | **On screen:** ask Quick: “How many flights were delayed last month? How many passengers were impacted, and how much did it cost us?” | ⚠️ Amazon Quick, with Athena as the data source and the Glue database from `terraform -chdir=terraform/airline-demo output glue_database`. The data covers a trailing 30 days, so say "**in the last 30 days**" rather than "last month". Quick writes its own SQL. The reference query and expected answer are in [Appendix E](#e-athena-questions-3-2). Quick isn't set up yet. |
+| ▶ | 3-2a | **On screen:** ask Quick: “How many flights were delayed last month? How many passengers were impacted, and how much did it cost us?” | ⚠️ Amazon Quick, with Athena as the data source and the Glue database from `terraform -chdir=terraform/tableflow output glue_database`. The data covers a trailing 30 days, so say "**in the last 30 days**" rather than "last month". Quick writes its own SQL. The reference query and expected answer are in [Appendix E](#e-athena-questions-3-2). The [always-on demo](./always-on.md) sets Quick up: use its **River Air flight history** Topic. The scripted demo doesn't set Quick up yet. |
 | ▶ | 3-2b | **On screen:** show the SQL | ✅ Quick's generated SQL, which should match Appendix E, question 1. |
 | ▶ | 3-2c | **On screen:** ask Quick: “What’s the average time it takes to recover an impacted passenger?” | ⚠️ The same Quick setup. Reference query: [Appendix E](#e-athena-questions-3-2), question 2. It measures from impacted to offer ready, so it leaves out the passenger's decision time. The answer is about 23 seconds. |
 | ▶ | 3-2d | **On screen:** show the SQL | ✅ Quick's generated SQL, which should match Appendix E, question 2. |
@@ -84,10 +84,10 @@ Start the stream at least 40 minutes before scene 2.4.
 
 **Must fix**
 
-1. **Scene 2.3d: confirm on a fresh deploy that Lightning and RTCE see every flight.** On 2026-09-28, the agent ran live and wrote 2 offers for each of RA417's 200 HIGH passengers. It only worked after tomorrow's flights were republished, though: `flight_status` in Lightning showed only the 34 flights updated since enablement, while `hotel_inventory` and `passenger_itineraries` from the same deploy showed every row. After the next `uv run deploy --with-labs`, check that ``SELECT * FROM `flight_status` WHERE origin = 'SFO' AND scheduled_time >= TIMESTAMP '<tomorrow> 00:00:00' LIMIT 200`` returns rows. If it doesn't, the agent answers NONE and writes no offers.
+1. **Scene 2.3d: confirm on a fresh deploy that Lightning and RTCE see every flight.** On 2026-09-28, the agent ran live and wrote 2 offers for each of RA417's 200 HIGH passengers. It only worked after tomorrow's flights were republished, though: `flight_status` in Lightning showed only the 34 flights updated since enablement, while `hotel_inventory` and `passenger_itineraries` from the same deploy showed every row. After the next `uv run deploy --with-labs`, check that ``SELECT * FROM `flight_status` WHERE origin = 'SFO' AND scheduled_departure >= TIMESTAMP '<tomorrow> 00:00:00' LIMIT 200`` returns rows. If it doesn't, the agent answers NONE and writes no offers.
 2. **Scene 2.3: run deploy's agent on the hosted model.** The workshop pasted SQL 32, 29, 30, and 31 by hand on Confluent Cloud on 2026-10-28, and the hosted model's agent wrote RA417's offers. Deploy's Terraform copy hasn't run since the agent left Bedrock, and the agent hasn't yet run for RA183 and RA185: after the next `uv run deploy --with-labs`, check that 2.3d's query returns 2 offers for each of RA417's 150 passengers, RA183's 40, and RA185's 30.
 3. **Scenes 2.2a–b: the Webhooks connector and its Assistant prompt aren't built.** The generator publishes the hotel rows the connector would, straight to `hotel_inventory`.
-4. **Scenes 3-2a–d: Amazon Quick isn't set up** over the Glue database.
+4. **Scenes 3-2a–d: Amazon Quick isn't set up** over the Glue database in the scripted demo (the [always-on demo](./always-on.md) sets it up).
 
 **Decide or reword**
 
@@ -98,7 +98,7 @@ Start the stream at least 40 minutes before scene 2.4.
 
 **Known limits**
 
-1. The agent handles only RA417, RA183, and RA185, and only passengers who turn HIGH while their inbound flight is still due to land (`$rowtime` before `inbound_estimated_time`). That keeps out history days and earlier streams at any time of day, but `impacted_passengers` built after one of the three flights has landed skips its passengers; RA183 lands at about +136, RA185 at +144, and RA417 at +165.
+1. The agent handles only RA417, RA183, and RA185, and only passengers who turn HIGH while their inbound flight is still due to land (`$rowtime` before `inbound_estimated_arrival`). That keeps out history days and earlier streams at any time of day, but `impacted_passengers` built after one of the three flights has landed skips its passengers; RA183 lands at about +136, RA185 at +144, and RA417 at +165.
 2. `impacted_at` is when a passenger's first HIGH row landed in `passenger_state_changes`. If that table or `impacted_passengers` is rebuilt, the rebuild time replaces it, and recovery times for the live day come out long. History days aren't affected.
 3. The agent runs about 40 s per flight and destination, one after another. That is fine for its three flights, whose 11, 6, and 3 destinations turn HIGH at different times. Every flight would add about 50 runs at the stream start, for passengers already HIGH from earlier in the day, and RA417's offers would wait behind them.
 4. Flink commits its results to Kafka about once a minute (exactly-once), and Lightning only sees committed data. So the **At risk** counts and seat-map colors trail the stream by up to a minute (about 20–25 s in rehearsal), while flight status, delays, hotel rooms, and the generator's bookings show within seconds. Restarting the stream republishes every itinerary, so Flink needs a few minutes to recompute every passenger before the seat maps settle.
@@ -123,10 +123,10 @@ SELECT
   p.connecting_flight_id,
   p.connecting_seat,
   COALESCE(onward.destination, inbound.destination) AS final_destination,
-  TIMESTAMPDIFF(MINUTE, inbound.estimated_time, onward.estimated_time) AS connection_minutes,
+  TIMESTAMPDIFF(MINUTE, inbound.estimated_arrival, onward.estimated_departure) AS connection_minutes,
   CASE
     WHEN p.connecting_flight_id IS NULL THEN 'NO_CONNECTION'
-    WHEN TIMESTAMPDIFF(MINUTE, inbound.estimated_time, onward.estimated_time) < 45 THEN 'HIGH'
+    WHEN TIMESTAMPDIFF(MINUTE, inbound.estimated_arrival, onward.estimated_departure) < 45 THEN 'HIGH'
     ELSE 'OK'
   END AS risk
 FROM passenger_itineraries p
@@ -175,10 +175,10 @@ will miss their connections to the final destination, and they all get the same 
 Use the queryData tool (arguments: topic_name, query, max_result_rows) to run the three queries in the task.
 The queries already use the right column names, so run them as given without calling getMetadata first.
 
-1. inbound_query returns the inbound flight. Its estimated_time is when the passenger lands at SFO.
+1. inbound_query returns the inbound flight. Its estimated_arrival is when the passenger lands at SFO.
 2. departures_query returns flights from SFO to the final destination. Offer the first two flights whose
-   estimated_time is at least 45 minutes after the inbound estimated_time. Skip CANCELLED flights.
-3. An offered flight that leaves 6 hours or more after the inbound estimated_time needs a hotel.
+   estimated_departure is at least 45 minutes after the inbound estimated_arrival. Skip CANCELLED flights.
+3. An offered flight whose estimated_departure is 6 hours or more after the inbound estimated_arrival needs a hotel.
    Run hotel_query. It returns the hotel updates, newest first, so each hotel appears several times:
    use only the row with the latest as_of for each hotel. List the hotels whose latest available_rooms
    is above 0 in this order: Grand Hyatt at SFO, SFO Airport Marriott Waterfront, Hilton SFO Airport
@@ -206,7 +206,7 @@ CREATE OR ALTER MATERIALIZED TABLE passenger_state_changes (
   connecting_flight_id STRING,
   final_destination STRING,
   risk STRING,
-  inbound_estimated_time TIMESTAMP(3)
+  inbound_estimated_arrival TIMESTAMP(3)
 ) DISTRIBUTED BY (`key`) INTO 4 BUCKETS
 WITH (
   'changelog.mode' = 'append',
@@ -220,7 +220,7 @@ AS SELECT
   connecting_flight_id,
   final_destination,
   risk,
-  inbound_estimated_time
+  inbound_estimated_arrival
 FROM TO_CHANGELOG(
   input      => TABLE passenger_state PARTITION BY `key`,
   op_mapping => MAP['INSERT, UPDATE_AFTER', 'UPSERT']
@@ -253,7 +253,7 @@ AS WITH first_high AS (
   FROM passenger_state_changes
   WHERE risk = 'HIGH'
     AND SPLIT_INDEX(inbound_flight_id, '-', 0) IN ('RA417', 'RA183', 'RA185')
-    AND CAST($rowtime AS TIMESTAMP(3)) < inbound_estimated_time
+    AND CAST($rowtime AS TIMESTAMP(3)) < inbound_estimated_arrival
   GROUP BY `key`, inbound_flight_id, connecting_flight_id, final_destination
 )
 SELECT `key`, inbound_flight_id, connecting_flight_id, final_destination, impacted_at
@@ -293,9 +293,9 @@ plans AS (
       '; final_destination=', g.final_destination,
       '; inbound_query=SELECT * FROM `flight_status` WHERE "key" = ''', g.inbound_flight_id, ''' LIMIT 1',
       '; departures_query=SELECT * FROM `flight_status` WHERE origin = ''SFO'' AND destination = ''',
-      g.final_destination, ''' AND scheduled_time >= TIMESTAMP ''',
+      g.final_destination, ''' AND scheduled_departure >= TIMESTAMP ''',
       DATE_FORMAT(g.impacted_at - INTERVAL '1' HOUR, 'yyyy-MM-dd HH:mm:ss'),
-      ''' ORDER BY scheduled_time ASC LIMIT 12',
+      ''' ORDER BY scheduled_departure ASC LIMIT 12',
       '; hotel_query=SELECT * FROM `hotel_inventory` ORDER BY as_of DESC LIMIT 30'
     ),
     g.group_key
@@ -336,9 +336,9 @@ Run these against the Glue database Tableflow syncs into. They are the reference
 ```sql
 SELECT
   (SELECT count_if(delay_minutes >= 15) FROM flight_impact
-    WHERE scheduled_time >= current_date - INTERVAL '30' DAY)                  AS delayed_flights,
+    WHERE scheduled_departure >= current_date - INTERVAL '30' DAY)             AS delayed_flights,
   (SELECT sum(affected_passengers) FROM flight_impact
-    WHERE scheduled_time >= current_date - INTERVAL '30' DAY)                  AS impacted_passengers,
+    WHERE scheduled_departure >= current_date - INTERVAL '30' DAY)             AS impacted_passengers,
   (SELECT sum(hotel_cost) FROM passenger_recommendations
     WHERE status = 'BOOKED' AND recommended_at >= current_date - INTERVAL '30' DAY) AS hotel_cost;
 ```

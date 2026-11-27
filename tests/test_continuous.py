@@ -15,6 +15,11 @@ def around_the_clock_day():
     return g.build_day(g.SEED, DAY, MIDNIGHT, live=True, schedule=g.AROUND_THE_CLOCK)
 
 
+def _sfo(value: dict, kind: str):
+    """A flight_status row's scheduled or estimated time at SFO: its arrival there, or its departure from it."""
+    return value[f"{kind}_arrival"] if value["destination"] == g.HUB else value[f"{kind}_departure"]
+
+
 def test_around_the_clock_has_180_flights_spread_over_24_hours():
     day = around_the_clock_day()
     assert len(day.arrivals) == 90 and len(day.departures) == 90
@@ -41,7 +46,7 @@ def test_continuous_days_have_eight_ra417s_from_chicago_every_three_hours():
     assert [f.number for f in heroes] == [g.HERO_NUMBER] * 8
     assert all(f.origin == g.HERO_ORIGIN and f.destination == g.HUB for f in heroes)
     assert [f.scheduled for f in heroes] == [MIDNIGHT + timedelta(minutes=m) for m in g.CONTINUOUS_HERO_MINUTES]
-    assert heroes[0].key == "RA417-20261112-0040"
+    assert heroes[0].key == "RA417-20261111-2045"
     assert len({f.key for f in day.flights}) == 180
     assert day.agent_flights == []
 
@@ -52,15 +57,15 @@ def test_scripted_schedule_is_unchanged():
     assert day.heroes == [day.hero]
 
 
-def test_continuous_delay_and_risk_rates_match_today():
+def test_continuous_random_delays_stay_small():
     days = [g.continuous_day(g.SEED, DAY + timedelta(days=n)) for n in range(7)]
     for day in days:
         heroes = set(map(id, day.heroes))
         others = [f for f in day.arrivals if id(f) not in heroes]
         delayed = sum(1 for f in others if f.delay_at(datetime.max) >= g.DELAYED_AT)
         high = sum(1 for p in day.passengers if p.impacted_at and id(p.inbound) not in heroes)
-        assert 15 <= delayed <= 45  # the random delays, besides the eight RA417s
-        assert 300 <= high <= 900
+        assert 0 <= delayed <= 8  # the random delays, besides the eight RA417s
+        assert 0 <= high <= 120
 
 
 def test_hotel_offers_stay_about_as_common_as_today():
@@ -74,20 +79,35 @@ def test_hotel_offers_stay_about_as_common_as_today():
     assert baseline / 2 <= share <= baseline * 2
 
 
-def test_every_ra417_strands_150_of_170_passengers():
+def test_every_ra417_strands_60_of_80_passengers():
     day = g.continuous_day(g.SEED, DAY)
     for hero in day.heroes:
         riders = [p for p in day.passengers if p.inbound is hero]
-        assert len(riders) == 170
-        assert sum(1 for p in riders if p.impacted_at) == 150
+        assert len(riders) == g.CONTINUOUS_HERO_CONNECTING + g.HERO_LOCAL == 80
+        assert sum(1 for p in riders if p.impacted_at) == 60
         assert hero.delay_at(datetime.max) == g.HERO_DELAY
+
+
+def test_a_late_taking_off_ra417_never_shows_a_late_departure_with_an_on_time_arrival():
+    # An always-on RA417 takes off late (flies_to), but its delay is announced bit by bit. Until takeoff the
+    # estimated departure follows the announced arrival, so the board's two ends agree; from takeoff it's the real one.
+    hero = next(f for f in g.continuous_day(g.SEED, DAY).heroes if f.flies_to)
+    takeoff = hero.flies_to - g.flight_profile.flight_duration(hero.origin, hero.destination)
+    at = hero.scheduled - timedelta(hours=6)
+    while at < hero.flies_to:
+        scheduled_departure, scheduled_arrival, estimated_departure, estimated_arrival = hero.times_at(at)
+        if at < takeoff:
+            assert estimated_departure - scheduled_departure == estimated_arrival - scheduled_arrival, at
+        else:
+            assert estimated_departure == takeoff.replace(second=0, microsecond=0), at
+        at += timedelta(minutes=1)
 
 
 def test_ra417_passenger_keys_name_the_flight_time_and_are_unique():
     day = g.continuous_day(g.SEED, DAY)
     first = day.heroes[0]
     riders = [p for p in day.passengers if p.inbound is first]
-    assert riders and all(p.key.startswith("P-1112-417-0040-") for p in riders)
+    assert riders and all(p.key.startswith("P-1111-417-2045-") for p in riders)
     keys = [p.key for p in day.passengers]
     assert len(keys) == len(set(keys))
 
@@ -168,7 +188,7 @@ def test_restart_republishes_the_same_state():
         # aren't checked: an early-arrival notice plus a minute's revision can move them by a few minutes.)
         if row["status"] == "DELAYED":
             assert after[key]["status"] != "ON_TIME"
-            assert after[key]["estimated_time"] >= row["estimated_time"] - timedelta(minutes=3)
+            assert after[key]["estimated_arrival"] >= row["estimated_arrival"] - timedelta(minutes=3)
 
 
 def test_state_has_current_hotels_and_every_live_days_itineraries():
@@ -197,7 +217,7 @@ def test_events_cross_midnight_without_gaps():
     assert all(b - a == g.UPDATE_EVERY for times in ticks.values() for a, b in pairwise(times))
     assert any("-20261114" in k for _, t, k, _ in events if t == g.FLIGHTS)  # D+1 published at midnight
     assert any(t == g.ITINERARIES and k.startswith("P-1114-") for _, t, k, _ in events)
-    assert len({(at, topic, key) for at, topic, key, _ in events}) == len(events)
+    assert len({(at, t, k) for at, t, k, _ in events}) == len(events)  # telemetry shares a flight's key
     telemetry = [(at, row) for at, topic, _, row in events if topic == g.TELEMETRY and row is not None]
     assert telemetry and all(row["as_of"] == at for at, row in telemetry)
     assert all(row["as_of"] == at for at, topic, _, row in events if topic == g.HOTELS)
@@ -214,9 +234,12 @@ def test_hotels_refill_at_midnight_once():
 
 def test_midnight_tombstones_the_day_past_retention():
     events = g.continuous_events(g.SEED, datetime(2026, 11, 12, 23, 59), datetime(2026, 11, 13, 0, 1))
-    old = (date(2026, 11, 13) - timedelta(days=g.RETENTION_DAYS)).strftime("%Y%m%d")
+    old = date(2026, 11, 13) - timedelta(days=g.RETENTION_DAYS)
     tombstones = {(t, k) for _, t, k, v in events if v is None}
-    assert sum(1 for t, k in tombstones if t == g.FLIGHTS and k.split("-")[1] == old) == 180
+    # An RA417's key names its departure, so the old day's flights are found through the day, not the key's date.
+    expected = {f.key for f in g.continuous_day(g.SEED, old).flights}
+    assert len(expected) == 180
+    assert {k for t, k in tombstones if t == g.FLIGHTS} >= expected
     assert {k for t, k in tombstones if t == g.TELEMETRY} == {k for t, k in tombstones if t == g.FLIGHTS}
     assert any(t == g.ITINERARIES for t, _ in tombstones)
     assert any(t == g.OFFERS and k.endswith("-O1") for t, k in tombstones)
@@ -234,9 +257,10 @@ def test_history_is_finished_and_has_completed_offers():
     assert offers and {v["status"] for v in offers} == {"BOOKED", "CLOSED"}
     flights = [(k, v) for t, k, v in rows if t == g.FLIGHTS]
     assert len(flights) == 29 * 180
-    assert all(v["estimated_time"] < NOW and v["status"] in ("LANDED", "DEPARTED") for _, v in flights)
+    assert all(_sfo(v, "estimated") < NOW and v["status"] in ("LANDED", "DEPARTED") for _, v in flights)
     assert all(v["connecting_flight_id"] for t, _, v in rows if t == g.ITINERARIES)
-    dates = {k.split("-")[1] for k, _ in flights}
+    # The day a flight belongs to is its scheduled time's, not its key's: an RA417 key names its departure.
+    dates = {_sfo(v, "scheduled").strftime("%Y%m%d") for _, v in flights}
     assert min(dates) == "20261013" and max(dates) == "20261110"
 
 
@@ -331,12 +355,12 @@ def test_flush_gives_up_after_its_total_limit(monkeypatch):
 
 def test_start_tombstones_the_days_a_missed_midnight_would_have():
     tombstones = g.startup_tombstones(g.SEED, NOW)
-    days = {(DAY - timedelta(days=g.RETENTION_DAYS + k)).strftime("%Y%m%d"): 0 for k in range(g.MISSED_MIDNIGHTS)}
-    for topic, key, value in tombstones:
-        assert value is None
-        if topic == g.FLIGHTS:
-            days[key.split("-")[1]] += 1
-    assert days == dict.fromkeys(days, 180)
+    days = [DAY - timedelta(days=g.RETENTION_DAYS + k) for k in range(g.MISSED_MIDNIGHTS)]
+    # An RA417's key names its departure, so a day's flights are found through the day, not the key's date.
+    expected = {f.key for d in days for f in g.continuous_day(g.SEED, d).flights}
+    assert len(expected) == 180 * len(days)
+    assert all(value is None for _, _, value in tombstones)
+    assert {key for topic, key, _ in tombstones if topic == g.FLIGHTS} == expected
     assert {t for t, _, _ in tombstones} == {g.FLIGHTS, g.TELEMETRY, g.ITINERARIES, g.OFFERS}
 
 
@@ -360,8 +384,8 @@ def test_run_continuous_publishes_the_state_then_the_missed_tombstones(monkeypat
     state = g.continuous_state(g.SEED, NOW)
     assert published[: len(state)] == state
     assert published[len(state) + 1 :] == [*g.startup_tombstones(g.SEED, NOW), "flush"]
-    tomorrow = (DAY + timedelta(days=1)).strftime("%Y%m%d")
-    assert sum(1 for t, k, _ in state if t == g.FLIGHTS and k.split("-")[1] == tomorrow) == 180
+    tomorrow = DAY + timedelta(days=1)
+    assert sum(1 for t, _, v in state if t == g.FLIGHTS and _sfo(v, "scheduled").date() == tomorrow) == 180
 
 
 def test_grand_hyatt_drains_gradually_through_the_day():
@@ -369,3 +393,118 @@ def test_grand_hyatt_drains_gradually_through_the_day():
     assert g.rooms_at(g.SEED, MIDNIGHT + timedelta(hours=15))[g.GRAND_HYATT] <= 10
     hourly = [g.rooms_at(g.SEED, MIDNIGHT + timedelta(hours=h))[g.GRAND_HYATT] for h in range(1, 19)]
     assert all(b <= a + g.HYATT_BAND for a, b in pairwise(hourly)) and len(set(hourly)) > 10
+
+
+def test_an_around_the_clock_day_stays_small_beyond_its_eight_ra417s():
+    # Eight RA417s a day with 60 connecting passengers each, among the day's biggest impacts;
+    # otherwise one severe delay and few moderate ones,
+    # so a month of history reads like an airline's, not a disaster's.
+    days = [g.continuous_day(g.SEED, DAY + timedelta(days=n)) for n in range(7)]
+    for day in days:
+        assert len(day.heroes) == 8
+        for hero in day.heroes:
+            assert sum(1 for p in day.passengers if p.inbound is hero and p.connecting) == 60
+    delayed = [
+        sum(
+            1 for f in day.flights if f.reveals and f not in day.heroes and max(d for _, d in f.reveals) >= g.DELAYED_AT
+        )
+        for day in days
+    ]
+    assert sum(delayed) / len(days) <= 6  # 1 severe + 2% moderate of ~170 flights, on average
+    assert g.CONTINUOUS_SEVERE_PER_DAY == 1 and g.CONTINUOUS_MODERATE_SHARE == 0.02
+
+
+def test_seeded_history_flies_ra417_like_any_other_flight():
+    # The eight delayed RA417s are for whoever opens the board today; the seeded month of history doesn't need them.
+    for n in range(7):
+        day = g.continuous_day(g.SEED, DAY + timedelta(days=n), seeded=True)
+        assert len(day.heroes) == 8
+        assert all(h.delay_at(datetime.max) < g.HERO_DELAY for h in day.heroes)
+        assert sum(1 for h in day.heroes if h.delay_at(datetime.max) >= g.DELAYED_AT) <= 1
+        assert sum(1 for p in day.passengers if p.impacted_at and p.inbound in day.heroes) < 40
+
+
+def test_continuous_history_publishes_the_seeded_days():
+    rows = g.continuous_history(g.SEED, NOW)
+    ra417 = [value for topic, key, value in rows if topic == g.FLIGHTS and key.startswith("RA417-")]
+    assert len(ra417) == 8 * (g.HISTORY_DAYS - 1)
+    late = [v for v in ra417 if v["estimated_arrival"] - v["scheduled_arrival"] >= timedelta(minutes=g.DELAYED_AT)]
+    assert len(late) <= g.HISTORY_DAYS
+
+
+def test_expired_keys_cover_a_day_streamed_live_and_seeded():
+    keys = set(g._expired_keys(g.SEED, DAY))
+    for day in (g.continuous_day(g.SEED, DAY), g.continuous_day(g.SEED, DAY, seeded=True)):
+        assert {(g.ITINERARIES, p.key) for p in day.passengers} <= keys
+        assert {(g.OFFERS, f"{p.key}-O1") for p in day.passengers if p.impacted_at} <= keys
+
+
+def test_expired_keys_cover_passengers_older_settings_wrote():
+    # A reset must also clear offers from earlier settings (150 stranded per RA417, more delays elsewhere),
+    # whose passengers aren't impacted, or don't exist, under today's settings.
+    keys = set(g._expired_keys(g.SEED, DAY))
+    day = g.continuous_day(g.SEED, DAY)
+    hero = day.heroes[0]
+    assert (g.OFFERS, f"P-{g.hero_departure(hero.scheduled):%m%d-417-%H%M}-150-O1") in keys
+    assert (g.ITINERARIES, f"P-{g.hero_departure(hero.scheduled):%m%d-417-%H%M}-{len(g.SEATS):03d}") in keys
+    quiet = next(p for p in day.passengers if not p.impacted_at)
+    assert {(g.OFFERS, f"{quiet.key}-O1"), (g.OFFERS, f"{quiet.key}-O2")} <= keys
+
+
+def test_continuous_stream_sends_telemetry_for_airborne_flights():
+    # The live flight map places each plane from flight_telemetry; without it every plane waits for telemetry.
+    events = g.continuous_events(g.SEED, NOW, NOW + timedelta(minutes=10))
+    telemetry = [e for e in events if e[1] == g.TELEMETRY]
+    assert telemetry, "no flight_telemetry events"
+    flights = {key for _, _, key, _ in telemetry}
+    assert len(flights) >= 3
+    first = sorted(t for t, _, key, _ in telemetry if key == next(iter(flights)))[:2]
+    assert first[1] - first[0] == g.TELEMETRY_EVERY
+
+
+def test_continuous_state_includes_current_positions():
+    rows = g.continuous_state(g.SEED, NOW)
+    telemetry = [value for topic, key, value in rows if topic == g.TELEMETRY]
+    assert telemetry and all(value["stage"] != "LANDED" for value in telemetry)
+
+
+def test_each_live_ra417_strands_its_passengers_steadily_over_hours():
+    # So whoever has the board open sees RA417's delay and its at-risk count keep rising.
+    day = g.continuous_day(g.SEED, DAY)
+    for hero in day.heroes:
+        flips = sorted(p.impacted_at for p in day.passengers if p.inbound is hero and p.impacted_at)
+        assert len(flips) == 60
+        # Passengers on the same connecting flight turn at risk together, so the count rises in steps.
+        assert flips[-1] - flips[0] >= timedelta(minutes=60)
+        assert len(set(flips)) >= 5
+        assert max(b - a for a, b in pairwise(flips)) <= timedelta(minutes=50)
+        reveals = sorted(at for at, _ in hero.reveals)
+        assert reveals[-1] - reveals[0] >= timedelta(minutes=150)  # the delay climbs for 2.5 hours
+
+
+def _readings(flight, start, end):
+    return [row for _, row in g._telemetry_events(flight, start, end)]
+
+
+def test_a_live_ra417_takes_off_late_and_flies_straight_in():
+    # No hold: miles to go keep counting down and the heading only sways, so the telemetry looks live.
+    day = g.continuous_day(g.SEED, DAY)
+    hero = day.heroes[3]
+    rows = _readings(hero, hero.scheduled - timedelta(hours=5), hero.scheduled + timedelta(hours=3))
+    airborne = [r for r in rows if r["stage"] != "LANDED"]
+    assert airborne and "HOLDING" not in {r["stage"] for r in airborne}
+    cruise = [r for r in airborne if r["stage"] == "CRUISING"]
+    assert all(b["distance_to_go_nm"] < a["distance_to_go_nm"] for a, b in pairwise(cruise[::12]))  # every minute
+    headings = [r["heading_deg"] for r in cruise[:60]]
+    assert len({round(h, 1) for h in headings}) > 10  # it moves...
+    assert max(headings) - min(headings) <= 4  # ...but only slightly
+    first = min(at for at, _ in g._telemetry_events(hero, hero.scheduled - timedelta(hours=6), hero.scheduled))
+    landed = hero.scheduled + timedelta(minutes=g.HERO_DELAY)
+    assert first >= landed - g.flight_profile.flight_duration(hero.origin, hero.destination) - timedelta(minutes=1)
+
+
+def test_the_scripted_ra417_still_holds():
+    plan = g.build_plan(datetime(2026, 11, 12, 17, 0), history=False)
+    hero = plan.live.hero
+    stages = {r["stage"] for r in _readings(hero, plan.start, plan.start + timedelta(minutes=90))}
+    assert "HOLDING" in stages

@@ -12,8 +12,10 @@ Flight Disruptions runs, in order:
   1. terraform/core        — environment, cluster, Flink pool, service accounts,
                              API keys, RTCE reader.
   2. terraform/airline-demo — the River Air Flink pipeline (source tables,
-                             passenger_state, flight_impact) and, with AWS
-                             creds, Tableflow to Iceberg in S3 with AWS Glue.
+                             passenger_state, flight_impact).
+     terraform/tableflow    — with AWS creds outside the workshop, Tableflow to
+                             Iceberg in S3 with AWS Glue (the only root with the
+                             AWS provider, so workshops never download it).
   3. The data generator (same data as `uv run airport-datagen`): 30 days of
      history and today's flights, then a 90-minute live stream in the background.
   4. Lightning Tables and RTCE on the demo topics, plus the RTCE MCP server for
@@ -51,6 +53,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -60,7 +63,7 @@ from datetime import timedelta
 
 from dotenv import dotenv_values, set_key
 
-from scripts import processes, setup_rtce
+from scripts import existing_env, processes, setup_rtce
 from scripts.credentials import (
     generate_confluent_api_keys,
     load_or_create_credentials_file,
@@ -75,7 +78,7 @@ DEFAULT_REGION = "us-east-1"  # RTCE-supported; Confluent-hosted Claude availabl
 DEFAULT_PREFIX = "streamhouse"
 # Lab id -> (display name, Terraform root). Both build on terraform/core.
 LABS = {
-    "flight-disruptions": ("Flight Disruptions", "airline-demo"),
+    "flight-disruptions": ("Agentic Airline Operations", "airline-demo"),
     "agentic-pit-decisions": ("Agentic Pit Decisions", "agentic-pit-decisions"),
 }
 FLIGHT_DISRUPTIONS, PIT_DECISIONS = LABS
@@ -106,11 +109,16 @@ VIDEO_2_TARGETS = (
 # --always-on: the full demo running around the clock on AWS (terraform/always-on). Saved to credentials.env,
 # so later plain `uv run deploy` runs keep it; `uv run destroy` clears it.
 ALWAYS_ON = "TF_VAR_always_on"
-CONTINUOUS = "TF_VAR_continuous"  # terraform/airline-demo's var.continuous
+CONTINUOUS = "TF_VAR_continuous"  # var.continuous in terraform/airline-demo and terraform/tableflow
 ALWAYS_ON_NAME = "river-air-demo"  # TF_VAR_deployment_name when none is saved
 DEMO_USER_EMAILS = "DEMO_USER_EMAILS"  # credentials.env: the demo users (invited by hand), comma-separated
 DEMO_USER_ROLE = "EnvironmentAdmin"
 ALWAYS_ON_CARD = "tmp/always-on-card.env"
+# Amazon Quick over the Tableflow history (terraform/always-on/quick.tf). Quick users live in the account's identity
+# region, whatever region the demo runs in; deploy shares Quick with the demo users who have one.
+QUICK_IDENTITY_REGION = "us-east-1"
+QUICK_TABLES = ("flight_impact", "passenger_recommendations")
+GLUE_WAIT_SECONDS = 900  # Tableflow's first sync of a topic takes a few minutes
 # Compacted, so a source feed keeps each flight's, passenger's, and hotel's latest row however long it runs.
 COMPACTED_TOPICS = ("flight_status", "passenger_itineraries", "hotel_inventory", "flight_telemetry")
 # terraform/always-on creates the Lambda and ECS roles, so the operator must be able to.
@@ -121,6 +129,10 @@ ALWAYS_ON_IAM_ACTIONS = (
     "iam:CreatePolicy",
     "iam:PassRole",
 )
+# Quick is optional: without these, deploy skips it (QUICK_DENIED) rather than stopping the always-on deploy.
+QUICK_IAM_ACTIONS = ("athena:CreateWorkGroup", "quicksight:CreateDataSource", "quicksight:CreateTopic")
+QUICK_DENIED = "STREAMHOUSE_QUICK_DENIED"
+QUICK_OWNER_ROLES = {"AUTHOR", "ADMIN", "AUTHOR_PRO", "ADMIN_PRO"}  # Quick rejects owner permissions for a Reader
 
 # Module-level buffer for Plan B fallback when set_key() fails (e.g. Windows locks).
 _pending_writes: dict = {}
@@ -203,7 +215,7 @@ def _check_writable(root) -> None:
     creds_file = root / "credentials.env"
     if creds_file.exists() and not os.access(creds_file, os.W_OK):
         problems.append(f"  - {creds_file}: not writable")
-    for folder in (root, root / "terraform" / "core", root / "terraform" / "airline-demo"):
+    for folder in (root, *(root / "terraform" / name for name in ("core", "airline-demo", "tableflow"))):
         if not folder.exists():
             continue
         probe = folder / ".write-check"
@@ -299,7 +311,7 @@ def _always_on_mode(args, creds_file, creds: dict) -> bool:
             "Run `uv run destroy` first, or deploy the always-on demo from another clone."
         )
     if args.lab not in (None, FLIGHT_DISRUPTIONS):
-        sys.exit("--always-on deploys the Flight Disruptions lab; drop --lab or pick flight-disruptions.")
+        sys.exit("--always-on deploys the Agentic Airline Operations lab; drop --lab or pick flight-disruptions.")
     args.with_labs, args.lab = True, FLIGHT_DISRUPTIONS
     return True
 
@@ -335,8 +347,18 @@ def _ask_demo_emails(creds_file, creds: dict) -> None:
         creds[DEMO_USER_EMAILS] = emails
 
 
-def _targets(labs: list[str]) -> list[str]:
-    return ["core", *(LABS[lab][1] for lab in labs)]
+def _targets(labs: list[str], tableflow: bool = False) -> list[str]:
+    """The Terraform roots to apply, in order. terraform/tableflow comes last, and only when Tableflow is on."""
+    roots = ["core", *(LABS[lab][1] for lab in labs)]
+    return [*roots, "tableflow"] if tableflow and FLIGHT_DISRUPTIONS in labs else roots
+
+
+def _tableflow_on(labs: list[str], workshop: bool, creds: dict) -> bool:
+    """True when this deploy builds Demo 3's Tableflow path: Flight Disruptions outside the workshop, with Tableflow
+    AWS creds. Only terraform/tableflow declares the AWS provider, so no workshop deploy ever downloads it."""
+    enabled = creds.get("TF_VAR_enable_analytics") or os.environ.get("TF_VAR_enable_analytics") or "true"
+    has_creds = bool((creds.get("TF_VAR_aws_tableflow_access_key") or "").strip())
+    return FLIGHT_DISRUPTIONS in labs and not workshop and has_creds and enabled.strip().lower() != "false"
 
 
 def _select_labs(requested: str | None, creds_file, creds: dict, workshop: bool, interactive: bool) -> list[str]:
@@ -360,13 +382,36 @@ def _select_labs(requested: str | None, creds_file, creds: dict, workshop: bool,
         choice = prompt_choice(f"Which lab do you want to deploy?{last_time}", options)
         labs = list(LABS) if choice == "Both" else [lab for lab, (name, _) in LABS.items() if name == choice]
     if workshop and FLIGHT_DISRUPTIONS not in labs:
-        sys.exit("--workshop deploys the Flight Disruptions lab; drop --lab or pick flight-disruptions.")
+        sys.exit("--workshop deploys the Agentic Airline Operations lab; drop --lab or pick flight-disruptions.")
     _save_env_safe(creds_file, DEPLOY_LABS, ",".join(labs))
     creds[DEPLOY_LABS] = ",".join(labs)
     return labs
 
 
-def main():
+def _existing_environment(args, creds_file, creds: dict, labs: list[str], workshop: bool, *, interactive: bool) -> str:
+    """Choose the existing environment to deploy into ("" for a new one) and check it before Terraform runs."""
+    full = existing_env.full_demo(
+        with_labs=args.with_labs,
+        video_2=args.video_2,
+        always_on=args.always_on,
+        flights=FLIGHT_DISRUPTIONS in labs,
+        workshop=workshop,
+    )
+    outputs = setup_rtce._read_core_tf_outputs(creds_file)
+    # A redeploy of a new-environment checkout keeps today's flow: no question (a saved ID still gets checked).
+    ask = interactive and not (outputs and not outputs.get("existing_environment"))
+    env_id = existing_env.choose(args.environment, creds_file, creds, interactive=ask, full=full, save=False)
+    existing_env.check_flow_switch(env_id, outputs)
+    if env_id:
+        user_id = existing_env.preflight(env_id)
+        existing_env.save(creds_file, creds, env_id)  # only an ID that passed the checks is remembered
+        os.environ["TF_VAR_user_id"] = user_id  # never saved: core needs it each run to own the keys
+        os.environ[existing_env.ENV_KEY] = env_id
+        print(f"✓ Deploying into your existing environment {env_id}")
+    return env_id
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Deploy the Streamhouse labs")
     parser.add_argument(
         "--lab",
@@ -376,13 +421,13 @@ def main():
     parser.add_argument(
         "--with-labs",
         action="store_true",
-        help="Prebuild what attendees write, for a demo: Flight Disruptions' full pipeline, stream, agent, and RTCE; "
-        "Agentic Pit Decisions' Steps 1 and 3 (car_state, the agent, pit_decisions)",
+        help="Prebuild what attendees write, for a demo: Agentic Airline Operations' full pipeline, stream, agent, "
+        "and RTCE; Agentic Pit Decisions' Steps 1 and 3 (car_state, the agent, pit_decisions)",
     )
     parser.add_argument(
         "--workshop",
         action="store_true",
-        help="Deploy only the Flight Disruptions workshop, skipping the lab question",
+        help="Deploy only the Agentic Airline Operations workshop, skipping the lab question",
     )
     parser.add_argument(
         "--automated",
@@ -400,14 +445,19 @@ def main():
     parser.add_argument(
         "--always-on",
         action="store_true",
-        help="Operators: run the full Flight Disruptions demo around the clock on AWS (saved for later runs)",
+        help="Operators: run the full Agentic Airline Operations demo around the clock on AWS (saved for later runs)",
     )
     parser.add_argument(
         "--reset-data",
         action="store_true",
         help="With --always-on: tombstone every generated key before publishing the data again",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--environment",
+        metavar="ENV_ID",
+        help="Deploy a workshop into this existing environment (saved for later runs)",
+    )
+    args = parser.parse_args(argv)
     if args.always_on and (args.workshop or args.video_2):
         parser.error("--always-on deploys the full demo; drop --workshop and --video-2")
     if args.automated and args.testing:
@@ -416,6 +466,11 @@ def main():
         parser.error("--workshop deploys the starting point; drop --with-labs and --video-2")
     if args.speed <= 0:
         parser.error("--speed must be greater than 0")
+    return args
+
+
+def main():
+    args = _parse_args()
 
     print("=== Streamhouse Labs — Deploy ===\n")
     root = get_project_root()
@@ -458,15 +513,17 @@ def main():
             _export_aws_credentials(creds)
             _preflight_always_on(creds)
         ensure_confluent_login(creds)
+        _existing_environment(args, creds_file, creds, labs, workshop, interactive=False)
+        targets = _targets(labs, _tableflow_on(labs, workshop, creds))
         print(
-            f"✓ Credentials loaded. Region: {region}. Deploying: {', '.join(_targets(labs))}"
+            f"✓ Credentials loaded. Region: {region}. Deploying: {', '.join(targets)}"
             f"{' (workshop)' if workshop else ''}\n"
         )
         write_tfvars_for_deployment(root, region, creds, resource_prefix=prefix)
         for key, value in creds.items():
             if value:
                 os.environ[key] = value
-        _deploy(root, _targets(labs), args.video_2)
+        _deploy(root, targets, args.video_2)
         if always_on:
             _finish_always_on(root, args.reset_data)
             return
@@ -489,7 +546,7 @@ def main():
     elif workshop:
         print("\nWorkshop mode: deploys the source feeds only; docs/flight-disruptions/workshop.md builds the rest.")
     elif flights:
-        print("\nFull demo: deploys the whole Flight Disruptions pipeline, stream, and recovery agent.")
+        print("\nFull demo: deploys the whole Agentic Airline Operations pipeline, stream, and recovery agent.")
 
     # Confluent Cloud login (saved for auto-login). A saved login that stopped working is asked for again.
     prompted = False
@@ -498,6 +555,9 @@ def main():
         prompted = True
     ensure_confluent_login(creds, creds_file, interactive=not prompted)
     print("✓ Confluent CLI logged in")
+    if email := _signed_in_email():
+        print(f"Deploying as {email}")
+    env_id = _existing_environment(args, creds_file, creds, labs, workshop, interactive=True)
 
     # No prompt: us-east-1 unless the user set TF_VAR_cloud_region in credentials.env.
     region = creds.get("TF_VAR_cloud_region") or DEFAULT_REGION
@@ -512,22 +572,8 @@ def main():
     else:
         print(f"Resource name prefix: {prefix} (set TF_VAR_resource_prefix in credentials.env to change)")
 
-    # Optionally generate fresh Confluent Cloud API keys; new keys are used as-is, without asking for them again.
-    print()
-    api_key = api_secret = None
-    if prompt_yes_no("Generate new Confluent Cloud API keys?", default=False):
-        api_key, api_secret = generate_confluent_api_keys(prefix)
-        if not (api_key and api_secret):
-            print("✗ Could not generate API keys; enter an existing OrganizationAdmin key below.")
-
     print("\n--- Credential Configuration ---")
-    if api_key and api_secret:
-        print(f"Using the new Confluent Cloud API key {api_key}")
-    else:
-        api_key = prompt_with_default("Confluent Cloud API Key", creds.get("TF_VAR_confluent_cloud_api_key", ""))
-        api_secret = prompt_with_default(
-            "Confluent Cloud API Secret", creds.get("TF_VAR_confluent_cloud_api_secret", ""), secret=True
-        )
+    api_key, api_secret = _cloud_api_key(creds, prefix, env_id)
     _save_env_safe(creds_file, "TF_VAR_confluent_cloud_api_key", api_key)
     _save_env_safe(creds_file, "TF_VAR_confluent_cloud_api_secret", api_secret)
 
@@ -546,24 +592,24 @@ def main():
     print("\n--- Configuration Summary ---")
     print(f"Resource name prefix: {prefix}")
     print(f"Region: {region}")
+    print(f"Environment: existing {env_id} (kept on destroy)" if env_id else "Environment: new")
     api_key_state = "set" if final_creds.get("TF_VAR_confluent_cloud_api_key") else "MISSING"
     print(f"Confluent Cloud API key: {api_key_state}")
     print(f"Confluent CLI auto-login: {'saved' if final_creds.get('CONFLUENT_EMAIL') else 'not saved'}")
     print(f"Labs: {', '.join(LABS[lab][0] for lab in labs)}")
+    targets = _targets(labs, _tableflow_on(labs, workshop, final_creds))
     if PIT_DECISIONS in labs:
         print("Pit strategy agent: Claude hosted in Confluent (no AWS credentials needed)")
     if not flights:
-        print(f"Deploying: {', '.join(_targets(labs))}, then the lab's credential card and race history")
+        print(f"Deploying: {', '.join(targets)}, then the lab's credential card and race history")
     elif workshop:
         print("Workshop: source feeds only; you build the Flink tables and the agent, and turn on RTCE")
-        print(f"Deploying: {', '.join(_targets(labs))}")
+        print(f"Deploying: {', '.join(targets)}")
     else:
         print("Recovery agent: Claude hosted in Confluent (no AWS credentials needed)")
-        analytics_state = (
-            "ENABLED" if final_creds.get("TF_VAR_aws_tableflow_access_key") else "skipped (no Tableflow AWS creds)"
-        )
+        analytics_state = "ENABLED" if "tableflow" in targets else "skipped (no Tableflow AWS creds)"
         print(f"Tableflow S3/Glue analytics (Demo 3): {analytics_state}")
-        print(f"Deploying: {', '.join(_targets(labs))}, then demo data and RTCE")
+        print(f"Deploying: {', '.join(targets)}, then demo data and RTCE")
     if always_on:
         print(f"Always-on: then terraform/always-on, and {DEMO_USER_ROLE} for {len(_demo_emails(final_creds))} users")
 
@@ -580,7 +626,7 @@ def main():
     for key, value in final_creds.items():
         if value:
             os.environ[key] = value
-    _deploy(root, _targets(labs), args.video_2)
+    _deploy(root, targets, args.video_2)
     if always_on:
         _finish_always_on(root, args.reset_data)
         return
@@ -650,6 +696,51 @@ def _prompt_aws_credentials(creds_file, creds: dict) -> None:
             _save_env_safe(creds_file, "TF_VAR_aws_tableflow_session_token", token)
 
 
+def _signed_in_email() -> str:
+    """The email the Confluent CLI is signed in with, read from its context name (login-<email>-<url>), or ""."""
+    context = existing_env._cli_json("context", "describe")
+    name = context.get("name", "") if isinstance(context, dict) else ""
+    match = re.fullmatch(r"login-(.+@.+?)-https?://.+", name)
+    return match.group(1) if match else ""
+
+
+def _key_in_signed_in_account(key: str) -> bool:
+    """Whether the Confluent CLI's signed-in account can see this API key."""
+    result = subprocess.run(
+        [processes.exe("confluent"), "api-key", "describe", key, "-o", "json"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return result.returncode == 0
+
+
+def _cloud_api_key(creds: dict, prefix: str, env_id: str) -> tuple[str, str]:
+    """The saved Cloud API key, or a new one owned by the signed-in user. Asks only when creating one fails.
+
+    Destroy doesn't delete the key, so reusing it keeps keys from piling up. A saved key the signed-in account
+    can't see (another Confluent account, or deleted) is replaced: Terraform would build with the wrong account.
+    """
+    key = (creds.get("TF_VAR_confluent_cloud_api_key") or "").strip()
+    secret = (creds.get("TF_VAR_confluent_cloud_api_secret") or "").strip()
+    if key and secret:
+        if _key_in_signed_in_account(key):
+            print(f"Using the saved Confluent Cloud API key {key}")
+            return key, secret
+        print(f"The saved API key {key} isn't in the Confluent account you're signed in to; creating a new one.")
+    key, secret = generate_confluent_api_keys(prefix)
+    if key and secret:
+        print(f"Using the new Confluent Cloud API key {key}")
+        return key, secret
+    role = "EnvironmentAdmin" if env_id else "OrganizationAdmin"
+    print(f"✗ Could not create an API key; enter an existing {role} key.")
+    return (
+        prompt_with_default("Confluent Cloud API Key", ""),
+        prompt_with_default("Confluent Cloud API Secret", "", secret=True),
+    )
+
+
 def _env_hint(name: str) -> str:
     """How to set an environment variable in this computer's usual shell, for messages."""
     return f"`$env:{name} = '...'`" if sys.platform == "win32" else f"`export {name}=...`"
@@ -682,7 +773,7 @@ def _finish_workshop(root) -> None:
     Attendees publish the data, build passenger_state, flight_impact, and the recovery agent, and turn on
     Lightning Tables and RTCE in the labs.
     """
-    print("\n=== Creating the Lightning and RTCE API key ===")
+    print("\n=== Saving the Lightning and RTCE API key ===")
     creds_file = root / "credentials.env"
     if not setup_rtce.ensure_global_key(creds_file, dotenv_values(str(creds_file))):
         print("⚠ No Global API key yet. Rerun `uv run deploy` to try again.")
@@ -724,9 +815,6 @@ def _finish_pit_decisions(root, with_labs: bool = False) -> bool:
     print(f"""
 ✓ Agentic Pit Decisions is ready{"" if ok else " (see the warnings above)"}.
   In the SQL workspace, use catalog {fields["catalog"]} and database {fields["database"]}.
-  In two terminals:
-     uv run f1-race       # {fields["seconds_per_lap"]}s/lap race feed
-     uv run f1-pitwall    # dashboard at http://localhost:8001
   Then follow docs/agentic-pit-decisions/walkthrough.md.""")
     return ok
 
@@ -916,6 +1004,7 @@ def _preflight_always_on(creds: dict) -> None:
                 principal,
                 "--action-names",
                 *ALWAYS_ON_IAM_ACTIONS,
+                *QUICK_IAM_ACTIONS,
                 "--output",
                 "json",
             ],
@@ -932,7 +1021,12 @@ def _preflight_always_on(creds: dict) -> None:
         print(f"⚠ couldn't check {caller or 'the caller'}'s IAM permissions; continuing")
         return
     results = json.loads(simulated.stdout or "{}").get("EvaluationResults", [])
-    denied = [r.get("EvalActionName", "") for r in results if r.get("EvalDecision") != "allowed"]
+    refused = [r.get("EvalActionName", "") for r in results if r.get("EvalDecision") != "allowed"]
+    denied = [action for action in refused if action not in QUICK_IAM_ACTIONS]
+    quick_denied = [action for action in refused if action in QUICK_IAM_ACTIONS]
+    if quick_denied:
+        os.environ[QUICK_DENIED] = "1"
+        print(f"⚠ {caller} can't {', '.join(quick_denied)}, so Amazon Quick is skipped; everything else deploys.")
     if denied:
         sys.exit(
             f"{caller} can't {', '.join(denied)}, which terraform/always-on needs to create the Lambda and "
@@ -968,6 +1062,8 @@ def _finish_always_on(root, reset_data: bool = False) -> None:
     _compact_sources(infra)
 
     creds = dotenv_values(str(creds_file))
+    print("\n=== Preparing Amazon Quick over the Tableflow history ===")
+    quick_fallback = _prepare_quick(root, infra, _demo_emails(creds))
     key, secret = creds.get("CONFLUENT_RTCE_API_KEY") or "", creds.get("CONFLUENT_RTCE_API_SECRET") or ""
     if not (key and secret):
         sys.exit("No Global API key for Lightning Tables yet, so the flight board can't read. Rerun `uv run deploy`.")
@@ -977,7 +1073,15 @@ def _finish_always_on(root, reset_data: bool = False) -> None:
     image = _push_image(root, infra["region"])
     os.environ["TF_VAR_image_uri"] = image
     print("\n=== Running the flight board and the generator on AWS ===")
-    if not run_terraform(root / "terraform" / "always-on"):
+    applied = run_terraform(root / "terraform" / "always-on")
+    if not applied and os.environ.get("TF_VAR_quick_principal_arns") != json.dumps(quick_fallback):
+        # Quick is optional: never let a Quick error leave the demo users without their role and card.
+        print(
+            "\n⚠ The always-on apply failed with the new Amazon Quick setup; retrying with the last run's Quick users."
+        )
+        os.environ["TF_VAR_quick_principal_arns"] = json.dumps(quick_fallback)
+        applied = run_terraform(root / "terraform" / "always-on")
+    if not applied:
         sys.exit("\nDeployment failed at always-on. Stopping.")
     outputs = _always_on_outputs(root)
     if previous == image:
@@ -1031,6 +1135,173 @@ def _compact_sources(infra: dict[str, str]) -> None:
             print(f"✓ {topic} is compacted")
         else:
             print(f"⚠ Could not compact {topic}: {result.stderr.strip()}\n  Run it by hand: {' '.join(cmd)}")
+
+
+def _aws_account_id() -> str:
+    identity = subprocess.run(
+        [processes.exe("aws"), "sts", "get-caller-identity", "--query", "Account", "--output", "text"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+    return identity.stdout.strip()
+
+
+def _quick_principals(account_id: str, emails: list[str]) -> list[str]:
+    """The Quick user ARNs whose email is one of the demo users'. Prints the demo users who have no Quick user."""
+    listed = subprocess.run(
+        [
+            processes.exe("aws"),
+            "quicksight",
+            "list-users",
+            "--aws-account-id",
+            account_id,
+            "--namespace",
+            "default",
+            "--region",
+            QUICK_IDENTITY_REGION,
+            "--output",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+    if listed.returncode != 0:
+        print(f"⚠ Couldn't list the Quick users: {listed.stderr.strip()}")
+        return []
+    by_email = {}
+    for user in json.loads(listed.stdout or "{}").get("UserList", []):
+        by_email.setdefault((user.get("Email") or "").lower(), user)
+    arns = []
+    for email in emails:
+        user = by_email.get(email.lower())
+        if user and user.get("Role", "AUTHOR") in QUICK_OWNER_ROLES:
+            arns.append(user["Arn"])
+        elif user:
+            print(
+                f"⚠ {email} is a Quick {user.get('Role')}, and only authors and admins can own the datasets. Skipping."
+            )
+        else:
+            print(
+                f"⚠ No Quick user for {email}, so they won't see the Quick datasets. "
+                "Register them in Quick, then rerun."
+            )
+    return arns
+
+
+def _glue_tables(region: str, database: str) -> set[str]:
+    listed = subprocess.run(
+        [
+            processes.exe("aws"),
+            "glue",
+            "get-tables",
+            "--region",
+            region,
+            "--database-name",
+            database,
+            "--output",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+    if listed.returncode != 0:
+        return set()  # the database doesn't exist until Tableflow's first sync
+    return {table["Name"] for table in json.loads(listed.stdout or "{}").get("TableList", [])}
+
+
+def _wait_for_glue_tables(
+    region: str, database: str, tables: tuple[str, ...], timeout_s: int = GLUE_WAIT_SECONDS, stop=lambda: False
+) -> bool:
+    """True once Tableflow has synced every table to Glue; False after timeout_s, or as soon as stop() is true."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        missing = set(tables) - _glue_tables(region, database)
+        if not missing:
+            return True
+        if time.monotonic() >= deadline or stop():
+            return False
+        print(f"  Waiting for Tableflow to sync {', '.join(sorted(missing))} to Glue...", flush=True)
+        time.sleep(30)
+
+
+def _tableflow_errors(infra: dict[str, str]) -> dict[str, str]:
+    """topic -> error for each FAILED Tableflow topic."""
+    listed = subprocess.run(
+        [
+            processes.exe("confluent"),
+            "tableflow",
+            "topic",
+            "list",
+            "--environment",
+            infra["env_id"],
+            "--cluster",
+            infra["cluster_id"],
+            "-o",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+    try:
+        topics = json.loads(listed.stdout or "[]")
+    except json.JSONDecodeError:
+        return {}
+    return {t["topic_name"]: t.get("error_message", "") for t in topics if t.get("phase") == "FAILED"}
+
+
+def _prepare_quick(root, infra: dict[str, str], emails: list[str]) -> list[str]:
+    """Set TF_VAR_quick_principal_arns for terraform/always-on: the demo users' Quick users, once both Tableflow
+    tables are in Glue. Otherwise the users of the last run, so a rerun never deletes a working Quick setup, or "[]"
+    on a first run, which skips Quick and lets the rest of the always-on deploy finish. Returns that fallback, which
+    the caller applies when the apply with the new users fails."""
+    previous = _always_on_outputs(root).get("quick_principal_arns") or []
+    os.environ["TF_VAR_quick_principal_arns"] = json.dumps(previous)
+    if previous:
+        print(
+            f"  (Until this finishes, keeping the Quick setup shared with {len(previous)} user(s) from the last run.)"
+        )
+    if os.environ.get(QUICK_DENIED) == "1":
+        print("⚠ Your AWS credentials can't create the Quick resources, so Quick is skipped.")
+        return previous
+    state = root / "terraform" / "tableflow" / "terraform.tfstate"
+    database = (run_terraform_output(state) if state.exists() else {}).get("glue_database", "")
+    if not database:
+        print("⚠ Tableflow isn't deployed (no AWS credentials for it), so Quick is skipped.")
+        return previous
+    if not _wait_for_glue_tables(infra["region"], database, QUICK_TABLES, stop=lambda: bool(_tableflow_errors(infra))):
+        failed = _tableflow_errors(infra)
+        print(f"⚠ Tableflow hasn't synced {' and '.join(QUICK_TABLES)} to Glue yet, so Quick is skipped this run.")
+        for topic, error in failed.items():
+            print(f"  {topic} failed: {error}")
+        if failed:
+            replace = " ".join(f"-replace='confluent_tableflow_topic.analytics[\"{topic}\"]'" for topic in failed)
+            print(
+                "  Recreate them (and the Glue integration), then rerun `uv run deploy --always-on`:\n"
+                f"  terraform -chdir=terraform/tableflow apply {replace} "
+                "-replace='confluent_catalog_integration.glue[0]'"
+            )
+        else:
+            print("  Rerun `uv run deploy --always-on` in a few minutes.")
+        return previous
+    principals = _quick_principals(_aws_account_id(), emails)
+    if not principals:
+        print("⚠ No demo user can own the Quick datasets, so Quick isn't changed this run.")
+        return previous
+    os.environ["TF_VAR_quick_principal_arns"] = json.dumps(principals)
+    print(f"✓ Quick will be shared with {len(principals)} demo user(s)")
+    return previous
 
 
 def _always_on_outputs(root) -> dict:
@@ -1252,6 +1523,7 @@ def _write_card(root, outputs: dict, emails: list[str]):
         "ALWAYS_ON_APP_URL": outputs.get("app_url", ""),
         "ALWAYS_ON_APP_PASSWORD": outputs.get("app_password", ""),
         "ALWAYS_ON_DEMO_USERS": ",".join(emails),
+        "ALWAYS_ON_QUICK_TOPIC": outputs.get("quick_topic_id", ""),
     }
     path.write_text("".join(f"{key}='{value}'\n" for key, value in card.items()), encoding="utf-8")
     path.chmod(0o600)  # it holds the flight board's password

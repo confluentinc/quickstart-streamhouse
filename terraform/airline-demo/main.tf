@@ -18,7 +18,8 @@
 # MATERIALIZED TABLES: one object owning both the table and its continuous query,
 # evolvable in place with CREATE OR ALTER (Flink migrates to the same backing topic,
 # so Lightning/RTCE/Tableflow are unaffected). Tableflow syncs selected tables to
-# Iceberg in S3 with an AWS Glue Data Catalog for Demo 3 — see analytics.tf.
+# Iceberg in S3 with an AWS Glue Data Catalog for Demo 3 — see terraform/tableflow, a separate
+# root so a workshop deploy never downloads the AWS provider.
 #
 # The workshop (var.workshop, docs/flight-disruptions/workshop.md) stops at the source tables and
 # passenger_recommendations: attendees create passenger_state, flight_impact, and
@@ -51,10 +52,6 @@ locals {
   # Core's base name (RIVER-AIR-PROD, or prefix plus random suffix). try() keeps a core
   # state from before deployment_name existed working.
   name = try(local.core.resource_name, "${local.core.resource_prefix}-${local.core.random_id}")
-  display_name = {
-    for label in ["tableflow-api-key", "tableflow", "glue"] :
-    label => try(local.core.resource_name_fixed, false) ? upper("${local.name}-${label}") : "${local.name}-${label}"
-  }
 
   # The catalog and database names only resolve table names when a statement starts. Every
   # statement ignores later changes to them (lifecycle below): the provider can't update a running
@@ -64,15 +61,13 @@ locals {
     "sql.current-database" = local.database
   }
 
-  # Demo 3's S3/Glue path needs both the toggle AND AWS Tableflow creds in core.
-  # Leave the creds empty and this cleanly skips instead of failing terraform
-  # apply. aws_tableflow_credentials_present is a boolean, not a secret, but
-  # Terraform marks it sensitive anyway since it's derived from
-  # var.aws_tableflow_access_key — nonsensitive() is needed because
-  # count/for_each can't take a sensitive value. try() treats a core state from
-  # before this output existed as "no creds", so plan and destroy still work.
-  # The workshop leaves Tableflow out.
-  analytics_enabled = var.enable_analytics && !var.workshop && try(nonsensitive(local.core.aws_tableflow_credentials_present), false)
+  # The stateful statements (joins, aggregations, TO_CHANGELOG grouping) also expire idle state after
+  # three days; the default of 0 keeps it forever, which grows without bound in always-on mode. An
+  # itinerary is written once and published up to about two days before its flight, so three days
+  # leaves a day of margin before a late delay needs it. Statement properties are fixed once a
+  # statement runs, so this applies on a fresh deploy only (ignore_changes below keeps running ones).
+  stateful_sql_props = merge(local.sql_props, { "sql.state-ttl" = "3 d" })
+
 
   # The recovery agent runs on Claude hosted in Confluent and needs only the RTCE connection,
   # which `uv run deploy` creates with the CLI after RTCE is enabled and then sets the toggle.
@@ -83,8 +78,6 @@ locals {
   # at render time (the file stays as the workshop guide has it; tests keep this line in sync).
   agent_flight_filter = "    AND SPLIT_INDEX(inbound_flight_id, '-', 0) IN ('RA417', 'RA183', 'RA185')\n"
 
-  # Always-on mode also syncs the offers to Iceberg, so the history includes recovery time.
-  tableflow_topics = var.continuous ? distinct(concat(var.tableflow_topics, ["passenger_recommendations"])) : var.tableflow_topics
 
   # The source feeds (flights, itineraries, hotels, telemetry), the recovery offers, and (outside the workshop) the webhook's landing table.
   tables = merge(
@@ -147,7 +140,7 @@ resource "confluent_flink_statement" "passenger_state" {
 
   statement_name = "airport-materialize-passenger-state"
   statement      = file("${path.module}/sql/24-serving-passenger-state.sql")
-  properties     = local.sql_props
+  properties     = local.stateful_sql_props
   lifecycle { ignore_changes = [properties] }
 
   depends_on = [confluent_flink_statement.tables]
@@ -171,7 +164,7 @@ resource "confluent_flink_statement" "flight_impact" {
 
   statement_name = "airport-materialize-flight-impact"
   statement      = file("${path.module}/sql/25-serving-flight-impact.sql")
-  properties     = local.sql_props
+  properties     = local.stateful_sql_props
   lifecycle { ignore_changes = [properties] }
 
   depends_on = [confluent_flink_statement.passenger_state]
@@ -225,7 +218,7 @@ resource "confluent_flink_statement" "passenger_state_changes" {
 
   statement_name = "airport-agent-passenger-state-changes"
   statement      = file("${path.module}/sql/26-staging-passenger-state-changes.sql")
-  properties     = local.sql_props
+  properties     = local.stateful_sql_props
   lifecycle { ignore_changes = [properties] }
 
   depends_on = [confluent_flink_statement.passenger_state]
@@ -246,7 +239,7 @@ resource "confluent_flink_statement" "impacted_passengers" {
 
   statement_name = "airport-agent-impacted-passengers"
   statement      = var.continuous ? replace(file("${path.module}/sql/27-staging-impacted-passengers.sql"), local.agent_flight_filter, "") : file("${path.module}/sql/27-staging-impacted-passengers.sql")
-  properties     = local.sql_props
+  properties     = local.stateful_sql_props
   lifecycle { ignore_changes = [properties] }
 
   depends_on = [confluent_flink_statement.passenger_state_changes]
@@ -288,7 +281,7 @@ resource "confluent_flink_statement" "recovery_offers" {
 
   statement_name = "airport-agent-insert-passenger-recommendations"
   statement      = file("${path.module}/sql/31-insert-passenger-recommendations.sql")
-  properties     = local.sql_props
+  properties     = local.stateful_sql_props
   lifecycle { ignore_changes = [properties] }
 
   depends_on = [
@@ -296,28 +289,6 @@ resource "confluent_flink_statement" "recovery_offers" {
     confluent_flink_statement.impacted_passengers,
     confluent_flink_statement.recovery_agent,
   ]
-}
-
-# --- Tableflow API key ------------------------------------------------------
-# Enabling Tableflow (analytics.tf) requires a Tableflow-scoped API key owned by
-# a principal that can enable Tableflow — app-manager holds EnvironmentAdmin.
-# (Our RTCE Global key can't: it belongs to the DeveloperRead-only rtce-reader SA.)
-resource "confluent_api_key" "tableflow" {
-  count = local.analytics_enabled ? 1 : 0
-
-  display_name = local.display_name["tableflow-api-key"]
-  description  = "Tableflow API key owned by the app-manager service account"
-  owner {
-    id          = local.core.app_manager_service_account_id
-    api_version = "iam/v2"
-    kind        = "ServiceAccount"
-  }
-
-  managed_resource {
-    id          = "tableflow"
-    api_version = "tableflow/v1"
-    kind        = "Tableflow"
-  }
 }
 
 # --- Hotel feed: webhook -> hotel_availability_updates -> hotel_inventory ----

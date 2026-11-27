@@ -1,6 +1,6 @@
 -- Append-only copy of every passenger_state change, for the recovery agent. AI_RUN_AGENT
 -- can't read an upsert table, so TO_CHANGELOG turns each insert or update into a new row;
--- the row's $rowtime is when that change landed. Deletes are dropped. inbound_estimated_time
+-- the row's $rowtime is when that change landed. Deletes are dropped. inbound_estimated_arrival
 -- lets sql/27 skip passengers whose inbound flight has already landed.
 -- sql/27-staging-impacted-passengers.sql reads it. Four buckets, like impacted_passengers,
 -- spread the agent's work over four tasks.
@@ -10,7 +10,7 @@ CREATE OR ALTER MATERIALIZED TABLE passenger_state_changes (
   connecting_flight_id STRING,
   final_destination STRING,
   risk STRING,
-  inbound_estimated_time TIMESTAMP(3)
+  inbound_estimated_arrival TIMESTAMP(3)
 ) DISTRIBUTED BY (`key`) INTO 4 BUCKETS
 WITH (
   'changelog.mode' = 'append',
@@ -24,7 +24,7 @@ AS SELECT
   connecting_flight_id,
   final_destination,
   risk,
-  inbound_estimated_time
+  inbound_estimated_arrival
 FROM TO_CHANGELOG(
   input      => TABLE passenger_state PARTITION BY `key`,
   op_mapping => MAP['INSERT, UPDATE_AFTER', 'UPSERT']

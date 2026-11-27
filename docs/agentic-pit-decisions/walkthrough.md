@@ -2,18 +2,38 @@
 
 ![Agentic Pit Decisions architecture](../images/agentic-pit-decisions/architecture.png)
 
-In this ~45-minute lab, River Racing's car #88 streams live telemetry from Silverstone. Flink uses `ML_DETECT_ANOMALIES` to flag a front-left tire anomaly, and a streaming agent running on Confluent-hosted Claude recommends `STAY OUT`, `PIT SOON`, or `PIT NOW` on every lap. You'll provision your own Confluent Cloud environment with `uv run deploy` and run the race simulator locally.
+In this ~45-minute lab, River Racing's car #88 streams live telemetry from Silverstone. Flink uses `ML_DETECT_ANOMALIES` to flag a front-left tire anomaly, and a streaming agent running on Confluent-hosted Claude recommends `STAY OUT`, `PIT SOON`, or `PIT NOW` on every lap. You'll create your own Confluent Cloud environment with `uv run deploy` and run the race simulator locally.
 
 Along the way, you build a small **Streamhouse**: an architecture that continuously captures, processes, and serves the current state of the business. Here the business is a race, and the agent's every call is only as good as how current its view of the car is.
 
-## 0. Prerequisites
+## Set up Confluent Cloud
+
+#### Step 1 — Create your Confluent Cloud account
+
+1. Go to the **[Confluent Cloud sign-up page](https://cnfl.io/learnwithcflt)**.
+2. Enter your **name**, **work email**, **company**, and a **password**, then accept the terms
+   and click **Start Free**.
+3. On first sign-in, an **onboarding wizard** asks a few questions, then offers to create your
+   first cluster.
+
+> [!WARNING]
+> **Don't create a cluster.** Deploy creates one for you. Click the Confluent logo (top-left) to exit the wizard.
+
+#### Step 2 — Add a payment method (credit card)
+
+Deploy needs a payment method to create your cluster. New sign-ups get **$400 in free credit**, so the workshop won't charge your card.
+
+1. Go directly to **[Billing & payment](https://confluent.cloud/settings/billing/payment)**.
+2. Open the **Payment details and contacts** tab.
+3. Click **Add credit card / bank account**, enter your **card details**, then **Save**.
+
+   <img src="../images/add-payment-method.png" alt="Payment details and contacts — Add credit card / bank account" width="500">
+
+## Prerequisites
 
 > [!TIP]
 >
-> **Provided a workstation by the workshop host?** Skip this section — it's already set up for you. Continue to [Set up Confluent Cloud](#set-up-confluent-cloud).
-
-<details>
-<summary><strong>Prerequisites for your own machine</strong> (click to expand)</summary>
+> **Using a host-provided workstation?** Skip to [Deploy to Confluent Cloud](#deploy-to-confluent-cloud).
 
 <details>
 <summary>for Mac</summary>
@@ -32,18 +52,24 @@ brew install --cask confluent-cli
 <details>
 <summary>for Windows</summary>
 
-Open PowerShell (Start menu → type **PowerShell** → **Windows PowerShell**) and run these. If winget asks you to accept its terms, enter `Y`. None of them needs administrator rights.
+1. Open **PowerShell**: Start menu → type **PowerShell** → **Windows PowerShell**.
+2. Install the tools. If winget asks you to accept its terms, enter `Y`.
 
-```powershell
-winget install --id Git.Git -e --scope user --source winget
-winget install --id astral-sh.uv -e --source winget
-winget install --id Hashicorp.Terraform -e --source winget
-winget install --id ConfluentInc.Confluent-CLI -e --source winget
-```
+    ```powershell
+    winget install --id Git.Git -e --scope user --source winget
+    winget install --id astral-sh.uv -e --source winget
+    winget install --id Hashicorp.Terraform -e --source winget
+    winget install --id ConfluentInc.Confluent-CLI -e --source winget
+    ```
 
-Then **close PowerShell and open a new window**, so it finds the new tools.
+3. Close PowerShell and open a new window.
+4. When you clone the repo later, do it in your user folder (where PowerShell opens), not OneDrive or Documents. Long paths break the install.
 
-**`winget` is not recognized, blocked on your work laptop, or you're on Windows on Arm?** See the Windows prerequisites in the [README](../../README.md#prerequisites).
+**Problems?**
+
+- **`winget` is not recognized:** install [App Installer](https://apps.microsoft.com/detail/9NBLGGH4NNS1) from the Microsoft Store, then open a new PowerShell window.
+- **winget is blocked on your laptop:** install [Git](https://git-scm.com/downloads/win), [uv](https://docs.astral.sh/uv/getting-started/installation/), [Terraform](https://developer.hashicorp.com/terraform/install), and the [Confluent CLI](https://docs.confluent.io/confluent-cli/current/install.html) from their download pages. Unzip Terraform and the Confluent CLI into one folder, add it to your `Path` (Start menu → **Edit environment variables for your account**), then open a new PowerShell window.
+- **Windows on Arm** (Surface Pro X, Copilot+ PCs): after you `cd quickstart-streamhouse`, run `uv venv --python cpython-3.12-windows-x86_64-none` once.
 
 </details>
 
@@ -55,38 +81,6 @@ uv --version
 terraform -version
 confluent version
 ```
-
-</details>
-
-## Set up Confluent Cloud
-
-#### Step 1 — Create your Confluent Cloud account
-
-1. Go to the **[Confluent Cloud sign-up page](https://cnfl.io/learnwithcflt)**.
-2. Enter your **name**, **work email**, **company**, and a **password**, then accept the terms
-   and click **Start Free**.
-3. On first sign-in, an **onboarding wizard** asks a few questions, then offers to create your
-   first cluster.
-
-> [!WARNING]
-> **Do NOT create a cluster.** Skip the **Add cluster** / **Create cluster** step — Terraform
-> creates its own environment *and* cluster for you. Click the Confluent logo (top-left) to
-> exit the wizard.
-
-#### Step 2 — Add a payment method (credit card)
-
-A payment method is required for Terraform to create a **Standard** cluster. Free
-credit is used first, so you typically won't be charged during the workshop.
-
-> [!TIP]
-> All new sign-ups get **$400 in free credit** to use within the first 30 days — deploying this
-> workshop will not get you charged.
-
-1. Go directly to **[Billing & payment](https://confluent.cloud/settings/billing/payment)**.
-2. Open the **Payment details and contacts** tab.
-3. Click **Add credit card / bank account**, enter your **card details**, then **Save**.
-
-   <img src="../images/add-payment-method.png" alt="Payment details and contacts — Add credit card / bank account" width="500">
 
 ## Deploy to Confluent Cloud
 
@@ -109,26 +103,30 @@ credit is used first, so you typically won't be charged during the workshop.
     uv run deploy
     ```
 
-    <img src="../images/agentic-pit-decisions/selfservice-up.png" alt="uv run deploy: API key generation, configuration prompts, and the ready prompt" width="600">
+    <img src="../images/agentic-pit-decisions/selfservice-up.png" alt="uv run deploy for Agentic Pit Decisions: lab choice, login, new environment, API key created, summary, and the ready prompt" width="600">
 
     Deploy asks for the following, in this order:
 
     | Prompt | Answer |
     |---|---|
-    | `Which lab do you want to deploy?` | Enter `2` for **Agentic Pit Decisions**. Deploy builds the lab's starting point, and you build the rest in this walkthrough. |
-    | `Email (Enter to skip)` and `Password` | The **email and password you used to sign up**. Deploy checks them with a real login and saves them to `credentials.env`, so later commands log in automatically. **Signed in with SSO in step 2?** Press **Enter** to skip. |
-    | `Generate new Confluent Cloud API keys? (y/N)` | Enter `y`. Deploy creates the key and uses it, so it doesn't ask for a key or secret. |
+    | `Which lab do you want to deploy?` | Enter `2` for **Agentic Pit Decisions**. |
+    | `Email (Enter to skip)` and `Password` | Your Confluent Cloud email and password. Already signed in? Press **Enter**. |
+    | `Deploy into an existing environment? Paste its ID (env-xxxxx), or press Enter to create a new one:` | Press **Enter** for a new environment.<br>Or paste an environment ID to deploy into it. |
     | `Ready to deploy? (y/n)` | Enter `y`. |
 
-    When it finishes, deploy prints your **catalog** and **database** names, which you need in Section 1.
+    When it finishes, deploy prints your environment (catalog) and cluster (database) names, which you need in Section 1.
+
+> [!NOTE]
+>
+> Deploy takes about 10 minutes.
 
 ## 1. Enhance the data with built-in ML functions and start the race
 
-The provisioning step sets up source tables for car telemetry, live race standings, and historical race results. Next, we will create a `car_state` table that joins telemetry with race standings over 20-second tumbling windows and uses Confluent's built-in `ML_DETECT_ANOMALIES` function to flag abnormal front-left tire temperatures. Flink processes each window as the telemetry arrives, not after the race in a batch job.
+Deploy created three tables: the car's sensor readings, the live race positions, and past race results. Now you combine the sensor readings and race positions into one live table that spots tire problems on its own, then start the race.
 
 1. Open the Flink SQL workspace:
 
-    1. Go to the [Flink UI](https://confluent.cloud/go/flink) and select the **environment** deploy created (`streamhouse-…-env`).
+    1. Go to the [Flink UI](https://confluent.cloud/go/flink) and select your **environment**.
 
         <img src="../images/select-flink-environment.png" alt="The Navigate to your Flink compute pools dialog with the streamhouse environment selected" width="450">
 
@@ -136,7 +134,7 @@ The provisioning step sets up source tables for car telemetry, live race standin
 
         <img src="../images/open-sql-workspace.png" alt="The streamhouse compute pool card with its SQL Workspace button" width="400">
 
-    3. Set the **Catalog** to your environment and the **Database** to your cluster: the names printed at the end of `uv run deploy` (`streamhouse-…-env` and `streamhouse-…-cluster`).
+    3. Set **Catalog** to your environment and **Database** to your cluster: the names `uv run deploy` printed.
 
         <img src="../images/set-catalog-database.png" alt="The SQL workspace with Use catalog set to the streamhouse environment and Use database set to its cluster" width="600">
 
@@ -163,7 +161,7 @@ The provisioning step sets up source tables for car telemetry, live race standin
 
     </details>
 
-2. Paste this statement into one SQL cell and run it. Wait for it to show **Running**.
+2. Create `car_state`. It groups the car's sensor readings into 20-second windows and averages each window into one row. It adds the car's race position and flags an abnormal front-left tire temperature with `ML_DETECT_ANOMALIES`. Run this:
 
     ```sql
     CREATE TABLE `car_state` WITH ('changelog.mode' = 'append', 'kafka.consumer.isolation-level' = 'read-uncommitted') AS
@@ -214,9 +212,9 @@ The provisioning step sets up source tables for car telemetry, live race standin
 
 > [!NOTE]
 >
-> This is a continuous statement — keep this cell **RUNNING** for the whole workshop.
+> This statement runs continuously. Don't stop or delete it.
 
-3. Start the race in your local terminal:
+3. In your terminal, start the race:
 
     ```bash
     uv run f1-race
@@ -224,37 +222,40 @@ The provisioning step sets up source tables for car telemetry, live race standin
 
 > [!WARNING]
 >
-> **Leave `f1-race` running for the rest of the lab.** If you stop it, the car stops sending telemetry.
+> **Leave it running for the rest of the lab.**
 
-4. Open the Pit Wall dashboard. Open a **second terminal**, go to the repo folder, and run:
+4. Start the Pit Wall dashboard in a **new terminal** in the `quickstart-streamhouse` folder. It opens [http://localhost:8001](http://localhost:8001) in your browser:
 
     ```bash
-    cd quickstart-streamhouse
     uv run f1-pitwall
     ```
 
-    The dashboard at http://localhost:8001 shows the Silverstone track map, the live leaderboard, and car #88's tire and fuel gauges. The **Anomaly Detection** panel unlocks as `car_state` emits rows, and the **AI Pit Strategist** panel unlocks once you create `pit_decisions` in Section 3.
+    It shows the Silverstone track map, the live leaderboard, and car #88's tire and fuel gauges. The **Anomaly Detection** panel unlocks as `car_state` emits rows, and the **AI Pit Strategist** panel unlocks once you create `pit_decisions` in Section 3.
 
     ![Pit Wall dashboard showing a nominal front-left tire temperature](../images/agentic-pit-decisions/pitwall-nominal.png)
 
-> [!NOTE]
+> [!WARNING]
 >
-> **Leave this running too**, so you can watch the dashboard in Section 4.
+> **Leave it running for the rest of the lab.**
 
-5. Back in the Flink SQL workspace, verify the stream in a new SQL cell:
+5. Back in the Flink SQL workspace, verify the stream in a new cell:
 
     ```sql
     SELECT car_number, lap, `position`, tire_compound, tire_age_laps, anomaly_tire_temp_fl, tire_temp_fl_c
     FROM `car_state`;
     ```
 
-    `car_state` emits one row per 20-second window. After 12 windows (~4 minutes), it has enough history to detect temperature anomalies on the front-left tire. At lap 24, the tire spikes to ~145°C and `anomaly_tire_temp_fl` becomes `true`.
+    A new row appears every 20 seconds.
+
+> [!NOTE]
+>
+> When you're done with a `SELECT`, click **Stop** in its cell to free up your compute pool.
 
 ## 2. Create the agent to provide pit decision guidance
 
-With `car_state` streaming, we can create `pit_strategy_agent` to evaluate car condition and race context on every lap and recommend `STAY OUT`, `PIT SOON`, or `PIT NOW`.
+Create `pit_strategy_agent`. On every lap, it checks the car and the race and recommends `STAY OUT`, `PIT SOON`, or `PIT NOW`.
 
-1. Paste and run the `CREATE AGENT` statement in your SQL Workspace:
+1. In a new cell, run the `CREATE AGENT` statement:
 
     ```sql
     CREATE AGENT `pit_strategy_agent`
@@ -307,7 +308,7 @@ With `car_state` streaming, we can create `pit_strategy_agent` to evaluate car c
     WITH ('max_iterations' = '10');
     ```
 
-2. Confirm that the agent is registered:
+2. Confirm the agent exists:
 
     ```sql
     SHOW AGENTS;
@@ -315,9 +316,9 @@ With `car_state` streaming, we can create `pit_strategy_agent` to evaluate car c
 
 ## 3. Create the pit decisions table
 
-Next we create the `pit_decisions` table, which invokes `pit_strategy_agent` on every row of `car_state` using [`AI_RUN_AGENT`](https://docs.confluent.io/cloud/current/flink/reference/functions/model-inference-functions.html#ai-run-agent) and parses the structured fields. Because it reads `car_state` from `earliest-offset`, it also processes laps that have already arrived.
+`pit_decisions` runs `pit_strategy_agent` on every row of `car_state` with [`AI_RUN_AGENT`](https://docs.confluent.io/cloud/current/flink/reference/functions/model-inference-functions.html#ai-run-agent) and splits each answer into columns. It also covers laps that already happened.
 
-1. Create the `pit_decisions` table in your SQL Workspace:
+1. In a new cell, create `pit_decisions`:
 
     ```sql
     CREATE TABLE `pit_decisions` WITH ('changelog.mode' = 'append', 'kafka.consumer.isolation-level' = 'read-uncommitted') AS
@@ -357,11 +358,11 @@ Next we create the `pit_decisions` table, which invokes `pit_strategy_agent` on 
 
 > [!NOTE]
 >
-> This is a continuous statement — keep this cell **RUNNING** for the whole workshop.
+> This statement runs continuously. Don't stop or delete it.
 
 ## 4. Review the results
 
-1. Query `pit_decisions` in your SQL Workspace to see the streaming recommendations:
+1. Query `pit_decisions` in your SQL workspace to see the streaming recommendations:
 
     ```sql
     SELECT lap, `position`, suggestion, condition_summary, reasoning
@@ -381,6 +382,8 @@ Next we create the `pit_decisions` table, which invokes `pit_strategy_agent` on 
 
     ![Flink SQL workspace showing the lap 24 PIT NOW row with the agent's full reasoning](../images/agentic-pit-decisions/pit-decisions-anomaly-query.png)
 
+    No rows yet? The anomaly appears at lap 24. Rerun the query once the race passes it.
+
 > [!NOTE]
 >
 > | Lap | Position | Suggestion | What's happening |
@@ -390,56 +393,99 @@ Next we create the `pit_decisions` table, which invokes `pit_strategy_agent` on 
 > | **24** | **P8** | **`PIT NOW`** | **Front-left anomaly (~145°C) triggers an immediate stop** |
 > | 25–60 | P14 → P1–P2 | `STAY OUT` | Recovery stint to the flag on fresh MEDIUMs |
 >
-> `PIT SOON` can start anywhere from about lap 19 to 23. The exact laps vary by run.
->
-> The `PIT NOW` call lands on lap 24, the same lap the anomaly appears. An agent reading data even a few laps old would call the stop too late.
->
-> As `car_state` and `pit_decisions` produce rows, the Pit Wall dashboard unlocks its **Anomaly Detection** and **AI Pit Strategist** panels:
+> The `PIT NOW` row is for lap 24, the lap where the anomaly appears. The live leaderboard can advance while the Flink window closes and the agent responds.
 
-![Pit Wall dashboard with both Anomaly Detection and AI Pit Strategist panels unlocked, showing the PIT NOW call at lap 24](../images/agentic-pit-decisions/pitwall-pit-now.png)
+3. Switch to the Pit Wall dashboard. Its **Anomaly Detection** and **AI Pit Strategist** panels are now unlocked:
+
+    ![Pit Wall dashboard with both Anomaly Detection and AI Pit Strategist panels unlocked, showing the PIT NOW call at lap 24](../images/agentic-pit-decisions/pitwall-pit-now.png)
+
+    The Pit Wall may take a few minutes to discover `pit_decisions` if it was open before you created the table. If the SQL query shows decisions and the panel is still locked, restart only `uv run f1-pitwall` and leave `f1-race` running.
 
 ## 5. Enable Lightning Tables on the race topics
 
-Real-Time Context Engine (RTCE), powered by Lightning Tables, exposes a Kafka topic as an MCP tool, so any MCP-compatible AI agent can query the live stream. Other agents get the same live data the pit strategy agent uses, without another copy or pipeline.
+Lightning Tables let apps query a topic's live data, and power the Real-Time Context Engine (RTCE), which lets any AI agent query it over MCP.
 
-Because RTCE reads from Lightning Tables, a topic is available to agents once its **Lightning Table** is enabled. Enable it in the Console for all three race topics: `car_telemetry`, `car_state`, and `pit_decisions`.
+1. Open **[Topics](https://confluent.cloud/go/topics)** and select your **environment** and **cluster**. Enable Lightning Tables on `car_telemetry`, `car_state`, and `pit_decisions`. For each one:
 
-1. Open **[Topics](https://confluent.cloud/go/topics)**, select your **environment** (`streamhouse-…-env`) and **cluster** (`streamhouse-…-cluster`), find the **Lightning Tables** column, and click **+ Enable** for `car_telemetry`:
+    1. Click **+ Enable** in the **Lightning Tables** column.
 
-    <img src="../images/agentic-pit-decisions/lightning-tables-enable.png" alt="The cluster's Topics list with + Enable in the Lightning Tables column for car_state and car_telemetry" width="750">
+        <img src="../images/agentic-pit-decisions/lightning-tables-enable.png" alt="The cluster's Topics list with + Enable in the Lightning Tables column for car_state and car_telemetry" width="750">
 
-    In the dialog, click **Enable**:
+    2. Click **Enable**.
 
-    <img src="../images/agentic-pit-decisions/lightning-tables-confirm.png" alt="The Enable a Lightning Table for car_telemetry? dialog with its Enable button" width="750">
+        <img src="../images/agentic-pit-decisions/lightning-tables-confirm.png" alt="The Enable a Lightning Table for car_telemetry? dialog with its Enable button" width="750">
 
-    The dialog shows its progress while it sets up the table:
+    3. Wait a couple of minutes while it sets up.
 
-    <img src="../images/agentic-pit-decisions/lightning-tables-progress.png" alt="The Lightning Table dialog showing Enabled Lightning Table, Query engine is ready, and Finalizing infrastructure" width="750">
+        <img src="../images/agentic-pit-decisions/lightning-tables-progress.png" alt="The Lightning Table dialog showing Enabled Lightning Table, Query engine is ready, and Finalizing infrastructure" width="750">
 
-> [!NOTE]
->
-> It may take a couple of minutes to enable each Lightning Table.
+    4. Click **Done** when it says **Lightning Table is enabled**.
 
-When it's ready, the dialog shows **Lightning Table is enabled**. Click **Done**:
+        <img src="../images/agentic-pit-decisions/lightning-tables-enabled.png" alt="The Lightning Table enabled for car_telemetry dialog with Lightning Table is enabled and a Done button" width="750">
 
-<img src="../images/agentic-pit-decisions/lightning-tables-enabled.png" alt="The Lightning Table enabled for car_telemetry dialog with Lightning Table is enabled and a Done button" width="750">
+## 🧩 Challenge #1 — Analyze race data with Lightning Queries
 
-2. Repeat for `car_state` and `pit_decisions`.
+Query the Lightning Tables you enabled in Section 5 directly with Lightning Queries.
+
+Print a ready-to-run query in a **new terminal** in the `quickstart-streamhouse` folder:
+
+```bash
+uv run setup-rtce --lightning car_telemetry
+```
+
+Copy the printed command (`curl` on Mac, PowerShell on Windows) and run it. It returns 10 telemetry rows.
+
+**Your challenge:** edit the command's `query` to find out what tire compound the agent recommended on lap 24, and why.
+
+<details>
+<summary>Hint</summary>
+
+```sql
+SELECT lap, <column>, <column> FROM pit_decisions WHERE lap = 24 LIMIT 1
+```
+
+Fill in the first `<column>` with the recommended tire compound, and the second with the agent's reasoning for that call.
+
+</details>
+
+**Expected result:**
+
+<img src="../images/agentic-pit-decisions/lightning-query-lap-24.png" alt="The Lightning Query curl command and its JSON result for lap 24: MEDIUM, with the agent's reasoning" width="750">
 
 ## 6. (Optional) Ask your coding agent about the race with Real-Time Context Engine
 
-> [!NOTE]
->
-> Run this in a **new terminal**. Keep `f1-race` and `f1-pitwall` running in their own terminals.
+<details>
+<summary>Install Claude Code</summary>
 
-1. In a **new terminal**, go to the repo folder and point your coding agent at RTCE in one command:
+On Mac:
+
+```bash
+brew install --cask claude-code
+```
+
+On Windows:
+
+```powershell
+winget install --id Anthropic.ClaudeCode -e --source winget
+```
+
+Then open a new PowerShell window in the `quickstart-streamhouse` folder.
+
+</details>
+
+1. Back in your terminal, register RTCE with your coding agent:
 
     ```bash
-    cd quickstart-streamhouse
     uv run setup-rtce
     ```
 
-    This registers RTCE as the `confluent-streamhouse-rtce` MCP server in Claude Code (or prints a config snippet for Codex CLI) using the Global API key from your credential card. If you also deployed Flight Disruptions, this one MCP server handles topics for both labs. Restart your coding agent, then ask questions in plain English:
+    Enter `1` for Claude Code or `2` for Codex. Already have it open? Restart it.
+
+> [!NOTE]
+>
+> The connection can take a minute or two. In Claude Code, run `/mcp` and check that `confluent-streamhouse-rtce` shows as connected.
+
+2. Start your coding agent in the `quickstart-streamhouse` folder (for example, `claude`) and ask:
 
     ```text
     What topics do I have access to in the Real-Time Context Engine?
@@ -467,61 +513,32 @@ When it's ready, the dialog shows **Lightning Table is enabled**. Click **Done**
     What is the front right tire temperature at lap 30?
     ```
 
-## 🧩 Challenge #1 — Analyze race data with Lightning Queries
-
-RTCE runs on Lightning Tables, so you can also query the same real-time data directly with Lightning Queries over low-latency REST. It reads the Lightning Tables you enabled in Section 5.
-
-From the repo directory, print a ready-to-run query:
-
-```bash
-uv run setup-rtce --lightning car_telemetry
-```
-
-Copy the printed command into your terminal and run it (it's `curl` on Mac and Linux, and `Invoke-RestMethod` in Windows PowerShell). It returns 10 telemetry rows; edit the SQL in `query` to filter for car 88 or select other columns. 
-
-**Your challenge:** edit the command's `query` to find out what tire compound the agent recommended on lap 24, and why.
-
-<details>
-<summary>Hint</summary>
-
-```sql
-SELECT lap, <column>, <column> FROM pit_decisions WHERE lap = 24 LIMIT 1
-```
-
-Fill in the first `<column>` with the recommended tire compound, and the second with the agent's reasoning for that call.
-
-</details>
-
-**Expected result:**
-
-<img src="../images/agentic-pit-decisions/lightning-query-lap-24.png" alt="The Lightning Query curl command and its JSON result for lap 24: MEDIUM, with the agent's reasoning" width="750">
-
 ## 🧩 (Optional) Challenge #2 — Social Media Agent (Claude + Real-Time Context Engine)
 
 Take on the role of River Racing's social media team. Using live race data from RTCE, have your AI agent draft an engaging social media post:
 
-1. Enable RTCE on the `car_state` and `pit_decisions` topics in the Confluent Cloud Console (the same way you enabled `car_telemetry` above).
-2. Create a persona prompt for your agent to help it develop an engaging social media post. 
-3. Have your agent draft a post using real time data from your MCP connection. 
+1. Connect your coding agent to RTCE first ([Section 6](#6-optional-ask-your-coding-agent-about-the-race-with-real-time-context-engine)).
+2. In your coding agent, give it a role, for example: "You're River Racing's social media manager. Use only live race data."
+3. Ask it for a post (prompts below).
 
-Feel free to use one of the following prompts to draft your next post: 
+Prompts:
 - "We just made a big move — write a post celebrating it."
 - "The pit wall just made a call. Draft a post about our strategy."
 - "Write a 3-tweet recap thread of John's race so far."
 
-**Success looks like:** Claude calls `queryData` against `car_state` and `pit_decisions` (you'll see the tool calls in the transcript) and returns a drafted post citing the real lap number, position, and strategy call from your live feed — not invented numbers. If it says the feed is quiet, the race may not be running yet, or RTCE isn't enabled on one of the two topics.
+**Success looks like:** a post with the real lap, position, and pit call from your live race. No data? Check that `f1-race` is running.
 
 ## Run the lab again or tear it down
 
-Stop `f1-race` with Ctrl-C when you finish. To clear the race data and rerun the lab from a clean slate, run `f1-reset`. It stops and drops only this lab's statements and tables, leaving any Flight Disruptions resources in the same environment untouched:
+Stop `f1-race` and `f1-pitwall`: press **Ctrl-C** in their terminals.
+
+**Run the lab again:** reset, then start over from [Section 1](#1-enhance-the-data-with-built-in-ml-functions-and-start-the-race).
 
 ```bash
 uv run f1-reset
 ```
 
-After reset, recreate `car_state`, wait for it to show **Running**, then start `uv run f1-race` again (or run `uv run f1-reset --with-labs` to rebuild `car_state`, `pit_strategy_agent`, and `pit_decisions` automatically before starting `uv run f1-race`).
-
-To tear down everything, including the environment and cluster, run:
+Tear everything down. Enter `y` to confirm:
 
 ```bash
 uv run destroy
@@ -530,7 +547,7 @@ uv run destroy
 <details>
 <summary>Remove only this lab</summary>
 
-This keeps the shared environment, cluster, and Flink pool, and Flight Disruptions if you deployed it:
+Keeps the environment, cluster, and the Agentic Airline Operations lab:
 
 ```bash
 uv run destroy --lab agentic-pit-decisions
@@ -546,7 +563,7 @@ uv run destroy --lab agentic-pit-decisions
 - **`car_state` is empty at first.** `car_state` emits one row per 20-second window, and `f1-race` aligns lap 1 to the next 20-second wall-clock boundary before starting. Make sure `car_state` is **Running** before starting `uv run f1-race`.
 - **No anomaly around lap 24.** `ML_DETECT_ANOMALIES` needs 12 windows of context (`minTrainingSize = 12`) before lap 24. If `car_state` was started mid-race after lap 12, reset and start `car_state` before `uv run f1-race`.
 - **Agent fields are null but `raw_response` has text.** Inspect `SELECT lap, suggestion, raw_response FROM pit_decisions LIMIT 5;`. If `raw_response` is empty across the board, check that your org can use Confluent-hosted models: `DESCRIBE MODEL llm_textgen_model;` should show `'provider' = 'confluent'`.
-- **`No Agentic Pit Decisions credential card`.** Re-run `uv run deploy --lab agentic-pit-decisions` to rewrite `tmp/agentic-pit-decisions-card.env`, or pass `--creds <path>`.
+- **`No Agentic Pit Decisions credential card`.** Run `uv run deploy` again.
 
 </details>
 
