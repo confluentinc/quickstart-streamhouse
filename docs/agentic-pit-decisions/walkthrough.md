@@ -103,7 +103,7 @@ confluent version
     uv run deploy
     ```
 
-    <img src="../images/agentic-pit-decisions/selfservice-up.png" alt="uv run deploy: API key generation, configuration prompts, and the ready prompt" width="600">
+    <img src="../images/agentic-pit-decisions/selfservice-up.png" alt="uv run deploy for Agentic Pit Decisions: lab choice, login, new environment, API key created, summary, and the ready prompt" width="600">
 
     Deploy asks for the following, in this order:
 
